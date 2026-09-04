@@ -1,0 +1,32 @@
+[package]
+name        = "velcrux-client"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+description = "velcrux client CLI"
+
+[[bin]]
+name = "velcrux"
+path = "src/main.rs"
+
+[dependencies]
+velcrux-core = { path = "../velcrux-core" }
+tokio.workspace      = true
+clap.workspace       = true
+anyhow.workspace     = true
+tracing.workspace    = true
+tracing-subscriber.workspace = true
+rustls.workspace     = true
+rustls-pemfile.workspace = true
+quinn.workspace      = true
+bytes.workspace      = true
+url.workspace        = true
+rand.workspace       = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -1,0 +1,40 @@
+[package]
+name        = "velcrux-core"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+description = "Core library for velcrux: protocol, transport (QUIC), session state, types."
+
+[lib]
+# Pure-Rust, no C dependencies. `forbid(unsafe_code)` is in lib.rs.
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace      = true
+quinn.workspace      = true
+rustls.workspace     = true
+rustls-pemfile.workspace = true
+sha2                 = "0.10"
+async-trait          = "0.1"
+thiserror.workspace  = true
+anyhow.workspace     = true
+bytes.workspace      = true
+tracing.workspace    = true
+ulid.workspace       = true
+rand.workspace       = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+rcgen.workspace = true
+rustls-pemfile.workspace = true
+tracing-subscriber.workspace = true
+rustls.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# We want a clean build. Add targeted allows as needed; the default is to fail.
+all = { level = "warn", priority = -1 }

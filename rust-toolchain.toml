@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned to the stable release we develop against. Bumping is a deliberate
+# change — see DEVELOPMENT.md §1.
+channel = "stable"
+components = ["rustfmt", "clippy"]

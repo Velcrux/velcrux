@@ -1,0 +1,30 @@
+# Build artifacts
+/target
+**/target
+**/*.rs.bk
+
+# Cargo.lock intentionally not ignored at the workspace root for binaries
+# (best practice for application crates per Cargo's official guidance).
+# Comment this out if your policy is "no Cargo.lock in libraries".
+
+# Local dev certs (DEVELOPMENT.md §3) — never commit
+/dev-pki/
+/dev-pki/**
+*.crt
+*.key
+*.csr
+*.pem
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Benchmark results (PERFORMANCE.md §3)
+benches/results/
+
+# Fuzz corpora — they grow without bound
+fuzz/corpus/
+fuzz/artifacts/
+*.md
