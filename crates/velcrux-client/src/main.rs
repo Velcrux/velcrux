@@ -11,7 +11,7 @@ use tracing::info;
 
 use velcrux_core::session::ClientSession;
 use velcrux_core::transport::quic::{ClientBuilder, ClientIdentity, QuicConnection};
-use velcrux_core::transport::SharedTransport;
+use velcrux_core::transport::{Connection, SharedTransport};
 
 mod ping;
 
@@ -50,6 +50,20 @@ enum Cmd {
     Ping {
         /// Target `velcrux://host:port` URL.
         url: String,
+    },
+    /// Upload a single local file to the server. M2.
+    Upload {
+        /// Local file to upload.
+        local: PathBuf,
+        /// Target `velcrux://host:port/path` URL.
+        url: String,
+    },
+    /// Download a single remote file from the server. M2.
+    Download {
+        /// Source `velcrux://host:port/path` URL.
+        url: String,
+        /// Local destination path.
+        local: PathBuf,
     },
 }
 
@@ -94,6 +108,36 @@ fn parse_url(s: &str) -> anyhow::Result<SocketAddr> {
         .into_iter()
         .next()
         .context("no addresses resolved for host")
+}
+
+/// Parse a `velcrux://host:port/path` URL into the host:port `SocketAddr`
+/// and the URL-decoded path component.
+fn parse_url_with_path(s: &str) -> anyhow::Result<(SocketAddr, String)> {
+    let stripped = s
+        .strip_prefix("velcrux://")
+        .context("URL must start with velcrux://")?;
+    let (hostport, path) = match stripped.split_once('/') {
+        Some((hp, p)) => (hp, format!("/{p}")),
+        None => (stripped, "/".to_string()),
+    };
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => {
+            let port: u16 = p.parse().context("invalid port")?;
+            (h, port)
+        }
+        None => (hostport, 7443u16),
+    };
+    if host.is_empty() {
+        anyhow::bail!("URL has no host");
+    }
+    use std::net::ToSocketAddrs;
+    let addr = (host, port)
+        .to_socket_addrs()
+        .context("invalid host:port")?
+        .into_iter()
+        .next()
+        .context("no addresses resolved for host")?;
+    Ok((addr, path))
 }
 
 fn build_transport(cli: &Cli) -> anyhow::Result<SharedTransport> {
@@ -146,6 +190,157 @@ async fn main() -> anyhow::Result<()> {
             println!("PONG rtt={rtt_ms}ms");
             session.bye().await.ok();
         }
+        Cmd::Upload { local, url } => {
+            let (addr, path) = parse_url_with_path(url)?;
+            let sni = cli
+                .sni
+                .clone()
+                .unwrap_or_else(|| url.split("://").nth(1).unwrap_or("localhost").split(':').next().unwrap_or("localhost").to_string());
+            let transport = build_transport(&cli)?;
+            info!(%addr, %sni, ?path, "connecting");
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            info!(version = session.negotiated().version, "HELLO_ACK");
+            run_upload(&conn, &mut session, local, &path).await?;
+        }
+        Cmd::Download { url, local } => {
+            let (addr, path) = parse_url_with_path(url)?;
+            let sni = cli
+                .sni
+                .clone()
+                .unwrap_or_else(|| url.split("://").nth(1).unwrap_or("localhost").split(':').next().unwrap_or("localhost").to_string());
+            let transport = build_transport(&cli)?;
+            info!(%addr, %sni, ?path, "connecting");
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            info!(version = session.negotiated().version, "HELLO_ACK");
+            run_download(&conn, &mut session, local, &path).await?;
+        }
     }
+    Ok(())
+}
+
+async fn run_upload(
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    local: &PathBuf,
+    url_path: &str,
+) -> anyhow::Result<()> {
+    use std::io::Read;
+    use velcrux_core::protocol::message::{
+        Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
+    };
+    use velcrux_core::session::encode_message;
+
+    let file_size = std::fs::metadata(local)
+        .with_context(|| format!("stat {local:?}"))?
+        .len();
+    let expected_hash = {
+        let mut f = std::fs::File::open(local)
+            .with_context(|| format!("open {local:?}"))?;
+        let mut h = velcrux_core::HashHasher::new();
+        let mut buf = vec![0u8; 2 * 1024 * 1024];
+        loop {
+            let n = f.read(&mut buf).with_context(|| format!("read {local:?}"))?;
+            if n == 0 { break; }
+            h.feed(&buf[..n]);
+        }
+        h.finalize()
+    };
+
+    let create = TransferCreate {
+        op: TransferOp::Upload,
+        src_path: local.display().to_string(),
+        dst_path: url_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size,
+        file_hash: expected_hash,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+    let created = TransferCreated::decode(&frame.payload)?;
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+        anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
+    }
+    let _plan = TransferPlan::decode(&frame.payload)?;
+
+    let begin = TransferBegin { transfer_id: created.transfer_id };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let cfg = velcrux_core::PipelineConfig::default();
+    let computed = velcrux_core::client_upload(
+        conn,
+        session.send_mut_owned(),
+        session.recv_mut_owned(),
+        created.transfer_id,
+        local.clone(),
+        file_size,
+        expected_hash,
+        cfg,
+    )
+    .await?;
+    eprintln!(
+        "upload: committed {} bytes; server hash matches: {}",
+        file_size,
+        computed == expected_hash
+    );
+    Ok(())
+}
+
+async fn run_download(
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    local: &PathBuf,
+    url_path: &str,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{
+        Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
+    };
+    use velcrux_core::session::encode_message;
+
+    let create = TransferCreate {
+        op: TransferOp::Download,
+        src_path: "".into(),
+        dst_path: url_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+    let created = TransferCreated::decode(&frame.payload)?;
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+        anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
+    }
+    let _plan = TransferPlan::decode(&frame.payload)?;
+
+    let begin = TransferBegin { transfer_id: created.transfer_id };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let computed = velcrux_core::client_download(
+        conn,
+        session.send_mut_owned(),
+        session.recv_mut_owned(),
+        created.transfer_id,
+        local.clone(),
+    )
+    .await?;
+    eprintln!("download: committed to {local:?}, hash {computed}");
     Ok(())
 }

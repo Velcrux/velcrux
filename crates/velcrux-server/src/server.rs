@@ -19,11 +19,14 @@ use velcrux_core::session::{ServerConn, ServerStats};
 use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
 use velcrux_core::transport::Transport;
 
-/// Subset of the full config (`OPERATIONS.md` §4) needed by the M1 server.
+/// Subset of the full config (`OPERATIONS.md` §4) needed by the M1+M2 server.
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
     pub network: NetworkCfg,
     pub security: SecurityCfg,
+    /// M2: storage root + staging dir. Same filesystem required so
+    /// commit is an atomic `rename` (CLAUDE.md §1 #8, OPERATIONS.md §2).
+    pub storage: StorageCfg,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +43,12 @@ pub struct SecurityCfg {
     pub certificate: String,
     pub private_key: String,
     pub client_ca: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StorageCfg {
+    pub root: String,
+    pub staging: String,
 }
 
 fn default_idle_timeout() -> String {
@@ -123,6 +132,21 @@ pub async fn run(config_path: &Path) -> Result<()> {
     let stats = Arc::new(ServerStats::default());
     info!(%addr, "velcruxd listening");
 
+    // Construct the storage backend. M2 enforces same-filesystem for atomic
+    // commit (OPERATIONS.md §2).
+    let backend = velcrux_core::storage::LocalFilesystemBackend::new(
+        std::path::PathBuf::from(&cfg.storage.root),
+        std::path::PathBuf::from(&cfg.storage.staging),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "storage backend init failed (root={}, staging={})",
+            cfg.storage.root, cfg.storage.staging
+        )
+    })?;
+    let backend = Arc::new(backend);
+
     let next_id = Arc::new(AtomicU64::new(1));
     loop {
         let conn = match transport.accept().await {
@@ -133,7 +157,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
             }
         };
         let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let actor = ServerConn::new(server_caps, "velcruxd", Arc::clone(&stats));
+        let actor = ServerConn::new(server_caps, "velcruxd", Arc::clone(&stats), Arc::clone(&backend));
         tokio::spawn(async move {
             let conn: QuicConnection = conn;
             match actor.run(&conn).await {

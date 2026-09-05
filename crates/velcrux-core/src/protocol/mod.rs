@@ -20,10 +20,16 @@ pub mod varint;
 
 pub use capabilities::{Capability, Capabilities};
 pub use error::{ErrorCode, ErrorDetail, ERROR_CODE_NAMES};
-pub use frame::{Frame, FrameFlags, FRAME_HEADER_LEN};
+pub use frame::{
+    DataFrame, DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags,
+    DATA_FRAME_HEADER_LEN, DATA_MAX_CHUNK_LEN, DATA_PREAMBLE_LEN, FRAME_HEADER_LEN,
+};
 pub use limits::*;
 pub use message::{
-    Hello, HelloAck, Limits, Message, Ping, Pong, SessionInit, SessionOptions, AGENT,
-    HELLO_ACK, HELLO, PING, PONG, SESSION_INIT, BYE,
+    Bye, Commit, Committed, Hello, HelloAck, Limits, Message, Ping, Pong, SessionInit,
+    SessionOptions, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
+    Verify, VerifyResult, AGENT, BYE, COMMIT, COMMITTED, ERROR, HELLO, HELLO_ACK, PING, PONG,
+    SESSION_INIT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN,
+    VERIFY, VERIFY_RESULT,
 };
 pub use varint::{decode_varint, encode_varint, varint_len};

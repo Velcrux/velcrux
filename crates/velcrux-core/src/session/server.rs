@@ -17,12 +17,14 @@
 //! `AWAIT_HELLO` and `SERVING`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Hello, HelloAck, Message, Ping};
+use crate::storage::{LocalFilesystemBackend, VPath};
 use crate::transport::Connection;
+use std::sync::Arc;
+use crate::util::TransferId;
 
 use super::{read_frame, write_frame};
 
@@ -82,6 +84,8 @@ pub struct ServerConn {
     server_name: String,
     /// Server-wide counters (Arc'd so a test can share them).
     stats: Arc<ServerStats>,
+    /// Storage backend used by M2 transfer sessions.
+    backend: Arc<LocalFilesystemBackend>,
 }
 
 impl ServerConn {
@@ -90,11 +94,13 @@ impl ServerConn {
         server_caps: Capabilities,
         server_name: impl Into<String>,
         stats: Arc<ServerStats>,
+        backend: Arc<LocalFilesystemBackend>,
     ) -> Self {
         Self {
             server_caps,
             server_name: server_name.into(),
             stats,
+            backend,
         }
     }
 
@@ -169,6 +175,21 @@ impl ServerConn {
                             state = ServerState::Closed;
                             break;
                         }
+                        x if x == crate::protocol::message::TRANSFER_CREATE => {
+                            // Dispatch to the transfer state machine.
+                            if let Err(e) = handle_transfer_create(
+                                conn,
+                                &self.backend,
+                                send.as_mut(),
+                                recv.as_mut(),
+                                &frame.payload,
+                            )
+                            .await
+                            {
+                                // Best-effort error reply; then continue.
+                                tracing::warn!(error = %e, "transfer dispatch failed");
+                            }
+                        }
                         other => {
                             let err = crate::protocol::message::ErrorMsg::new(
                                 crate::protocol::error::ErrorCode::UnsupportedMessage,
@@ -197,4 +218,130 @@ impl ServerConn {
 #[inline]
 fn break_as_closed(state: &mut ServerState) {
     *state = ServerState::Closed;
+}
+
+/// Handle a `TRANSFER_CREATE` request: validate path, issue
+/// `TRANSFER_CREATED` + `TRANSFER_PLAN`, await `TRANSFER_BEGIN`, then run
+/// the per-transfer upload or download session.
+async fn handle_transfer_create(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    send: &mut dyn crate::transport::BiSendStream,
+    recv: &mut dyn crate::transport::BiRecvStream,
+    payload: &[u8],
+) -> Result<()> {
+    use crate::protocol::message::{
+        Commit, Committed, Message, TransferBegin, TransferCreate, TransferCreated, TransferOp,
+        TransferPlan,
+    };
+    use crate::protocol::limits::MAX_CHUNK_SIZE;
+    use crate::storage::StorageBackend;
+    use crate::util::TransferId;
+
+    let create = TransferCreate::decode(payload)?;
+    // Validate destination path as a VPath.
+    let dst = match VPath::validate(&create.dst_path) {
+        Ok(p) => p,
+        Err(_) => {
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::FileNotFound,
+                "not found",
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+    };
+    let transfer_id = TransferId::generate();
+    let bytes_total = match create.op {
+        TransferOp::Upload => create.file_size,
+        TransferOp::Download => match backend.stat(&dst).await? {
+            Some(m) => m.size,
+            None => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        },
+    };
+    let created = TransferCreated {
+        transfer_id,
+        resumed: false,
+        max_chunk_size: MAX_CHUNK_SIZE,
+    };
+    let plan = TransferPlan {
+        transfer_id,
+        bytes_total,
+        bytes_to_transfer: bytes_total,
+        bytes_reusable: 0,
+    };
+    write_frame(send, &Message::TransferCreated(created), 0).await?;
+    write_frame(send, &Message::TransferPlan(plan), 0).await?;
+
+    // Await TRANSFER_BEGIN.
+    let frame = read_frame(recv).await?.ok_or_else(|| {
+        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+    })?;
+    if frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
+        ));
+    }
+    let begin = TransferBegin::decode(&frame.payload)?;
+    if begin.transfer_id != transfer_id {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition(
+                "TRANSFER_BEGIN transfer_id mismatch",
+            ),
+        ));
+    }
+
+    match create.op {
+        TransferOp::Upload => {
+            crate::transfer::server_upload_session(
+                conn,
+                backend,
+                send,
+                recv,
+                transfer_id,
+                &dst,
+                create.file_size,
+                create.file_hash,
+            )
+            .await?;
+        }
+        TransferOp::Download => {
+            let file_hash = match backend.stat(&dst).await? {
+                Some(m) => m.file_hash,
+                None => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::FileNotFound,
+                        "not found",
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+            };
+            crate::transfer::server_download_session(
+                conn,
+                backend,
+                send,
+                recv,
+                transfer_id,
+                &dst,
+                bytes_total,
+                file_hash,
+            )
+            .await?;
+        }
+    }
+
+    // We don't write a COMMITTED reply here — the per-transfer session
+    // does it as part of its own VERIFY/COMMIT exchange.
+    let _ = Committed { transfer_id, files: 1 };
+    let _ = Commit { transfer_id };
+
+    Ok(())
 }

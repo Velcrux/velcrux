@@ -271,6 +271,13 @@ pub struct LocalFilesystemBackend {
 }
 
 impl LocalFilesystemBackend {
+    /// Absolute path of the staging directory. Exposed so the server-side
+    /// transfer pipeline can locate the staged file to compute the
+    /// whole-file BLAKE3.
+    pub fn staging_dir(&self) -> &Path {
+        &self.staging
+    }
+
     /// Construct a backend with the given root and staging directories.
     /// Both must exist and be directories; both must be on the same
     /// filesystem (so atomic `rename` is possible).

@@ -38,4 +38,9 @@ pub use error::{VelcruxError, Result};
 pub use storage::{
     FileMeta, LocalFilesystemBackend, StorageBackend, Staging, VPath, VPathError,
 };
-pub use transfer::{TransferDir, TransferKind, TransferRequest};
+pub use transfer::{
+    client_download, client_upload, server_download_session, server_staging_path,
+    server_upload_session, PipelineConfig, TransferDir, TransferKind, TransferRequest,
+};
+pub use transport::{Connection, SharedTransport};
+pub use util::{Hash, HashAlgorithm, HashHasher};

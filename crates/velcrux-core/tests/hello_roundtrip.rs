@@ -212,7 +212,21 @@ async fn hello_and_ping_round_trip() {
         eprintln!("server: accepting");
         let conn = transport.accept().await.expect("server accept");
         eprintln!("server: accepted");
-        let actor = ServerConn::new(server_caps_clone, "velcrux-test-server", stats_for_server);
+        let actor = ServerConn::new(
+            server_caps_clone,
+            "velcrux-test-server",
+            stats_for_server,
+            // No backend needed for an M1 ping-only test. Build a dummy
+            // local backend pointed at /tmp; it is never touched.
+            std::sync::Arc::new(
+                velcrux_core::storage::LocalFilesystemBackend::new(
+                    std::path::PathBuf::from("/tmp"),
+                    std::path::PathBuf::from("/tmp"),
+                )
+                .await
+                .expect("dummy backend"),
+            ),
+        );
         let r = actor.run(&conn).await;
         eprintln!("server: actor finished: {r:?}");
         r

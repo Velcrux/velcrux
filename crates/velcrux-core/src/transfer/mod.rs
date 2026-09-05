@@ -14,6 +14,13 @@
 //!     Byte count is never a success signal.
 //!   - Storage is staged, then atomically renamed into place.
 
+pub mod engine;
+
+pub use engine::{
+    client_download, client_upload, server_download_session, server_staging_path,
+    server_upload_session, PipelineConfig,
+};
+
 use crate::error::VelcruxError;
 use crate::util::TransferId;
 

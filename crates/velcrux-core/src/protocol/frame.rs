@@ -99,6 +99,91 @@ pub fn header_size_for(length: u64) -> usize {
     4 + varint::varint_len(length) + 8
 }
 
+// ---------------------------------------------------------------------------
+// DATA stream (unidirectional; sender → receiver)
+// ---------------------------------------------------------------------------
+//
+// `PROTOCOL.md` §3:
+//
+// Data stream preamble (once per stream):
+// +-------------------------+-------------------------+
+// |  transfer_id (16 bytes) |    file_id (u64, LE)    |
+// +-------------------------+-------------------------+
+// |  stream_seq (u64, LE)   |                       0 |
+// +-------------------------+-------------------------+
+// | reserved (16 bytes, 0)                          |
+// +-------------------------+-------------------------+
+//
+// DATA frame (one per chunk; no 12-byte frame header on data streams):
+// +--------------+--------------+----------------------------+
+// | chunk_off(u64)| chunk_len(u32)| flags(2)  | reserved(2)  |
+// +--------------+--------------+----------------------------+
+// | chunk_hash(32 bytes)                                      |
+// +------------------------------------------------------------+
+// | chunk_payload (chunk_len bytes)                           |
+// +------------------------------------------------------------+
+//
+// `chunk_len` is u32 here so we have a hard cap of 4 GiB per frame,
+// consistent with `MAX_CHUNK_SIZE` (4 MiB). `chunk_off` is u64 because
+// it is an absolute byte offset within the file (CLAUDE.md §1 #4).
+
+/// Total length of the data-stream preamble. 16 + 8 + 8 + 8 + 16 = 56 bytes.
+pub const DATA_PREAMBLE_LEN: usize = 56;
+/// Header length of a DATA frame (no payload): 8 + 4 + 2 + 2 + 32 = 48 bytes.
+pub const DATA_FRAME_HEADER_LEN: usize = 48;
+/// Maximum declared `chunk_len` on a DATA frame. M2 keeps this identical to
+/// `MAX_CHUNK_SIZE` from `protocol/limits.rs`.
+pub const DATA_MAX_CHUNK_LEN: u32 = 4 * 1024 * 1024;
+
+/// Data-stream preamble (sent once at the start of every data stream).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataPreamble {
+    /// Transfer this stream belongs to.
+    pub transfer_id: crate::util::TransferId,
+    /// Logical file id within the transfer (always 1 in M2; reserved for M5).
+    pub file_id: u64,
+    /// Stream sequence number within the transfer (always 1 in M2; reserved
+    /// for the multi-stream-per-file optimisation gated on benchmarks).
+    pub stream_seq: u64,
+}
+
+/// Encode a [`DataPreamble`] into a 56-byte buffer.
+pub fn encode_data_preamble(p: &DataPreamble) -> [u8; DATA_PREAMBLE_LEN] {
+    let mut out = [0u8; DATA_PREAMBLE_LEN];
+    out[..16].copy_from_slice(p.transfer_id.as_bytes());
+    out[16..24].copy_from_slice(&p.file_id.to_le_bytes());
+    out[24..32].copy_from_slice(&p.stream_seq.to_le_bytes());
+    // Bytes 32..56 are reserved (must be zero on send).
+    out
+}
+
+/// Decode a [`DataPreamble`] from a 56-byte buffer.
+pub fn decode_data_preamble(buf: &[u8]) -> Result<DataPreamble, ProtocolError> {
+    if buf.len() < DATA_PREAMBLE_LEN {
+        return Err(ProtocolError::Malformed("data preamble: truncated"));
+    }
+    let transfer_id = crate::util::TransferId::from_bytes(&buf[..16])
+        .ok_or_else(|| ProtocolError::Malformed("data preamble: bad transfer_id"))?;
+    let file_id = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+    let stream_seq = u64::from_le_bytes(buf[24..32].try_into().unwrap());
+    Ok(DataPreamble { transfer_id, file_id, stream_seq })
+}
+
+/// Flags on a DATA frame. Currently none are defined; reserved bits must
+/// be zero on send.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DataFrameFlags(pub u16);
+
+impl DataFrameFlags {
+    pub const NONE: Self = Self(0);
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
+    pub const fn from_bits_truncate(bits: u16) -> Self {
+        Self(bits & 0xFFFF)
+    }
+}
+
 /// Maximum permitted `length` for a frame. Reads use this as the bound
 /// check; writes use it as a ceiling. Pulled from `MAX_MESSAGE_SIZE` so the
 /// default is named (`PROTOCOL.md` §3).
@@ -175,6 +260,86 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame<'_>, ProtocolError> {
         request_id,
         payload,
     })
+}
+
+/// A DATA frame header parsed from the wire (no payload attached).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataFrameHeader {
+    pub chunk_offset: u64,
+    pub chunk_len: u32,
+    pub flags: DataFrameFlags,
+    pub chunk_hash: crate::util::Hash,
+}
+
+/// A DATA frame: header plus a borrowed payload.
+///
+/// `payload.len()` may be smaller than `chunk_len` if the read was
+/// truncated; the caller must check before consuming.
+#[derive(Debug, Clone, Copy)]
+pub struct DataFrame<'a> {
+    pub chunk_offset: u64,
+    pub chunk_len: u32,
+    pub flags: DataFrameFlags,
+    pub chunk_hash: crate::util::Hash,
+    pub payload: &'a [u8],
+}
+
+/// Encode a DATA frame header (48 bytes) into `out`.
+pub fn encode_data_frame_header(
+    out: &mut [u8],
+    chunk_offset: u64,
+    chunk_len: u32,
+    flags: DataFrameFlags,
+    chunk_hash: &crate::util::Hash,
+) {
+    debug_assert_eq!(out.len(), DATA_FRAME_HEADER_LEN, "encode_data_frame_header: bad out length");
+    out[..8].copy_from_slice(&chunk_offset.to_le_bytes());
+    out[8..12].copy_from_slice(&chunk_len.to_le_bytes());
+    let fb = flags.bits().to_le_bytes();
+    out[12..14].copy_from_slice(&fb);
+    out[14..16].copy_from_slice(&[0u8; 2]); // reserved
+    out[16..48].copy_from_slice(chunk_hash.as_bytes());
+}
+
+/// Decode a DATA frame header from `buf`. Returns the header and the
+/// trailing payload bytes. The caller is responsible for verifying that
+/// the trailing payload length matches `header.chunk_len` and that the
+/// payload hashes to `header.chunk_hash`.
+pub fn decode_data_frame_header(buf: &[u8]) -> Result<(DataFrameHeader, &[u8]), ProtocolError> {
+    if buf.len() < DATA_FRAME_HEADER_LEN {
+        return Err(ProtocolError::Malformed("data frame: truncated header"));
+    }
+    let chunk_offset = u64::from_le_bytes(buf[..8].try_into().unwrap());
+    let chunk_len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    if chunk_len > DATA_MAX_CHUNK_LEN {
+        return Err(ProtocolError::Malformed("data frame: chunk_len > max"));
+    }
+    let flags = DataFrameFlags::from_bits_truncate(u16::from_le_bytes(buf[12..14].try_into().unwrap()));
+    let reserved = u16::from_le_bytes(buf[14..16].try_into().unwrap());
+    if reserved != 0 {
+        return Err(ProtocolError::Malformed("data frame: reserved bits set"));
+    }
+    let chunk_hash = crate::util::Hash::from_bytes(&buf[16..48])
+        .ok_or_else(|| ProtocolError::Malformed("data frame: bad chunk hash"))?;
+    let payload = &buf[DATA_FRAME_HEADER_LEN..];
+    Ok((DataFrameHeader { chunk_offset, chunk_len, flags, chunk_hash }, payload))
+}
+
+/// Encode a full DATA frame (header + payload) into a fresh buffer.
+/// Returns the buffer. The payload is appended verbatim; no compression.
+pub fn encode_data_frame(
+    chunk_offset: u64,
+    chunk_len: u32,
+    flags: DataFrameFlags,
+    chunk_hash: &crate::util::Hash,
+    payload: &[u8],
+) -> Vec<u8> {
+    debug_assert_eq!(payload.len() as u64, chunk_len as u64, "encode_data_frame: payload/chunk_len mismatch");
+    let mut out = Vec::with_capacity(DATA_FRAME_HEADER_LEN + payload.len());
+    out.resize(DATA_FRAME_HEADER_LEN, 0);
+    encode_data_frame_header(&mut out, chunk_offset, chunk_len, flags, chunk_hash);
+    out.extend_from_slice(payload);
+    out
 }
 
 /// Encode a frame into `out`. Returns the number of bytes written.
@@ -272,5 +437,65 @@ mod tests {
     fn rejects_truncated_buffer() {
         let e = decode_frame(&[PROTOCOL_VERSION, 0x01, 0, 0]);
         assert!(matches!(e, Err(ProtocolError::Empty)));
+    }
+
+    #[test]
+    fn data_preamble_roundtrip() {
+        let tid = crate::util::TransferId::generate();
+        let p = DataPreamble { transfer_id: tid, file_id: 1, stream_seq: 1 };
+        let bytes = encode_data_preamble(&p);
+        assert_eq!(bytes.len(), DATA_PREAMBLE_LEN);
+        // Reserved 24 bytes must be zero on send.
+        for &b in &bytes[32..] {
+            assert_eq!(b, 0);
+        }
+        let p2 = decode_data_preamble(&bytes).unwrap();
+        assert_eq!(p, p2);
+    }
+
+    #[test]
+    fn data_preamble_rejects_truncated() {
+        let bytes = [0u8; 30];
+        assert!(matches!(
+            decode_data_preamble(&bytes),
+            Err(ProtocolError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn data_frame_roundtrip() {
+        let h = crate::util::Hash::of(b"hello");
+        let payload = b"hello";
+        let buf = encode_data_frame(1024, 5, DataFrameFlags::NONE, &h, payload);
+        let (hdr, payload_after) = decode_data_frame_header(&buf).unwrap();
+        assert_eq!(hdr.chunk_offset, 1024);
+        assert_eq!(hdr.chunk_len, 5);
+        assert_eq!(hdr.chunk_hash, h);
+        assert_eq!(payload_after, payload);
+        // Verify the chunk hash matches the payload.
+        let computed = crate::util::Hash::of(payload_after);
+        assert_eq!(computed, h);
+    }
+
+    #[test]
+    fn data_frame_rejects_oversized_chunk_len() {
+        // Header claims chunk_len > MAX; decode rejects.
+        let mut bad = vec![0u8; DATA_FRAME_HEADER_LEN];
+        bad[..8].copy_from_slice(&0u64.to_le_bytes());
+        bad[8..12].copy_from_slice(&(DATA_MAX_CHUNK_LEN + 1).to_le_bytes());
+        assert!(matches!(
+            decode_data_frame_header(&bad),
+            Err(ProtocolError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn data_frame_rejects_reserved_bits() {
+        let mut bad = vec![0u8; DATA_FRAME_HEADER_LEN];
+        bad[14] = 0x01; // reserved bits
+        assert!(matches!(
+            decode_data_frame_header(&bad),
+            Err(ProtocolError::Malformed(_))
+        ));
     }
 }

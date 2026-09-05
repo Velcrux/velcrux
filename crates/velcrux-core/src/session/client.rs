@@ -53,7 +53,22 @@ impl ClientSession {
     /// Variant of [`connect`](Self::connect) that takes a borrowed
     /// `Connection`. Used by tests.
     pub async fn handshake(conn: &dyn Connection) -> Result<Self> {
-        let (mut send, mut recv) = conn.open_bi().await?;
+        let (send, recv) = conn.open_bi().await?;
+        Self::from_handshake_parts(send, recv).await
+    }
+
+    /// Lower-level constructor: the caller opened the bidi control
+    /// stream and passes the two halves in. Returns a `ClientSession`
+    /// once HELLO / HELLO_ACK have completed.
+    ///
+    /// This is the entry point used by `velcrux upload` / `velcrux
+    /// download` so the caller can keep a handle to the underlying
+    /// `Connection` for opening data streams alongside the control
+    /// stream.
+    pub async fn from_handshake_parts(
+        mut send: Box<dyn BiSendStream>,
+        mut recv: Box<dyn BiRecvStream>,
+    ) -> Result<Self> {
         tracing::debug!("client: control stream opened");
 
         // 1. Send HELLO.
@@ -74,8 +89,7 @@ impl ClientSession {
         }
         let ack = HelloAck::decode(&frame.payload)?;
 
-        // 3. Validate the intersection. The server's HELLO_ACK already
-        //    is the intersection; check that it is well-formed.
+        // 3. Validate the intersection.
         if let Err(s) = Capabilities::validate_intersection(ack.capabilities) {
             return Err(VelcruxError::Internal(format!(
                 "invalid capability intersection: {s}"
@@ -140,5 +154,89 @@ impl ClientSession {
     /// Borrow the negotiated HELLO_ACK result.
     pub fn negotiated(&self) -> &Negotiated {
         &self.negotiated
+    }
+
+    /// Mutable borrow of the send half of the control stream.
+    pub fn send_mut(&mut self) -> &mut Box<dyn BiSendStream> {
+        &mut self.send
+    }
+
+    /// Mutable borrow of the recv half of the control stream.
+    pub fn recv_mut(&mut self) -> &mut Box<dyn BiRecvStream> {
+        &mut self.recv
+    }
+
+    /// Move the send half out of the session. Used by M2 transfer
+    /// pipelines that need to write/read the control stream directly.
+    ///
+    /// The session's send/recv Boxes are replaced with empty placeholders
+    /// so this can be called twice only on different fields. After this
+    /// call the session is no longer usable for control-stream reads
+    /// through `self`; the caller owns the returned Box.
+    pub fn send_mut_owned(&mut self) -> Box<dyn BiSendStream> {
+        // Use a small `Noop` shim so we can `mem::replace` a Box<dyn>.
+        // The shim implements the traits but returns errors on use; we
+        // never use it after the replace.
+        use crate::transport::NoopStream;
+        std::mem::replace(&mut self.send, Box::new(NoopStream::bidir_send()))
+    }
+
+    /// Same as [`send_mut_owned`] for the recv half.
+    pub fn recv_mut_owned(&mut self) -> Box<dyn BiRecvStream> {
+        use crate::transport::NoopStream;
+        std::mem::replace(&mut self.recv, Box::new(NoopStream::bidir_recv()))
+    }
+
+    /// Read a single control frame and return it.
+    pub async fn recv_frame(
+        &mut self,
+    ) -> Result<crate::protocol::frame::Frame<'static>> {
+        use crate::protocol::frame::Frame;
+        // 5 bytes: 4-byte fixed prefix + 1-byte short varint.
+        let header_start = self.recv.read_exact(5).await?.ok_or_else(|| {
+            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+        })?;
+        let mut buf = header_start.to_vec();
+        let mut varint_len = 1usize;
+        while (buf[4] & 0x80) != 0 {
+            let next = self.recv.read_exact(1).await?.ok_or_else(|| {
+                VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+            })?;
+            buf.extend_from_slice(&next);
+            varint_len += 1;
+            if varint_len > 10 {
+                return Err(VelcruxError::Protocol(crate::error::ProtocolError::VarintOverflow));
+            }
+        }
+        let (declared_length, _) = crate::protocol::varint::decode_varint(&buf[4..])?;
+        let max = crate::protocol::frame::max_message_size();
+        if declared_length > max {
+            return Err(VelcruxError::Protocol(crate::error::ProtocolError::FrameTooLarge {
+                declared: declared_length,
+                limit: max,
+            }));
+        }
+        let rid = self.recv.read_exact(8).await?.ok_or_else(|| {
+            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+        })?;
+        buf.extend_from_slice(&rid);
+        let payload = if declared_length == 0 {
+            bytes::Bytes::new()
+        } else {
+            self.recv.read_exact(declared_length as usize).await?.ok_or_else(|| {
+                VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+            })?
+        };
+        buf.extend_from_slice(&payload);
+        let frame = crate::protocol::frame::decode_frame(&buf)?;
+        let payload_static: &'static [u8] = Box::leak(frame.payload.to_vec().into_boxed_slice());
+        Ok(Frame {
+            version: frame.version,
+            type_byte: frame.type_byte,
+            flags: frame.flags,
+            length: frame.length,
+            request_id: frame.request_id,
+            payload: payload_static,
+        })
     }
 }

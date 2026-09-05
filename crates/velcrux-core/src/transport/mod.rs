@@ -124,3 +124,46 @@ pub trait UniRecvStream: Send {
 
 /// Convenience: re-export the Arc'd transport type used by client/server.
 pub type SharedTransport = Arc<dyn Transport<Conn = QuicConnection>>;
+
+/// Sentinel stream used by [`crate::session::ClientSession`] to swap out
+/// the owned control-stream Boxes when transferring ownership to a
+/// per-transfer pipeline. Implements the stream traits but never used;
+/// any read or write returns an error.
+pub struct NoopStream;
+
+impl NoopStream {
+    /// Construct a no-op `BiSendStream`.
+    pub fn bidir_send() -> impl BiSendStream {
+        Self
+    }
+    /// Construct a no-op `BiRecvStream`.
+    pub fn bidir_recv() -> impl BiRecvStream {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl BiSendStream for NoopStream {
+    async fn write_all(&mut self, _data: Bytes) -> Result<()> {
+        Err(crate::error::VelcruxError::Internal(
+            "NoopStream::write_all".into(),
+        ))
+    }
+    async fn finish(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl BiRecvStream for NoopStream {
+    async fn read_chunk(&mut self, _max: usize) -> Result<Option<Bytes>> {
+        Err(crate::error::VelcruxError::Internal(
+            "NoopStream::read_chunk".into(),
+        ))
+    }
+    async fn read_exact(&mut self, _n: usize) -> Result<Option<Bytes>> {
+        Err(crate::error::VelcruxError::Internal(
+            "NoopStream::read_exact".into(),
+        ))
+    }
+}

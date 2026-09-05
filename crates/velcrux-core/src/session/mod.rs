@@ -50,7 +50,7 @@ pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'sta
     };
     let mut buf = header_start.to_vec();
     let mut varint_len = 1usize;
-    while (buf[4] & 0x80) != 0 {
+    while (buf[buf.len() - 1] & 0x80) != 0 {
         let next = match recv.read_chunk(1).await? {
             Some(b) => b,
             None => return Ok(None),
