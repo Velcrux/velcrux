@@ -21,10 +21,21 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
+pub mod chunking;
 pub mod error;
 pub mod protocol;
 pub mod session;
+pub mod storage;
+pub mod transfer;
 pub mod transport;
 pub mod util;
 
+pub use chunking::{
+    ChunkBoundary, ChunkParams, Chunker, FixedChunker, RollingChunker, CHUNK_DEFAULT_MAX,
+    CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
+};
 pub use error::{VelcruxError, Result};
+pub use storage::{
+    FileMeta, LocalFilesystemBackend, StorageBackend, Staging, VPath, VPathError,
+};
+pub use transfer::{TransferDir, TransferKind, TransferRequest};
