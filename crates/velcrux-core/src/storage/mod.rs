@@ -84,7 +84,10 @@ impl VPath {
             return Err(VPathError::Empty);
         }
         if raw.len() > MAX_PATH_TOTAL {
-            return Err(VPathError::TooLong { len: raw.len(), limit: MAX_PATH_TOTAL });
+            return Err(VPathError::TooLong {
+                len: raw.len(),
+                limit: MAX_PATH_TOTAL,
+            });
         }
         if raw.starts_with('/') {
             return Err(VPathError::Absolute);
@@ -162,7 +165,12 @@ pub struct FileMeta {
 impl FileMeta {
     /// Construct a minimal meta record from size and hash.
     pub fn new(size: u64, file_hash: Hash) -> Self {
-        Self { size, mode: 0o100644, mtime_ns: 0, file_hash }
+        Self {
+            size,
+            mode: 0o100644,
+            mtime_ns: 0,
+            file_hash,
+        }
     }
 }
 /// A handle to an in-progress staged write. The file is at
@@ -173,7 +181,10 @@ pub struct Staging {
 }
 
 impl Staging {
-    pub(crate) fn new(path: PathBuf) -> Self {
+    /// Construct a `Staging` for an arbitrary path. The M3-aware
+    /// server uses this to wrap a pre-opened file that may have
+    /// been resumed across processes.
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
@@ -234,6 +245,18 @@ pub struct StagingWriter {
 }
 
 impl StagingWriter {
+    /// Construct a `StagingWriter` from a pre-opened file and the
+    /// staging path. Used by M3-aware server code that needs
+    /// fine-grained control over the open mode (e.g. to avoid
+    /// truncating an existing partial file on resume).
+    pub fn new(file: tokio::fs::File, staging: Staging) -> Self {
+        Self {
+            staging,
+            file,
+            written: 0,
+        }
+    }
+
     /// `pwrite`: write `data` at `offset`. The staging file is extended
     /// as needed. Out-of-order writes are supported.
     pub async fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<(), VelcruxError> {
@@ -303,7 +326,10 @@ impl LocalFilesystemBackend {
         if d1 != d2 {
             return Err(VelcruxError::Config(format!(
                 "storage root ({}) and staging ({}) are on different filesystems (dev {} vs {})",
-                root.display(), staging.display(), d1, d2
+                root.display(),
+                staging.display(),
+                d1,
+                d2
             )));
         }
         Ok(Self { root, staging })
@@ -313,7 +339,7 @@ impl LocalFilesystemBackend {
         self.root.join(p.as_path())
     }
 
-    fn staging_path(&self, transfer_id: &str, p: &VPath) -> PathBuf {
+    pub fn staging_path(&self, transfer_id: &str, p: &VPath) -> PathBuf {
         let safe_tid: String = transfer_id
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -369,7 +395,12 @@ impl StorageBackend for LocalFilesystemBackend {
                     .unwrap_or(0);
                 #[cfg(not(unix))]
                 let mtime_ns = 0;
-                Ok(Some(FileMeta { size, mode, mtime_ns, file_hash: Hash::ZERO }))
+                Ok(Some(FileMeta {
+                    size,
+                    mode,
+                    mtime_ns,
+                    file_hash: Hash::ZERO,
+                }))
             }
             Ok(_) => Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -381,7 +412,10 @@ impl StorageBackend for LocalFilesystemBackend {
         let path = self.resolve(p);
         let file = tokio::fs::File::open(&path).await?;
         let meta = file.metadata().await?;
-        Ok(Box::new(TokioRandomRead { file, len: meta.len() }))
+        Ok(Box::new(TokioRandomRead {
+            file,
+            len: meta.len(),
+        }))
     }
 
     async fn open_staging(
@@ -400,7 +434,11 @@ impl StorageBackend for LocalFilesystemBackend {
             .truncate(true)
             .open(&path)
             .await?;
-        Ok(StagingWriter { staging: Staging::new(path), file, written: 0 })
+        Ok(StagingWriter {
+            staging: Staging::new(path),
+            file,
+            written: 0,
+        })
     }
 
     async fn commit(
@@ -470,16 +508,31 @@ mod tests {
             VPath::validate("data/../etc"),
             Err(VPathError::Traversal)
         ));
-        assert!(matches!(VPath::validate("data/.."), Err(VPathError::Traversal)));
+        assert!(matches!(
+            VPath::validate("data/.."),
+            Err(VPathError::Traversal)
+        ));
         assert!(matches!(VPath::validate("."), Err(VPathError::Traversal)));
-        assert!(matches!(VPath::validate("data/"), Err(VPathError::Traversal)));
-        assert!(matches!(VPath::validate("/data"), Err(VPathError::Absolute)));
+        assert!(matches!(
+            VPath::validate("data/"),
+            Err(VPathError::Traversal)
+        ));
+        assert!(matches!(
+            VPath::validate("/data"),
+            Err(VPathError::Absolute)
+        ));
     }
 
     #[test]
     fn vpath_validate_rejects_absolute_and_empty() {
-        assert!(matches!(VPath::validate("/etc/passwd"), Err(VPathError::Absolute)));
-        assert!(matches!(VPath::validate("data//file"), Err(VPathError::Traversal)));
+        assert!(matches!(
+            VPath::validate("/etc/passwd"),
+            Err(VPathError::Absolute)
+        ));
+        assert!(matches!(
+            VPath::validate("data//file"),
+            Err(VPathError::Traversal)
+        ));
         assert!(matches!(VPath::validate(""), Err(VPathError::Empty)));
     }
 
@@ -497,7 +550,10 @@ mod tests {
     fn vpath_validate_rejects_overlong_total() {
         let comps = vec!["abc"; (MAX_PATH_TOTAL / 4) + 1];
         let p = comps.join("/");
-        assert!(matches!(VPath::validate(&p), Err(VPathError::TooLong { .. })));
+        assert!(matches!(
+            VPath::validate(&p),
+            Err(VPathError::TooLong { .. })
+        ));
     }
 
     #[test]
@@ -568,36 +624,34 @@ mod tests {
         let dest = VPath::validate("replace.bin").unwrap();
 
         // First commit.
-        let mut w1 = backend
-            .open_staging("t1", &dest, 5)
-            .await
-            .unwrap();
+        let mut w1 = backend.open_staging("t1", &dest, 5).await.unwrap();
         w1.write_at(0, b"first").await.unwrap();
         w1.fsync().await.unwrap();
         backend
-            .commit("t1", w1.into_staging(), &dest, &FileMeta::new(5, Hash::of(b"first")))
+            .commit(
+                "t1",
+                w1.into_staging(),
+                &dest,
+                &FileMeta::new(5, Hash::of(b"first")),
+            )
             .await
             .unwrap();
-        assert_eq!(
-            backend.stat(&dest).await.unwrap().unwrap().size,
-            5
-        );
+        assert_eq!(backend.stat(&dest).await.unwrap().unwrap().size, 5);
 
         // Second commit replaces it (atomic rename).
-        let mut w2 = backend
-            .open_staging("t2", &dest, 7)
-            .await
-            .unwrap();
+        let mut w2 = backend.open_staging("t2", &dest, 7).await.unwrap();
         w2.write_at(0, b"second!").await.unwrap();
         w2.fsync().await.unwrap();
         backend
-            .commit("t2", w2.into_staging(), &dest, &FileMeta::new(7, Hash::of(b"second!")))
+            .commit(
+                "t2",
+                w2.into_staging(),
+                &dest,
+                &FileMeta::new(7, Hash::of(b"second!")),
+            )
             .await
             .unwrap();
-        assert_eq!(
-            backend.stat(&dest).await.unwrap().unwrap().size,
-            7
-        );
+        assert_eq!(backend.stat(&dest).await.unwrap().unwrap().size, 7);
     }
 }
 

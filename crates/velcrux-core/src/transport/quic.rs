@@ -19,9 +19,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use quinn::{ClientConfig, Endpoint, ServerConfig, TransportConfig, VarInt};
-use rustls::{
-    Certificate, ClientConfig as RustlsClientConfig, PrivateKey, RootCertStore,
-};
+use rustls::{Certificate, ClientConfig as RustlsClientConfig, PrivateKey, RootCertStore};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Result, TransportError};
@@ -72,7 +70,9 @@ impl TransportConfigTunables {
             )
             .max_concurrent_uni_streams(VarInt::from_u32(self.max_concurrent_streams))
             .max_concurrent_bidi_streams(VarInt::from_u32(self.max_concurrent_streams))
-            .max_idle_timeout(Some(self.idle_timeout.try_into().expect("idle_timeout fits")))
+            .max_idle_timeout(Some(
+                self.idle_timeout.try_into().expect("idle_timeout fits"),
+            ))
             .keep_alive_interval(Some(self.keepalive))
             .initial_rtt(self.initial_rtt);
         c
@@ -113,7 +113,9 @@ impl ClientBuilder {
         let certs = rustls_pemfile::certs(&mut &pem[..])
             .map_err(|e| crate::error::VelcruxError::Config(format!("server roots PEM: {e}")))?;
         for c in certs {
-            self.server_roots.add(&Certificate(c)).expect("adding trusted root");
+            self.server_roots
+                .add(&Certificate(c))
+                .expect("adding trusted root");
         }
         Ok(self)
     }
@@ -222,7 +224,9 @@ impl ServerBuilder {
         let certs = rustls_pemfile::certs(&mut &pem[..])
             .map_err(|e| crate::error::VelcruxError::Config(format!("client CA roots PEM: {e}")))?;
         for c in certs {
-            self.client_roots.add(&Certificate(c)).expect("adding client root");
+            self.client_roots
+                .add(&Certificate(c))
+                .expect("adding client root");
         }
         Ok(self)
     }
@@ -400,7 +404,11 @@ pub struct QuicRecv(quinn::RecvStream);
 #[async_trait]
 impl BiRecvStream for QuicRecv {
     async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>> {
-        let c = self.0.read_chunk(max, true).await.map_err(|e| TransportError::ReadError(e.to_string()))?;
+        let c = self
+            .0
+            .read_chunk(max, true)
+            .await
+            .map_err(|e| TransportError::ReadError(e.to_string()))?;
         Ok(c.map(|ch| ch.bytes))
     }
     async fn read_exact(&mut self, n: usize) -> Result<Option<Bytes>> {
@@ -416,7 +424,11 @@ impl BiRecvStream for QuicRecv {
 #[async_trait]
 impl UniRecvStream for QuicRecv {
     async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>> {
-        let c = self.0.read_chunk(max, true).await.map_err(|e| TransportError::ReadError(e.to_string()))?;
+        let c = self
+            .0
+            .read_chunk(max, true)
+            .await
+            .map_err(|e| TransportError::ReadError(e.to_string()))?;
         Ok(c.map(|ch| ch.bytes))
     }
     async fn read_exact(&mut self, n: usize) -> Result<Option<Bytes>> {
@@ -466,6 +478,3 @@ fn hex_fingerprint(der: &[u8]) -> String {
     }
     s
 }
-
-
-

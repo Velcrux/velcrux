@@ -166,7 +166,11 @@ pub fn decode_data_preamble(buf: &[u8]) -> Result<DataPreamble, ProtocolError> {
         .ok_or_else(|| ProtocolError::Malformed("data preamble: bad transfer_id"))?;
     let file_id = u64::from_le_bytes(buf[16..24].try_into().unwrap());
     let stream_seq = u64::from_le_bytes(buf[24..32].try_into().unwrap());
-    Ok(DataPreamble { transfer_id, file_id, stream_seq })
+    Ok(DataPreamble {
+        transfer_id,
+        file_id,
+        stream_seq,
+    })
 }
 
 /// Flags on a DATA frame. Currently none are defined; reserved bits must
@@ -222,12 +226,17 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame<'_>, ProtocolError> {
     // before any allocation); the second is a wire consistency check.
     let max = max_message_size();
     if length > max {
-        return Err(ProtocolError::FrameTooLarge { declared: length, limit: max });
+        return Err(ProtocolError::FrameTooLarge {
+            declared: length,
+            limit: max,
+        });
     }
-    let payload_len: usize = length.try_into().map_err(|_| ProtocolError::FrameTooLarge {
-        declared: length,
-        limit: max,
-    })?;
+    let payload_len: usize = length
+        .try_into()
+        .map_err(|_| ProtocolError::FrameTooLarge {
+            declared: length,
+            limit: max,
+        })?;
     if buf.len() < header_len + payload_len {
         return Err(ProtocolError::Empty);
     }
@@ -292,7 +301,11 @@ pub fn encode_data_frame_header(
     flags: DataFrameFlags,
     chunk_hash: &crate::util::Hash,
 ) {
-    debug_assert_eq!(out.len(), DATA_FRAME_HEADER_LEN, "encode_data_frame_header: bad out length");
+    debug_assert_eq!(
+        out.len(),
+        DATA_FRAME_HEADER_LEN,
+        "encode_data_frame_header: bad out length"
+    );
     out[..8].copy_from_slice(&chunk_offset.to_le_bytes());
     out[8..12].copy_from_slice(&chunk_len.to_le_bytes());
     let fb = flags.bits().to_le_bytes();
@@ -314,7 +327,8 @@ pub fn decode_data_frame_header(buf: &[u8]) -> Result<(DataFrameHeader, &[u8]), 
     if chunk_len > DATA_MAX_CHUNK_LEN {
         return Err(ProtocolError::Malformed("data frame: chunk_len > max"));
     }
-    let flags = DataFrameFlags::from_bits_truncate(u16::from_le_bytes(buf[12..14].try_into().unwrap()));
+    let flags =
+        DataFrameFlags::from_bits_truncate(u16::from_le_bytes(buf[12..14].try_into().unwrap()));
     let reserved = u16::from_le_bytes(buf[14..16].try_into().unwrap());
     if reserved != 0 {
         return Err(ProtocolError::Malformed("data frame: reserved bits set"));
@@ -322,7 +336,15 @@ pub fn decode_data_frame_header(buf: &[u8]) -> Result<(DataFrameHeader, &[u8]), 
     let chunk_hash = crate::util::Hash::from_bytes(&buf[16..48])
         .ok_or_else(|| ProtocolError::Malformed("data frame: bad chunk hash"))?;
     let payload = &buf[DATA_FRAME_HEADER_LEN..];
-    Ok((DataFrameHeader { chunk_offset, chunk_len, flags, chunk_hash }, payload))
+    Ok((
+        DataFrameHeader {
+            chunk_offset,
+            chunk_len,
+            flags,
+            chunk_hash,
+        },
+        payload,
+    ))
 }
 
 /// Encode a full DATA frame (header + payload) into a fresh buffer.
@@ -334,7 +356,11 @@ pub fn encode_data_frame(
     chunk_hash: &crate::util::Hash,
     payload: &[u8],
 ) -> Vec<u8> {
-    debug_assert_eq!(payload.len() as u64, chunk_len as u64, "encode_data_frame: payload/chunk_len mismatch");
+    debug_assert_eq!(
+        payload.len() as u64,
+        chunk_len as u64,
+        "encode_data_frame: payload/chunk_len mismatch"
+    );
     let mut out = Vec::with_capacity(DATA_FRAME_HEADER_LEN + payload.len());
     out.resize(DATA_FRAME_HEADER_LEN, 0);
     encode_data_frame_header(&mut out, chunk_offset, chunk_len, flags, chunk_hash);
@@ -442,7 +468,11 @@ mod tests {
     #[test]
     fn data_preamble_roundtrip() {
         let tid = crate::util::TransferId::generate();
-        let p = DataPreamble { transfer_id: tid, file_id: 1, stream_seq: 1 };
+        let p = DataPreamble {
+            transfer_id: tid,
+            file_id: 1,
+            stream_seq: 1,
+        };
         let bytes = encode_data_preamble(&p);
         assert_eq!(bytes.len(), DATA_PREAMBLE_LEN);
         // Reserved 24 bytes must be zero on send.

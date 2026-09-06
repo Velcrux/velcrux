@@ -65,6 +65,26 @@ enum Cmd {
         /// Local destination path.
         local: PathBuf,
     },
+    /// Resume a previously-interrupted transfer. M3.
+    Resume {
+        /// Transfer id (26-character ULID).
+        transfer_id: String,
+    },
+    /// Cancel an in-progress transfer. M3.
+    Cancel {
+        /// Transfer id (26-character ULID).
+        transfer_id: String,
+    },
+    /// Show state of a single transfer. M3.
+    Stat {
+        /// Transfer id (26-character ULID).
+        transfer_id: String,
+    },
+    /// List transfers by URL prefix. M3.
+    List {
+        /// URL prefix, e.g. `velcrux://host:7443/data/`.
+        url_prefix: String,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -178,10 +198,15 @@ async fn main() -> anyhow::Result<()> {
     match &cli.cmd {
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
-            let sni = cli
-                .sni
-                .clone()
-                .unwrap_or_else(|| url.split("://").nth(1).unwrap_or("localhost").split(':').next().unwrap_or("localhost").to_string());
+            let sni = cli.sni.clone().unwrap_or_else(|| {
+                url.split("://")
+                    .nth(1)
+                    .unwrap_or("localhost")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost")
+                    .to_string()
+            });
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, "connecting");
             let mut session = ClientSession::connect(transport, addr, &sni).await?;
@@ -192,10 +217,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Upload { local, url } => {
             let (addr, path) = parse_url_with_path(url)?;
-            let sni = cli
-                .sni
-                .clone()
-                .unwrap_or_else(|| url.split("://").nth(1).unwrap_or("localhost").split(':').next().unwrap_or("localhost").to_string());
+            let sni = cli.sni.clone().unwrap_or_else(|| {
+                url.split("://")
+                    .nth(1)
+                    .unwrap_or("localhost")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost")
+                    .to_string()
+            });
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
@@ -206,10 +236,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Download { url, local } => {
             let (addr, path) = parse_url_with_path(url)?;
-            let sni = cli
-                .sni
-                .clone()
-                .unwrap_or_else(|| url.split("://").nth(1).unwrap_or("localhost").split(':').next().unwrap_or("localhost").to_string());
+            let sni = cli.sni.clone().unwrap_or_else(|| {
+                url.split("://")
+                    .nth(1)
+                    .unwrap_or("localhost")
+                    .split(':')
+                    .next()
+                    .unwrap_or("localhost")
+                    .to_string()
+            });
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
@@ -217,6 +252,41 @@ async fn main() -> anyhow::Result<()> {
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
             run_download(&conn, &mut session, local, &path).await?;
+        }
+        Cmd::Resume { transfer_id } => {
+            anyhow::bail!(
+                "`velcrux resume {}` is a stub in this revision; \
+                 use the M3 integration test or call TRANSFER_CREATE \
+                 with the same idempotency key (see tests/m3_resume.rs).",
+                transfer_id
+            );
+        }
+        Cmd::Cancel { transfer_id } => {
+            let (addr, _) = parse_url_with_path("velcrux://localhost:7443/")?;
+            let sni = "localhost".to_string();
+            let transport = build_transport(&cli)?;
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            run_cancel(&mut session, &transfer_id).await?;
+        }
+        Cmd::Stat { transfer_id } => {
+            let (addr, _) = parse_url_with_path("velcrux://localhost:7443/")?;
+            let sni = "localhost".to_string();
+            let transport = build_transport(&cli)?;
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            run_stat(&mut session, &transfer_id).await?;
+        }
+        Cmd::List { url_prefix } => {
+            let (addr, _) = parse_url_with_path(&url_prefix)?;
+            let sni = "localhost".to_string();
+            let transport = build_transport(&cli)?;
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            run_list(&mut session, &url_prefix).await?;
         }
     }
     Ok(())
@@ -238,13 +308,16 @@ async fn run_upload(
         .with_context(|| format!("stat {local:?}"))?
         .len();
     let expected_hash = {
-        let mut f = std::fs::File::open(local)
-            .with_context(|| format!("open {local:?}"))?;
+        let mut f = std::fs::File::open(local).with_context(|| format!("open {local:?}"))?;
         let mut h = velcrux_core::HashHasher::new();
         let mut buf = vec![0u8; 2 * 1024 * 1024];
         loop {
-            let n = f.read(&mut buf).with_context(|| format!("read {local:?}"))?;
-            if n == 0 { break; }
+            let n = f
+                .read(&mut buf)
+                .with_context(|| format!("read {local:?}"))?;
+            if n == 0 {
+                break;
+            }
             h.feed(&buf[..n]);
         }
         h.finalize()
@@ -272,7 +345,9 @@ async fn run_upload(
     }
     let _plan = TransferPlan::decode(&frame.payload)?;
 
-    let begin = TransferBegin { transfer_id: created.transfer_id };
+    let begin = TransferBegin {
+        transfer_id: created.transfer_id,
+    };
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
@@ -294,6 +369,114 @@ async fn run_upload(
         computed == expected_hash
     );
     Ok(())
+}
+
+async fn run_stat(session: &mut ClientSession, transfer_id_str: &str) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Message, StatQuery, StatResult};
+    use velcrux_core::session::encode_message;
+
+    let transfer_id = velcrux_core::util::TransferId::from_string(transfer_id_str)
+        .ok_or_else(|| anyhow::anyhow!("invalid transfer id: {transfer_id_str}"))?;
+    let q = StatQuery { transfer_id };
+    let buf = bytes::Bytes::from(encode_message(&Message::Stat(q), 0)?);
+    session.send_mut().write_all(buf).await?;
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::STAT_RESULT {
+        anyhow::bail!("expected STAT_RESULT, got 0x{:02x}", frame.type_byte);
+    }
+    let r = StatResult::decode(&frame.payload)?;
+    if !r.found {
+        anyhow::bail!("transfer not found: {}", transfer_id_str);
+    }
+    if cli_log_json() {
+        let obj = serde_json::json!({
+            "v": 1,
+            "event": "stat",
+            "transfer_id": r.transfer_id.to_string(),
+            "status": r.status,
+            "direction": r.direction,
+            "remote_path": r.remote_path,
+            "file_size": r.file_size,
+            "bytes_completed": r.bytes_completed,
+            "verified_up_to": r.verified_up_to,
+            "created_ms": r.created_ms,
+            "updated_ms": r.updated_ms,
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "{:<26}  {:<10}  {:<10}  {:>10}  {:>10}  {}",
+            r.transfer_id, r.status, r.direction, r.file_size, r.bytes_completed, r.remote_path
+        );
+    }
+    Ok(())
+}
+
+async fn run_list(session: &mut ClientSession, url_prefix: &str) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{ListQuery, ListResult, Message};
+    use velcrux_core::session::encode_message;
+
+    let q = ListQuery {
+        url_prefix: url_prefix.to_string(),
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::List(q), 0)?);
+    session.send_mut().write_all(buf).await?;
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::LIST_RESULT {
+        anyhow::bail!("expected LIST_RESULT, got 0x{:02x}", frame.type_byte);
+    }
+    let r = ListResult::decode(&frame.payload)?;
+    if cli_log_json() {
+        let arr: Vec<_> = r
+            .entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "v": 1,
+                    "event": "stat",
+                    "transfer_id": e.transfer_id.to_string(),
+                    "status": e.status,
+                    "direction": e.direction,
+                    "remote_path": e.remote_path,
+                    "file_size": e.file_size,
+                    "bytes_completed": e.bytes_completed,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::Value::Array(arr));
+    } else if r.entries.is_empty() {
+        println!("(no transfers match {url_prefix})");
+    } else {
+        for e in &r.entries {
+            println!(
+                "{:<26}  {:<10}  {:>10}  {}",
+                e.transfer_id, e.status, e.file_size, e.remote_path
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_cancel(session: &mut ClientSession, transfer_id_str: &str) -> anyhow::Result<()> {
+    use velcrux_core::protocol::error::ErrorCode;
+    use velcrux_core::protocol::message::{Cancel, Message};
+    use velcrux_core::session::encode_message;
+
+    let transfer_id = velcrux_core::util::TransferId::from_string(transfer_id_str)
+        .ok_or_else(|| anyhow::anyhow!("invalid transfer id: {transfer_id_str}"))?;
+    let c = Cancel {
+        transfer_id,
+        reason_code: ErrorCode::TransferCancelled.to_wire(),
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::Cancel(c), 0)?);
+    session.send_mut().write_all(buf).await?;
+    session.bye().await.ok();
+    println!("cancel requested: {transfer_id_str}");
+    Ok(())
+}
+
+fn cli_log_json() -> bool {
+    std::env::var("VELCRUX_OUTPUT_JSON").is_ok()
 }
 
 async fn run_download(
@@ -329,7 +512,9 @@ async fn run_download(
     }
     let _plan = TransferPlan::decode(&frame.payload)?;
 
-    let begin = TransferBegin { transfer_id: created.transfer_id };
+    let begin = TransferBegin {
+        transfer_id: created.transfer_id,
+    };
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 

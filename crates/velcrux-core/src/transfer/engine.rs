@@ -136,7 +136,11 @@ pub async fn client_upload(
 
     // Open a unidirectional stream for the data and write the preamble.
     let mut data_send = conn.open_uni().await?;
-    let preamble = DataPreamble { transfer_id, file_id: 1, stream_seq: 1 };
+    let preamble = DataPreamble {
+        transfer_id,
+        file_id: 1,
+        stream_seq: 1,
+    };
     data_send
         .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
         .await?;
@@ -146,18 +150,21 @@ pub async fn client_upload(
 
     // Chunker task: read → CDC → BLAKE3 → tx.
     let read_path = local_path.clone();
-    let chunker_task = tokio::spawn(async move {
-        chunker_to_channel(read_path, file_size, cfg, tx).await
-    });
+    let chunker_task =
+        tokio::spawn(async move { chunker_to_channel(read_path, file_size, cfg, tx).await });
 
     // Writer task: rx → DATA frames on the QUIC stream.
     let writer_task = tokio::spawn(async move {
         while let Some(item) = rx.recv().await {
             match item {
-                DataItem::Frame { offset, length, hash, payload } => {
-                    let bytes = encode_data_frame(
-                        offset, length, DataFrameFlags::NONE, &hash, &payload,
-                    );
+                DataItem::Frame {
+                    offset,
+                    length,
+                    hash,
+                    payload,
+                } => {
+                    let bytes =
+                        encode_data_frame(offset, length, DataFrameFlags::NONE, &hash, &payload);
                     data_send.write_all(Bytes::from(bytes)).await?;
                 }
                 DataItem::Eof => break,
@@ -167,15 +174,18 @@ pub async fn client_upload(
         Result::<()>::Ok(())
     });
 
-    chunker_task.await.map_err(|e| {
-        VelcruxError::Internal(format!("chunker task join: {e}"))
-    })??;
-    writer_task.await.map_err(|e| {
-        VelcruxError::Internal(format!("writer task join: {e}"))
-    })??;
+    chunker_task
+        .await
+        .map_err(|e| VelcruxError::Internal(format!("chunker task join: {e}")))??;
+    writer_task
+        .await
+        .map_err(|e| VelcruxError::Internal(format!("writer task join: {e}")))??;
 
     // VERIFY.
-    let verify = VerifyMsg { transfer_id, expected_hash };
+    let verify = VerifyMsg {
+        transfer_id,
+        expected_hash,
+    };
     let buf = Bytes::from(encode_message(&Message::Verify(verify), 0)?);
     control_send.write_all(buf).await?;
 
@@ -189,9 +199,9 @@ pub async fn client_upload(
         return Err(protocol_violation("VERIFY_RESULT transfer_id mismatch"));
     }
     if !vr.ok {
-        return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-            "whole-file hash mismatch",
-        )));
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed("whole-file hash mismatch"),
+        ));
     }
 
     // COMMIT.
@@ -241,7 +251,12 @@ async fn chunker_to_channel(
                 let hash = hash_bytes(&pending);
                 let payload = std::mem::take(&mut pending);
                 if tx
-                    .send(DataItem::Frame { offset, length, hash, payload: Bytes::from(payload) })
+                    .send(DataItem::Frame {
+                        offset,
+                        length,
+                        hash,
+                        payload: Bytes::from(payload),
+                    })
                     .await
                     .is_err()
                 {
@@ -259,8 +274,8 @@ async fn chunker_to_channel(
         pending.extend_from_slice(&read_buf[..n]);
         let boundaries = chunker.push(&read_buf[..n])?;
         let _ = pending.len(); // (kept for clarity)
-        // `boundaries[i].end()` is the byte offset (within the chunker
-        // stream) of the byte *after* the i-th chunk. Use that to drain.
+                               // `boundaries[i].end()` is the byte offset (within the chunker
+                               // stream) of the byte *after* the i-th chunk. Use that to drain.
         for b in &boundaries {
             let target = b.end() as usize;
             // target counts bytes the chunker has *seen* total; pending
@@ -289,54 +304,60 @@ async fn chunker_to_channel(
     }
 }
 
-fn hash_bytes(data: &[u8]) -> Hash {
+pub(super) fn hash_bytes(data: &[u8]) -> Hash {
     let mut h = HashHasher::new();
     h.feed(data);
     h.finalize()
 }
 
-
 // ===========================================================================
 // read_control_frame (used by both client and server)
 // ===========================================================================
 
-async fn read_control_frame(
+pub(super) async fn read_control_frame(
     recv: &mut dyn BiRecvStream,
 ) -> Result<crate::protocol::frame::Frame<'static>> {
     use crate::protocol::frame::Frame;
-    let header_start = recv.read_exact(5).await?.ok_or_else(|| {
-        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-    })?;
+    let header_start = recv
+        .read_exact(5)
+        .await?
+        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     let mut buf = header_start.to_vec();
     let mut varint_len = 1usize;
     while (buf[4] & 0x80) != 0 {
-        let next = recv.read_exact(1).await?.ok_or_else(|| {
-            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-        })?;
+        let next = recv
+            .read_exact(1)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
         buf.extend_from_slice(&next);
         varint_len += 1;
         if varint_len > 10 {
-            return Err(VelcruxError::Protocol(crate::error::ProtocolError::VarintOverflow));
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::VarintOverflow,
+            ));
         }
     }
     let (declared_length, _) = crate::protocol::varint::decode_varint(&buf[4..])?;
     let max = crate::protocol::frame::max_message_size();
     if declared_length > max {
-        return Err(VelcruxError::Protocol(crate::error::ProtocolError::FrameTooLarge {
-            declared: declared_length,
-            limit: max,
-        }));
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::FrameTooLarge {
+                declared: declared_length,
+                limit: max,
+            },
+        ));
     }
-    let rid = recv.read_exact(8).await?.ok_or_else(|| {
-        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-    })?;
+    let rid = recv
+        .read_exact(8)
+        .await?
+        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     buf.extend_from_slice(&rid);
     let payload = if declared_length == 0 {
         Bytes::new()
     } else {
-        recv.read_exact(declared_length as usize).await?.ok_or_else(|| {
-            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-        })?
+        recv.read_exact(declared_length as usize)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?
     };
     buf.extend_from_slice(&payload);
     let frame = crate::protocol::frame::decode_frame(&buf)?;
@@ -351,7 +372,7 @@ async fn read_control_frame(
     })
 }
 
-fn protocol_violation(detail: &'static str) -> VelcruxError {
+pub(super) fn protocol_violation(detail: &'static str) -> VelcruxError {
     use crate::error::ProtocolError;
     VelcruxError::Protocol(ProtocolError::InvalidStateTransition(detail))
 }
@@ -360,14 +381,16 @@ fn protocol_violation(detail: &'static str) -> VelcruxError {
 // Server-side helpers (upload receive)
 // ===========================================================================
 
-async fn hash_file(path: &std::path::Path) -> Result<Hash> {
+pub(super) async fn hash_file(path: &std::path::Path) -> Result<Hash> {
     use tokio::io::AsyncReadExt;
     let mut f = tokio::fs::File::open(path).await?;
     let mut h = HashHasher::new();
     let mut buf = vec![0u8; 2 * 1024 * 1024];
     loop {
         let n = f.read(&mut buf).await?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         h.feed(&buf[..n]);
     }
     Ok(h.finalize())
@@ -425,7 +448,9 @@ pub async fn server_upload_session(
         .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     let preamble = decode_data_preamble(&pre)?;
     if preamble.transfer_id != transfer_id {
-        return Err(protocol_violation("upload: transfer_id mismatch in preamble"));
+        return Err(protocol_violation(
+            "upload: transfer_id mismatch in preamble",
+        ));
     }
 
     // Open staging and absorb the data.
@@ -433,10 +458,7 @@ pub async fn server_upload_session(
         .open_staging(&transfer_id.to_string(), dst, expected_size)
         .await?;
     loop {
-        let header_bytes = match data_recv
-            .read_exact(DATA_FRAME_HEADER_LEN)
-            .await?
-        {
+        let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
             Some(b) => b,
             None => break,
         };
@@ -454,9 +476,9 @@ pub async fn server_upload_session(
         };
         let computed = hash_bytes(&payload);
         if computed != hdr.chunk_hash {
-            return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-                "upload: chunk hash mismatch",
-            )));
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
+            ));
         }
         writer.write_at(hdr.chunk_offset, &payload).await?;
     }
@@ -480,18 +502,24 @@ pub async fn server_upload_session(
     }
     let verify = VerifyMsg::decode(&frame.payload)?;
     if verify.transfer_id != transfer_id || verify.expected_hash != expected_hash {
-        return Err(protocol_violation("server: VERIFY transfer_id/hash mismatch"));
+        return Err(protocol_violation(
+            "server: VERIFY transfer_id/hash mismatch",
+        ));
     }
 
     // Reply VERIFY_RESULT.
     let ok = computed == expected_hash;
-    let vr = VerifyResultMsg { transfer_id, ok, computed_hash: computed };
+    let vr = VerifyResultMsg {
+        transfer_id,
+        ok,
+        computed_hash: computed,
+    };
     let buf = Bytes::from(encode_message(&Message::VerifyResult(vr), 0)?);
     control_send.write_all(buf).await?;
     if !ok {
-        return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-            "server: hash mismatch on verify",
-        )));
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed("server: hash mismatch on verify"),
+        ));
     }
 
     // Await COMMIT.
@@ -511,7 +539,10 @@ pub async fn server_upload_session(
         .await?;
 
     // Reply COMMITTED.
-    let committed = CommittedMsg { transfer_id, files: 1 };
+    let committed = CommittedMsg {
+        transfer_id,
+        files: 1,
+    };
     let buf = Bytes::from(encode_message(&Message::Committed(committed), 0)?);
     control_send.write_all(buf).await?;
 
@@ -564,14 +595,13 @@ pub async fn client_download(
         .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     let preamble = decode_data_preamble(&pre)?;
     if preamble.transfer_id != transfer_id {
-        return Err(protocol_violation("download: transfer_id mismatch in preamble"));
+        return Err(protocol_violation(
+            "download: transfer_id mismatch in preamble",
+        ));
     }
 
     loop {
-        let header_bytes = match data_recv
-            .read_exact(DATA_FRAME_HEADER_LEN)
-            .await?
-        {
+        let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
             Some(b) => b,
             None => break,
         };
@@ -587,9 +617,9 @@ pub async fn client_download(
         };
         let computed = hash_bytes(&payload);
         if computed != hdr.chunk_hash {
-            return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-                "download: chunk hash mismatch",
-            )));
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
+            ));
         }
         // pwrite at the declared offset.
         use tokio::io::AsyncSeekExt;
@@ -607,7 +637,10 @@ pub async fn client_download(
     // since the client does not know the expected hash in advance. The
     // server is authoritative for the whole-file hash; it returns ok=true
     // iff the file it just streamed matches its stored hash.
-    let verify = VerifyMsg { transfer_id, expected_hash: Hash::ZERO };
+    let verify = VerifyMsg {
+        transfer_id,
+        expected_hash: Hash::ZERO,
+    };
     let buf = Bytes::from(encode_message(&Message::Verify(verify), 0)?);
     control_send.write_all(buf).await?;
 
@@ -617,12 +650,14 @@ pub async fn client_download(
     }
     let vr = VerifyResultMsg::decode(&frame.payload)?;
     if vr.transfer_id != transfer_id {
-        return Err(protocol_violation("download: VERIFY_RESULT transfer_id mismatch"));
+        return Err(protocol_violation(
+            "download: VERIFY_RESULT transfer_id mismatch",
+        ));
     }
     if !vr.ok {
-        return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-            "download: server reported hash mismatch",
-        )));
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed("download: server reported hash mismatch"),
+        ));
     }
 
     // COMMIT.
@@ -637,7 +672,9 @@ pub async fn client_download(
     }
     let committed = CommittedMsg::decode(&frame.payload)?;
     if committed.transfer_id != transfer_id || committed.files != 1 {
-        return Err(protocol_violation("download: COMMITTED transfer_id/files mismatch"));
+        return Err(protocol_violation(
+            "download: COMMITTED transfer_id/files mismatch",
+        ));
     }
 
     // Atomic rename staging → final.
@@ -673,7 +710,11 @@ pub async fn server_download_session(
 
     // Open a unidirectional data stream and write the preamble.
     let mut data_send = conn.open_uni().await?;
-    let preamble = DataPreamble { transfer_id, file_id: 1, stream_seq: 1 };
+    let preamble = DataPreamble {
+        transfer_id,
+        file_id: 1,
+        stream_seq: 1,
+    };
     data_send
         .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
         .await?;
@@ -743,7 +784,9 @@ pub async fn server_download_session(
     }
     let verify = VerifyMsg::decode(&frame.payload)?;
     if verify.transfer_id != transfer_id {
-        return Err(protocol_violation("server download: VERIFY transfer_id mismatch"));
+        return Err(protocol_violation(
+            "server download: VERIFY transfer_id mismatch",
+        ));
     }
 
     // Reply VERIFY_RESULT{ok, computed_hash=whole_file_hash}.
@@ -766,17 +809,18 @@ pub async fn server_download_session(
     }
     let commit = CommitMsg::decode(&frame.payload)?;
     if commit.transfer_id != transfer_id {
-        return Err(protocol_violation("server download: COMMIT transfer_id mismatch"));
+        return Err(protocol_violation(
+            "server download: COMMIT transfer_id mismatch",
+        ));
     }
 
     // Reply COMMITTED.
-    let committed = CommittedMsg { transfer_id, files: 1 };
+    let committed = CommittedMsg {
+        transfer_id,
+        files: 1,
+    };
     let buf = Bytes::from(encode_message(&Message::Committed(committed), 0)?);
     control_send.write_all(buf).await?;
 
     Ok(())
 }
-
-
-
-

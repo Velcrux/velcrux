@@ -55,3 +55,11 @@ pub const AGENT_STRING: &str = concat!("velcrux/", env!("CARGO_PKG_VERSION"));
 /// ALPN protocol identifier (`PROTOCOL.md` header). Negotiated during the
 /// QUIC/TLS handshake.
 pub const ALPN: &[u8] = b"VELCRUX/1";
+
+/// M3 checkpoint cadence: 1 GiB (sender side; receiver persists every
+/// chunk on receive, so the sender drives the wire-side CHECKPOINT
+/// message frequency).
+pub const CHECKPOINT_BYTES_INTERVAL: u64 = 1 << 30;
+
+/// M3 checkpoint cadence: 10 seconds (sender side).
+pub const CHECKPOINT_TIME_INTERVAL_MS: u64 = 10_000;

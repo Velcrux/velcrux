@@ -79,7 +79,8 @@ pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'sta
         return Err(crate::error::ProtocolError::FrameTooLarge {
             declared: declared_length,
             limit: max,
-        }.into());
+        }
+        .into());
     }
     let payload_len = declared_length as usize;
     let payload = if payload_len == 0 {
@@ -112,7 +113,11 @@ pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'sta
 
 /// Write a single frame to `send`. Backpressure-aware: the underlying quinn
 /// call awaits the QUIC driver.
-pub async fn write_frame(send: &mut dyn BiSendStream, msg: &Message, request_id: u64) -> Result<()> {
+pub async fn write_frame(
+    send: &mut dyn BiSendStream,
+    msg: &Message,
+    request_id: u64,
+) -> Result<()> {
     let buf = encode_message(msg, request_id)?;
     send.write_all(bytes::Bytes::from(buf)).await?;
     Ok(())

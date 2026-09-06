@@ -84,7 +84,9 @@ impl Capabilities {
         if !intersection.has(Capability::Blake3) {
             return Err("intersection lacks mandatory BLAKE3");
         }
-        if !intersection.has(Capability::FixedChunking) && !intersection.has(Capability::CdcChunking) {
+        if !intersection.has(Capability::FixedChunking)
+            && !intersection.has(Capability::CdcChunking)
+        {
             return Err("intersection lacks any chunking mode");
         }
         Ok(())

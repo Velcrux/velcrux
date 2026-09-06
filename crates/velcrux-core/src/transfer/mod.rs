@@ -15,10 +15,15 @@
 //!   - Storage is staged, then atomically renamed into place.
 
 pub mod engine;
+pub mod engine_m3;
 
 pub use engine::{
     client_download, client_upload, server_download_session, server_staging_path,
     server_upload_session, PipelineConfig,
+};
+pub use engine_m3::{
+    build_resume_state, cancel_transfer as cancel_transfer_m3, client_upload as client_upload_m3,
+    server_upload_session as server_upload_session_m3, M3_CHUNK_SIZE,
 };
 
 use crate::error::VelcruxError;

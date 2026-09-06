@@ -9,6 +9,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SanType,
+};
+use rustls::{Certificate, PrivateKey};
+use rustls_pemfile;
+use tokio::time::timeout;
+use tracing_subscriber::EnvFilter;
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ClientSession, ServerConn, ServerStats};
 use velcrux_core::transport::quic::{
@@ -16,14 +24,6 @@ use velcrux_core::transport::quic::{
     TransportConfigTunables,
 };
 use velcrux_core::transport::Transport;
-use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
-    IsCa, KeyPair, KeyUsagePurpose, SanType,
-};
-use rustls::{Certificate, PrivateKey};
-use rustls_pemfile;
-use tokio::time::timeout;
-use tracing_subscriber::EnvFilter;
 
 // Silence "imported but unused" warnings on the dev-only helpers below.
 #[allow(dead_code)]
@@ -32,8 +32,7 @@ struct _Unused;
 // Silence "imported but unused" warnings on the dev-only helpers below.
 
 fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(((data.len() + 2) / 3) * 4);
     let mut i = 0;
     while i + 3 <= data.len() {
@@ -106,7 +105,10 @@ fn build_server_cert(ca: &DevCa) -> (Vec<Certificate>, PrivateKey) {
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, "velcrux-test-server");
     params.distinguished_name = dn;
-    params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
 

@@ -21,10 +21,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Hello, HelloAck, Message, Ping};
+use crate::state::{StateStore, TransferStatus};
 use crate::storage::{LocalFilesystemBackend, VPath};
 use crate::transport::Connection;
-use std::sync::Arc;
 use crate::util::TransferId;
+use std::sync::Arc;
 
 use super::{read_frame, write_frame};
 
@@ -86,21 +87,39 @@ pub struct ServerConn {
     stats: Arc<ServerStats>,
     /// Storage backend used by M2 transfer sessions.
     backend: Arc<LocalFilesystemBackend>,
+    /// M3 state store. The server uses it to answer STAT / LIST
+    /// queries and to update transfer status on CANCEL. The default
+    /// is `None`, which disables the M3 surface (used by tests that
+    /// don't exercise it).
+    state: Option<Arc<dyn StateStore>>,
 }
 
 impl ServerConn {
-    /// Construct a new connection actor.
+    /// Construct a new connection actor (M2 surface only).
     pub fn new(
         server_caps: Capabilities,
         server_name: impl Into<String>,
         stats: Arc<ServerStats>,
         backend: Arc<LocalFilesystemBackend>,
     ) -> Self {
+        Self::with_state(server_caps, server_name, stats, backend, None)
+    }
+
+    /// Construct a new connection actor with the M3 state store
+    /// wired in. Required to serve STAT / LIST / CANCEL.
+    pub fn with_state(
+        server_caps: Capabilities,
+        server_name: impl Into<String>,
+        stats: Arc<ServerStats>,
+        backend: Arc<LocalFilesystemBackend>,
+        state: Option<Arc<dyn StateStore>>,
+    ) -> Self {
         Self {
             server_caps,
             server_name: server_name.into(),
             stats,
             backend,
+            state,
         }
     }
 
@@ -127,9 +146,15 @@ impl ServerConn {
                                     crate::protocol::error::ErrorCode::ProtocolVersionUnsupported,
                                     s,
                                 );
-                                let _ = write_frame(send.as_mut(), &Message::Error(err), frame.request_id).await;
+                                let _ = write_frame(
+                                    send.as_mut(),
+                                    &Message::Error(err),
+                                    frame.request_id,
+                                )
+                                .await;
                                 conn.close(
-                                    crate::protocol::error::ErrorCode::ProtocolVersionUnsupported.to_wire(),
+                                    crate::protocol::error::ErrorCode::ProtocolVersionUnsupported
+                                        .to_wire(),
                                     b"no capability intersection",
                                 );
                                 state = ServerState::Closed;
@@ -139,15 +164,22 @@ impl ServerConn {
                                 version: crate::protocol::limits::PROTOCOL_VERSION,
                                 capabilities: intersection,
                                 limits: crate::protocol::message::Limits::default(),
-                                agent: format!("{}/{}", self.server_name, env!("CARGO_PKG_VERSION")),
+                                agent: format!(
+                                    "{}/{}",
+                                    self.server_name,
+                                    env!("CARGO_PKG_VERSION")
+                                ),
                             };
-                            write_frame(send.as_mut(), &Message::HelloAck(ack), frame.request_id).await?;
+                            write_frame(send.as_mut(), &Message::HelloAck(ack), frame.request_id)
+                                .await?;
                             self.stats.handshakes.fetch_add(1, Ordering::Relaxed);
                             state = ServerState::Serving;
                         }
                         _other => {
                             return Err(VelcruxError::Protocol(
-                                crate::error::ProtocolError::InvalidStateTransition("expected HELLO"),
+                                crate::error::ProtocolError::InvalidStateTransition(
+                                    "expected HELLO",
+                                ),
                             ));
                         }
                     }
@@ -167,7 +199,8 @@ impl ServerConn {
                                     .map(|d| d.as_millis() as u64)
                                     .unwrap_or(0),
                             };
-                            write_frame(send.as_mut(), &Message::Pong(pong), frame.request_id).await?;
+                            write_frame(send.as_mut(), &Message::Pong(pong), frame.request_id)
+                                .await?;
                             self.stats.pings.fetch_add(1, Ordering::Relaxed);
                         }
                         x if x == crate::protocol::message::BYE => {
@@ -190,13 +223,33 @@ impl ServerConn {
                                 tracing::warn!(error = %e, "transfer dispatch failed");
                             }
                         }
+                        x if x == crate::protocol::message::STAT => {
+                            handle_stat(send.as_mut(), &self.state, &frame.payload).await;
+                        }
+                        x if x == crate::protocol::message::LIST => {
+                            handle_list(send.as_mut(), &self.state, &frame.payload).await;
+                        }
+                        x if x == crate::protocol::message::CANCEL => {
+                            handle_cancel(
+                                send.as_mut(),
+                                &self.backend,
+                                &self.state,
+                                &frame.payload,
+                            )
+                            .await;
+                        }
                         other => {
                             let err = crate::protocol::message::ErrorMsg::new(
                                 crate::protocol::error::ErrorCode::UnsupportedMessage,
                                 "unsupported",
                             );
-                            let _ = write_frame(send.as_mut(), &Message::Error(err), frame.request_id).await;
-                            tracing::debug!(state = state.name(), "unsupported message 0x{other:02x}");
+                            let _ =
+                                write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
+                                    .await;
+                            tracing::debug!(
+                                state = state.name(),
+                                "unsupported message 0x{other:02x}"
+                            );
                         }
                     }
                 }
@@ -230,11 +283,11 @@ async fn handle_transfer_create(
     recv: &mut dyn crate::transport::BiRecvStream,
     payload: &[u8],
 ) -> Result<()> {
+    use crate::protocol::limits::MAX_CHUNK_SIZE;
     use crate::protocol::message::{
         Commit, Committed, Message, TransferBegin, TransferCreate, TransferCreated, TransferOp,
         TransferPlan,
     };
-    use crate::protocol::limits::MAX_CHUNK_SIZE;
     use crate::storage::StorageBackend;
     use crate::util::TransferId;
 
@@ -281,9 +334,9 @@ async fn handle_transfer_create(
     write_frame(send, &Message::TransferPlan(plan), 0).await?;
 
     // Await TRANSFER_BEGIN.
-    let frame = read_frame(recv).await?.ok_or_else(|| {
-        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-    })?;
+    let frame = read_frame(recv)
+        .await?
+        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     if frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
         return Err(VelcruxError::Protocol(
             crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
@@ -340,8 +393,129 @@ async fn handle_transfer_create(
 
     // We don't write a COMMITTED reply here — the per-transfer session
     // does it as part of its own VERIFY/COMMIT exchange.
-    let _ = Committed { transfer_id, files: 1 };
+    let _ = Committed {
+        transfer_id,
+        files: 1,
+    };
     let _ = Commit { transfer_id };
 
     Ok(())
+}
+
+/// M3 server-side handler for `STAT`. Looks up the transfer in the
+/// state DB and replies with `STAT_RESULT`.
+async fn handle_stat(
+    send: &mut dyn crate::transport::BiSendStream,
+    state: &Option<Arc<dyn StateStore>>,
+    payload: &[u8],
+) {
+    use crate::protocol::message::{ListResult, Message, StatQuery, StatResult};
+
+    let q = match StatQuery::decode(payload) {
+        Ok(q) => q,
+        Err(_) => return,
+    };
+    let sr = match state {
+        Some(store) => match store.get_transfer(q.transfer_id) {
+            Ok(r) => StatResult {
+                transfer_id: r.transfer_id,
+                found: true,
+                status: r.status.name().to_string(),
+                direction: r.direction.name().to_string(),
+                remote_path: r.remote_path,
+                file_size: r.file_size,
+                bytes_completed: r.bytes_completed,
+                verified_up_to: r.verified_up_to,
+                created_ms: r.created_ms,
+                updated_ms: r.updated_ms,
+            },
+            Err(_) => StatResult {
+                transfer_id: q.transfer_id,
+                found: false,
+                status: "missing".into(),
+                direction: "".into(),
+                remote_path: "".into(),
+                file_size: 0,
+                bytes_completed: 0,
+                verified_up_to: 0,
+                created_ms: 0,
+                updated_ms: 0,
+            },
+        },
+        None => StatResult {
+            transfer_id: q.transfer_id,
+            found: false,
+            status: "no_state".into(),
+            direction: "".into(),
+            remote_path: "".into(),
+            file_size: 0,
+            bytes_completed: 0,
+            verified_up_to: 0,
+            created_ms: 0,
+            updated_ms: 0,
+        },
+    };
+    let _ = write_frame(send, &Message::StatResult(sr), 0).await;
+    let _ = ListResult::decode; // keep import live
+}
+
+/// M3 server-side handler for `LIST`. Replies with a `LIST_RESULT`
+/// of all transfers whose `remote_path` starts with the prefix.
+async fn handle_list(
+    send: &mut dyn crate::transport::BiSendStream,
+    state: &Option<Arc<dyn StateStore>>,
+    payload: &[u8],
+) {
+    use crate::protocol::message::{ListQuery, ListResult, Message, StatResult};
+
+    let q = match ListQuery::decode(payload) {
+        Ok(q) => q,
+        Err(_) => return,
+    };
+    let entries: Vec<StatResult> = match state {
+        Some(store) => {
+            match store.list_transfers_by_path(crate::state::Role::Server, &q.url_prefix) {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|r| StatResult {
+                        transfer_id: r.transfer_id,
+                        found: true,
+                        status: r.status.name().to_string(),
+                        direction: r.direction.name().to_string(),
+                        remote_path: r.remote_path,
+                        file_size: r.file_size,
+                        bytes_completed: r.bytes_completed,
+                        verified_up_to: r.verified_up_to,
+                        created_ms: r.created_ms,
+                        updated_ms: r.updated_ms,
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    };
+    let lr = ListResult { entries };
+    let _ = write_frame(send, &Message::ListResult(lr), 0).await;
+}
+
+/// M3 server-side handler for `CANCEL`. Marks the transfer as
+/// cancelled in the state DB and best-effort removes the staging
+/// file. There is no reply on the wire; the client uses BYE.
+async fn handle_cancel(
+    _send: &mut dyn crate::transport::BiSendStream,
+    backend: &Arc<LocalFilesystemBackend>,
+    state: &Option<Arc<dyn StateStore>>,
+    payload: &[u8],
+) {
+    use crate::protocol::message::Cancel;
+    use crate::transfer::cancel_transfer_m3;
+
+    let c = match Cancel::decode(payload) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let Some(store) = state else { return };
+    let _ = cancel_transfer_m3(backend, store.clone(), c.transfer_id).await;
+    let _ = TransferStatus::Cancelled;
 }

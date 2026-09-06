@@ -25,6 +25,7 @@ blake3.workspace     = true
 tracing.workspace    = true
 ulid.workspace       = true
 rand.workspace       = true
+rusqlite.workspace   = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
@@ -32,6 +33,7 @@ rcgen.workspace = true
 rustls-pemfile.workspace = true
 tracing-subscriber.workspace = true
 rustls.workspace = true
+tempfile         = "3"
 
 [lints.rust]
 unsafe_code = "forbid"

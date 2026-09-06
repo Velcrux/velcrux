@@ -93,7 +93,13 @@ async fn main() -> anyhow::Result<()> {
             dev_pki::issue_dev_ca(&out, days)?;
             println!("dev CA written to {}", out.display());
         }
-        Cmd::GenDevCert { out, ca, host, client, hours } => {
+        Cmd::GenDevCert {
+            out,
+            ca,
+            host,
+            client,
+            hours,
+        } => {
             std::fs::create_dir_all(&out)
                 .with_context(|| format!("create_dir_all {}", out.display()))?;
             if let Some(name) = client {

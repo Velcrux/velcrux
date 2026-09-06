@@ -6,11 +6,11 @@
 //! (key) so they can be loaded by `rustls_pemfile`.
 
 use anyhow::{Context, Result};
+use rcgen::Error as RcgenError;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
     ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType,
 };
-use rcgen::Error as RcgenError;
 use std::fs;
 use std::path::Path;
 
@@ -40,7 +40,10 @@ pub fn issue_server_cert(ca_dir: &Path, out: &Path, hosts: &[String], _hours: u3
     let cn = hosts.first().cloned().unwrap_or_else(|| "velcruxd".into());
     dn.push(DnType::CommonName, &cn);
     params.distinguished_name = dn;
-    params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.subject_alt_names = hosts
         .iter()
@@ -48,7 +51,9 @@ pub fn issue_server_cert(ca_dir: &Path, out: &Path, hosts: &[String], _hours: u3
         .collect();
 
     let key = KeyPair::generate().map_err(rcgen_err)?;
-    let cert = params.signed_by(&key, &ca_cert, &ca_key).map_err(rcgen_err)?;
+    let cert = params
+        .signed_by(&key, &ca_cert, &ca_key)
+        .map_err(rcgen_err)?;
 
     let name = sanitize(&cn);
     fs::write(out.join(format!("{name}.crt")), cert.pem()).context("write server cert")?;
@@ -72,7 +77,9 @@ pub fn issue_client_cert(ca_dir: &Path, out: &Path, identity: &str, _hours: u32)
     )];
 
     let key = KeyPair::generate().map_err(rcgen_err)?;
-    let cert = params.signed_by(&key, &ca_cert, &ca_key).map_err(rcgen_err)?;
+    let cert = params
+        .signed_by(&key, &ca_cert, &ca_key)
+        .map_err(rcgen_err)?;
 
     let name = sanitize(identity);
     fs::write(out.join(format!("{name}.crt")), cert.pem()).context("write client cert")?;
@@ -117,6 +124,12 @@ fn rcgen_err(e: RcgenError) -> anyhow::Error {
 
 fn sanitize(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

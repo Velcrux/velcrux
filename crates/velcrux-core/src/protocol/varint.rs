@@ -173,6 +173,9 @@ mod tests {
     fn rejects_truncated() {
         // 0x80 0x80 with no terminating byte — truncated.
         let buf = [0x80, 0x80];
-        assert!(matches!(decode_varint(&buf), Err(ProtocolError::VarintOverflow)));
+        assert!(matches!(
+            decode_varint(&buf),
+            Err(ProtocolError::VarintOverflow)
+        ));
     }
 }

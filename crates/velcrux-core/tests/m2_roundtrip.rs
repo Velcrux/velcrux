@@ -39,8 +39,8 @@ use velcrux_core::transport::{Connection, Transport};
 use velcrux_core::util::TransferId;
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
-    IsCa, KeyPair, KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SanType,
 };
 use rustls::{Certificate, PrivateKey};
 use rustls_pemfile;
@@ -66,7 +66,11 @@ fn build_dev_ca() -> DevCa {
     ca_params.distinguished_name = dn;
     let ca_key = KeyPair::generate().expect("CA key");
     let ca_cert = ca_params.self_signed(&ca_key).expect("CA self-sign");
-    DevCa { cert_pem: ca_cert.pem(), ca_cert, ca_key }
+    DevCa {
+        cert_pem: ca_cert.pem(),
+        ca_cert,
+        ca_key,
+    }
 }
 
 struct ServerCert {
@@ -79,11 +83,16 @@ fn build_server_cert(ca: &DevCa) -> ServerCert {
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, "localhost");
     params.distinguished_name = dn;
-    params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().unwrap())];
     let key = KeyPair::generate().expect("server key");
-    let cert = params.signed_by(&key, &ca.ca_cert, &ca.ca_key).expect("sign server");
+    let cert = params
+        .signed_by(&key, &ca.ca_cert, &ca.ca_key)
+        .expect("sign server");
     let certs_pem = cert.pem();
     let certs: Vec<Certificate> = rustls_pemfile::certs(&mut &certs_pem.as_bytes()[..])
         .expect("parse server cert")
@@ -91,7 +100,10 @@ fn build_server_cert(ca: &DevCa) -> ServerCert {
         .map(Certificate)
         .collect();
     let key_der = key.serialize_der();
-    ServerCert { certs, key: PrivateKey(key_der) }
+    ServerCert {
+        certs,
+        key: PrivateKey(key_der),
+    }
 }
 
 fn build_client_identity(ca: &DevCa, name: &str) -> ClientIdentity {
@@ -105,7 +117,9 @@ fn build_client_identity(ca: &DevCa, name: &str) -> ClientIdentity {
         format!("velcrux://identity/{name}").try_into().unwrap(),
     )];
     let key = KeyPair::generate().expect("client key");
-    let cert = params.signed_by(&key, &ca.ca_cert, &ca.ca_key).expect("sign client");
+    let cert = params
+        .signed_by(&key, &ca.ca_cert, &ca.ca_key)
+        .expect("sign client");
     let certs_pem = cert.pem();
     let certs: Vec<Certificate> = rustls_pemfile::certs(&mut &certs_pem.as_bytes()[..])
         .expect("parse client cert")
@@ -154,7 +168,9 @@ fn blake3_of(data: &[u8]) -> velcrux_core::Hash {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn m2_upload_download_round_trip() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .try_init();
 
     // 1. Set up dev PKI.
@@ -219,7 +235,11 @@ async fn m2_upload_download_round_trip() {
                 tracing::info!(n, "server: accepted connection");
                 let caps = server_caps;
                 let b = Arc::clone(&backend);
-                let s = if n == 0 { Arc::clone(&stats1) } else { Arc::clone(&stats2) };
+                let s = if n == 0 {
+                    Arc::clone(&stats1)
+                } else {
+                    Arc::clone(&stats2)
+                };
                 tokio::spawn(async move {
                     let actor = ServerConn::new(caps, "velcruxd", s, b);
                     let r = actor.run(&conn).await;
@@ -272,9 +292,14 @@ async fn m2_upload_download_round_trip() {
     );
     let created = TransferCreated::decode(&frame.payload).unwrap();
     let frame = session.recv_frame().await.unwrap();
-    assert_eq!(frame.type_byte, velcrux_core::protocol::message::TRANSFER_PLAN);
+    assert_eq!(
+        frame.type_byte,
+        velcrux_core::protocol::message::TRANSFER_PLAN
+    );
     let _plan = TransferPlan::decode(&frame.payload).unwrap();
-    let begin = TransferBegin { transfer_id: created.transfer_id };
+    let begin = TransferBegin {
+        transfer_id: created.transfer_id,
+    };
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0).unwrap());
     session.send_mut().write_all(buf).await.unwrap();
 
@@ -300,7 +325,11 @@ async fn m2_upload_download_round_trip() {
     // Verify the file landed at the expected storage path, with the
     // expected size and no leftover staging file.
     let vpath = VPath::validate(remote_path_str).unwrap();
-    let m = backend.stat(&vpath).await.unwrap().expect("uploaded file exists");
+    let m = backend
+        .stat(&vpath)
+        .await
+        .unwrap()
+        .expect("uploaded file exists");
     assert_eq!(m.size, file_size, "uploaded file size");
     let staging_dir = backend.staging_dir().to_path_buf();
     let mut entries = tokio::fs::read_dir(&staging_dir).await.unwrap();
@@ -312,7 +341,10 @@ async fn m2_upload_download_round_trip() {
             found_staging = true;
         }
     }
-    assert!(!found_staging, "no `.velcrux-partial` should remain after commit");
+    assert!(
+        !found_staging,
+        "no `.velcrux-partial` should remain after commit"
+    );
 
     // 8. DOWNLOAD on a *separate* connection. The M2 server's per-
     // connection state machine handles one transfer at a time and exits
@@ -324,7 +356,10 @@ async fn m2_upload_download_round_trip() {
         .connect(server_addr, "localhost")
         .await
         .expect("client connect (download)");
-    let (send, recv) = conn.open_bi().await.expect("control stream open (download)");
+    let (send, recv) = conn
+        .open_bi()
+        .await
+        .expect("control stream open (download)");
     let mut session = ClientSession::from_handshake_parts(send, recv)
         .await
         .expect("HELLO/HELLO_ACK (download)");
@@ -349,10 +384,18 @@ async fn m2_upload_download_round_trip() {
     );
     let created = TransferCreated::decode(&frame.payload).unwrap();
     let frame = session.recv_frame().await.unwrap();
-    assert_eq!(frame.type_byte, velcrux_core::protocol::message::TRANSFER_PLAN);
+    assert_eq!(
+        frame.type_byte,
+        velcrux_core::protocol::message::TRANSFER_PLAN
+    );
     let plan = TransferPlan::decode(&frame.payload).unwrap();
-    assert_eq!(plan.bytes_total, file_size, "TRANSFER_PLAN bytes_total mismatch");
-    let begin = TransferBegin { transfer_id: created.transfer_id };
+    assert_eq!(
+        plan.bytes_total, file_size,
+        "TRANSFER_PLAN bytes_total mismatch"
+    );
+    let begin = TransferBegin {
+        transfer_id: created.transfer_id,
+    };
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0).unwrap());
     session.send_mut().write_all(buf).await.unwrap();
 

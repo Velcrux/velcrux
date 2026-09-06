@@ -35,6 +35,53 @@ impl TransferId {
         Some(Self(out))
     }
 
+    /// Parse a canonical 26-character ULID string (Crockford base32).
+    /// Returns `None` on length or alphabet mismatch. This is the
+    /// inverse of the `Display` impl.
+    pub fn from_string(s: &str) -> Option<Self> {
+        if s.len() != 26 {
+            return None;
+        }
+        // Decode Crockford base32. The 26-char alphabet is
+        // `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (no I, L, O, U).
+        fn val(c: char) -> Option<u8> {
+            match c {
+                '0'..='9' => Some(c as u8 - b'0'),
+                'A'..='H' => Some(c as u8 - b'A' + 10),
+                // Skip I (conflicts with 1) and L (conflicts with 1).
+                'J' => Some(17),
+                'K' => Some(18),
+                'M'..='N' => Some(c as u8 - b'M' + 19),
+                'P'..='Z' => Some(c as u8 - b'P' + 22),
+                // Skip U (conflicts with V).
+                'V' => Some(31),
+                'W' => Some(32),
+                'X' => Some(33),
+                'Y' => Some(34),
+                'Z' => Some(35),
+                _ => None,
+            }
+        }
+        // 26 chars × 5 bits = 130 bits; the high 2 bits of a
+        // canonical ULID are always 0 (per spec), so the 128-bit
+        // value fits in `acc: u64` only after the top 2 bits are
+        // shifted out. We accumulate 26 × 5 = 130 bits in a `u128`.
+        let mut acc: u128 = 0;
+        for c in s.chars() {
+            let v = val(c)? as u128;
+            acc = (acc << 5) | v;
+        }
+        if (acc >> 127) & 1 != 0 {
+            // High bit set means the top 2 bits of the 130-bit
+            // encoding weren't zero — not a canonical ULID.
+            return None;
+        }
+        let bytes = acc.to_be_bytes();
+        let mut out = [0u8; 16];
+        out.copy_from_slice(&bytes[..16]);
+        Some(Self(out))
+    }
+
     /// Borrow the 16 raw bytes.
     pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0

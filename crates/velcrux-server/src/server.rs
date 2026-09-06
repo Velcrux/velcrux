@@ -49,6 +49,11 @@ pub struct SecurityCfg {
 pub struct StorageCfg {
     pub root: String,
     pub staging: String,
+    /// Absolute path to the M3 state DB (SQLite/WAL). Required
+    /// for the M3 surface (STAT, LIST, CANCEL, RESUME). If absent,
+    /// the M3 surface is disabled and the server runs in M2 mode.
+    #[serde(default)]
+    pub state_db: Option<String>,
 }
 
 fn default_idle_timeout() -> String {
@@ -147,6 +152,46 @@ pub async fn run(config_path: &Path) -> Result<()> {
     })?;
     let backend = Arc::new(backend);
 
+    // M3 state DB. The path must be absolute per ADR-005.
+    use velcrux_core::state::StateStore as _;
+    let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db
+    {
+        Some(path) => {
+            let p = std::path::PathBuf::from(path);
+            match velcrux_core::state::SqliteStateStore::new(&p) {
+                Ok(s) => {
+                    info!(state_db = %p.display(), "M3 state DB opened");
+                    // Run commit-journal recovery (ADR-005).
+                    match s.recover_commit_journal() {
+                        Ok(actions) if !actions.is_empty() => {
+                            info!(count = actions.len(), "commit journal recovery actions");
+                            for a in actions {
+                                if let velcrux_core::state::JournalRecovery::Finalize {
+                                    transfer_id,
+                                    file_id,
+                                } = a
+                                {
+                                    let _ = s.mark_journal_committed(transfer_id, file_id);
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => warn!(error = %e, "journal recovery failed"),
+                    }
+                    Some(Arc::new(s))
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "state DB open failed (path={:?}): {} (ADR-005 requires absolute path)",
+                        p,
+                        e
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
+
     let next_id = Arc::new(AtomicU64::new(1));
     loop {
         let conn = match transport.accept().await {
@@ -157,7 +202,13 @@ pub async fn run(config_path: &Path) -> Result<()> {
             }
         };
         let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let actor = ServerConn::new(server_caps, "velcruxd", Arc::clone(&stats), Arc::clone(&backend));
+        let actor = ServerConn::with_state(
+            server_caps,
+            "velcruxd",
+            Arc::clone(&stats),
+            Arc::clone(&backend),
+            state_store.clone(),
+        );
         tokio::spawn(async move {
             let conn: QuicConnection = conn;
             match actor.run(&conn).await {

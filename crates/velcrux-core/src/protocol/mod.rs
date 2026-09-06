@@ -18,7 +18,7 @@ pub mod limits;
 pub mod message;
 pub mod varint;
 
-pub use capabilities::{Capability, Capabilities};
+pub use capabilities::{Capabilities, Capability};
 pub use error::{ErrorCode, ErrorDetail, ERROR_CODE_NAMES};
 pub use frame::{
     DataFrame, DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags,
@@ -29,7 +29,7 @@ pub use message::{
     Bye, Commit, Committed, Hello, HelloAck, Limits, Message, Ping, Pong, SessionInit,
     SessionOptions, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
     Verify, VerifyResult, AGENT, BYE, COMMIT, COMMITTED, ERROR, HELLO, HELLO_ACK, PING, PONG,
-    SESSION_INIT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN,
-    VERIFY, VERIFY_RESULT,
+    SESSION_INIT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN, VERIFY,
+    VERIFY_RESULT,
 };
 pub use varint::{decode_varint, encode_varint, varint_len};

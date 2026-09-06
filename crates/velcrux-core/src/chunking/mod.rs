@@ -98,7 +98,12 @@ pub struct FixedChunker {
 
 impl FixedChunker {
     pub fn new(params: ChunkParams) -> Self {
-        Self { params, in_chunk: 0, next_offset: 0, finished: false }
+        Self {
+            params,
+            in_chunk: 0,
+            next_offset: 0,
+            finished: false,
+        }
     }
 }
 
@@ -112,7 +117,10 @@ impl Chunker for FixedChunker {
         for _ in buf {
             self.in_chunk += 1;
             if self.in_chunk >= cut_at {
-                out.push(ChunkBoundary { offset: self.next_offset, length: self.in_chunk });
+                out.push(ChunkBoundary {
+                    offset: self.next_offset,
+                    length: self.in_chunk,
+                });
                 self.next_offset += self.in_chunk;
                 self.in_chunk = 0;
             }
@@ -127,13 +135,20 @@ impl Chunker for FixedChunker {
         if self.in_chunk == 0 {
             return Ok(None);
         }
-        let b = ChunkBoundary { offset: self.next_offset, length: self.in_chunk };
+        let b = ChunkBoundary {
+            offset: self.next_offset,
+            length: self.in_chunk,
+        };
         self.next_offset += self.in_chunk;
         self.in_chunk = 0;
         Ok(Some(b))
     }
-    fn is_finished(&self) -> bool { self.finished }
-    fn offset(&self) -> u64 { self.next_offset + self.in_chunk }
+    fn is_finished(&self) -> bool {
+        self.finished
+    }
+    fn offset(&self) -> u64 {
+        self.next_offset + self.in_chunk
+    }
 }
 
 /// The buzhash mixing table. A fixed permutation of `0..=255`, generated
@@ -190,8 +205,20 @@ impl RollingChunker {
             bits += 1;
         }
         let mask_bits = bits.max(1);
-        let mask = if mask_bits >= 32 { u32::MAX as u64 } else { (1u64 << mask_bits) - 1 };
-        Self { params, mask, mask_bits, sum: 0, in_chunk: 0, next_offset: 0, finished: false }
+        let mask = if mask_bits >= 32 {
+            u32::MAX as u64
+        } else {
+            (1u64 << mask_bits) - 1
+        };
+        Self {
+            params,
+            mask,
+            mask_bits,
+            sum: 0,
+            in_chunk: 0,
+            next_offset: 0,
+            finished: false,
+        }
     }
 
     /// Number of low bits that must be zero to cut. Diagnostic / test only.
@@ -209,13 +236,19 @@ impl Chunker for RollingChunker {
         let max = self.params.max;
         let min = self.params.min;
         for &b in buf {
-            self.sum = self.sum.wrapping_mul(16).wrapping_add(GEAR[b as usize] as u32);
+            self.sum = self
+                .sum
+                .wrapping_mul(16)
+                .wrapping_add(GEAR[b as usize] as u32);
             self.in_chunk += 1;
             let hit_natural = (self.sum as u64 & self.mask) == 0 && self.in_chunk >= min;
             let hit_max = self.in_chunk >= max;
             if hit_natural || hit_max {
                 let cut_at = self.in_chunk;
-                out.push(ChunkBoundary { offset: self.next_offset, length: cut_at });
+                out.push(ChunkBoundary {
+                    offset: self.next_offset,
+                    length: cut_at,
+                });
                 self.next_offset += cut_at;
                 self.in_chunk = 0;
                 self.sum = 0;
@@ -232,13 +265,20 @@ impl Chunker for RollingChunker {
             return Ok(None);
         }
         let cut_at = self.in_chunk;
-        let b = ChunkBoundary { offset: self.next_offset, length: cut_at };
+        let b = ChunkBoundary {
+            offset: self.next_offset,
+            length: cut_at,
+        };
         self.next_offset += cut_at;
         self.in_chunk = 0;
         Ok(Some(b))
     }
-    fn is_finished(&self) -> bool { self.finished }
-    fn offset(&self) -> u64 { self.next_offset + self.in_chunk }
+    fn is_finished(&self) -> bool {
+        self.finished
+    }
+    fn offset(&self) -> u64 {
+        self.next_offset + self.in_chunk
+    }
 }
 
 #[cfg(test)]
@@ -381,7 +421,11 @@ mod tests {
     /// CDC worth its cost: distant chunks reuse even after small edits.
     #[test]
     fn boundary_stability_under_prefix_insertion() {
-        let params = ChunkParams { min: 1024, target: 2048, max: 4096 };
+        let params = ChunkParams {
+            min: 1024,
+            target: 2048,
+            max: 4096,
+        };
         let base: Vec<u8> = (0..=255u8).cycle().take(64 * 1024).collect();
         let prefix = vec![0xAAu8; 32];
         let mut with_prefix = Vec::with_capacity(prefix.len() + base.len());
@@ -396,8 +440,12 @@ mod tests {
         let f2 = c2.finish().unwrap();
         let mut offsets1: Vec<u64> = b1.iter().map(|b| b.end()).collect();
         let mut offsets2: Vec<u64> = b2.iter().map(|b| b.end()).collect();
-        if let Some(f) = f1 { offsets1.push(f.end()); }
-        if let Some(f) = f2 { offsets2.push(f.end()); }
+        if let Some(f) = f1 {
+            offsets1.push(f.end());
+        }
+        if let Some(f) = f2 {
+            offsets2.push(f.end());
+        }
 
         // Compare deltas (gaps) in the two streams. The deltas must be
         // identical regardless of the absolute offsets — this is what
@@ -412,19 +460,35 @@ mod tests {
         let mut deltas1: Vec<u64> = offsets1
             .iter()
             .filter(|&&o| o >= blast)
-            .scan(0u64, |prev, &o| { let d = o - *prev; *prev = o; Some(d) })
+            .scan(0u64, |prev, &o| {
+                let d = o - *prev;
+                *prev = o;
+                Some(d)
+            })
             .collect();
         let mut deltas2: Vec<u64> = offsets2
             .iter()
             .filter(|&&o| o >= blast + prefix.len() as u64)
-            .scan(0u64, |prev, &o| { let d = o - *prev; *prev = o; Some(d) })
+            .scan(0u64, |prev, &o| {
+                let d = o - *prev;
+                *prev = o;
+                Some(d)
+            })
             .collect();
-        if !deltas1.is_empty() { deltas1.remove(0); }
-        if !deltas2.is_empty() { deltas2.remove(0); }
+        if !deltas1.is_empty() {
+            deltas1.remove(0);
+        }
+        if !deltas2.is_empty() {
+            deltas2.remove(0);
+        }
         // The last delta is the trailing partial chunk and naturally differs
         // when file size differs (it's `64 KiB - last_full_chunk`).
-        if !deltas1.is_empty() { deltas1.pop(); }
-        if !deltas2.is_empty() { deltas2.pop(); }
+        if !deltas1.is_empty() {
+            deltas1.pop();
+        }
+        if !deltas2.is_empty() {
+            deltas2.pop();
+        }
         assert_eq!(
             deltas1, deltas2,
             "boundary deltas past the insertion must match (deltas1={deltas1:?}, deltas2={deltas2:?})"

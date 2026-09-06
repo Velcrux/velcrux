@@ -356,7 +356,10 @@ impl Ping {
         }
         let nonce = u64::from_le_bytes(buf[..8].try_into().unwrap());
         let sender_ts_ms = u64::from_le_bytes(buf[8..16].try_into().unwrap());
-        Ok(Self { nonce, sender_ts_ms })
+        Ok(Self {
+            nonce,
+            sender_ts_ms,
+        })
     }
 }
 
@@ -418,7 +421,11 @@ impl ErrorMsg {
     pub fn new(code: ErrorCode, detail: impl Into<ErrorDetail>) -> Self {
         let detail = detail.into();
         let retryable = code.retryable();
-        Self { code, retryable, detail }
+        Self {
+            code,
+            retryable,
+            detail,
+        }
     }
 
     /// Encode the payload.
@@ -494,7 +501,10 @@ impl SessionOptions {
         }
         let bandwidth_bps = u64::from_le_bytes(buf[..8].try_into().unwrap());
         let priority = u16::from_le_bytes(buf[8..10].try_into().unwrap());
-        Ok(Self { bandwidth_bps, priority })
+        Ok(Self {
+            bandwidth_bps,
+            priority,
+        })
     }
 }
 
@@ -565,7 +575,10 @@ impl TransferCreate {
         let sp = self.src_path.as_bytes();
         let dp = self.dst_path.as_bytes();
         let id = self.idempotency_key.as_bytes();
-        if sp.len() > u16::MAX as usize || dp.len() > u16::MAX as usize || id.len() > u16::MAX as usize {
+        if sp.len() > u16::MAX as usize
+            || dp.len() > u16::MAX as usize
+            || id.len() > u16::MAX as usize
+        {
             return Err(ProtocolError::Malformed("TRANSFER_CREATE: field too long"));
         }
         let mut out = Vec::with_capacity(8 + 3 * 10 + sp.len() + dp.len() + id.len() + 8 + 32);
@@ -598,7 +611,9 @@ impl TransferCreate {
             .try_into()
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: src_path_len too large"))?;
         if buf.len() < i + sp_len_us {
-            return Err(ProtocolError::Malformed("TRANSFER_CREATE: truncated src_path"));
+            return Err(ProtocolError::Malformed(
+                "TRANSFER_CREATE: truncated src_path",
+            ));
         }
         let src_path = std::str::from_utf8(&buf[i..i + sp_len_us])
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: src_path not UTF-8"))?
@@ -610,7 +625,9 @@ impl TransferCreate {
             .try_into()
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: dst_path_len too large"))?;
         if buf.len() < i + dp_len_us {
-            return Err(ProtocolError::Malformed("TRANSFER_CREATE: truncated dst_path"));
+            return Err(ProtocolError::Malformed(
+                "TRANSFER_CREATE: truncated dst_path",
+            ));
         }
         let dst_path = std::str::from_utf8(&buf[i..i + dp_len_us])
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: dst_path not UTF-8"))?
@@ -632,7 +649,14 @@ impl TransferCreate {
         i += 8;
         let file_hash = Hash::from_bytes(&buf[i..i + 32])
             .ok_or_else(|| ProtocolError::Malformed("TRANSFER_CREATE: bad hash"))?;
-        Ok(Self { op, src_path, dst_path, idempotency_key, file_size, file_hash })
+        Ok(Self {
+            op,
+            src_path,
+            dst_path,
+            idempotency_key,
+            file_size,
+            file_hash,
+        })
     }
 }
 
@@ -674,7 +698,11 @@ impl TransferCreated {
         };
         let i = 16 + 1 + 7;
         let max_chunk_size = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
-        Ok(Self { transfer_id, resumed, max_chunk_size })
+        Ok(Self {
+            transfer_id,
+            resumed,
+            max_chunk_size,
+        })
     }
 }
 
@@ -715,7 +743,12 @@ impl TransferPlan {
         let bytes_to_transfer = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
         i += 8;
         let bytes_reusable = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
-        Ok(Self { transfer_id, bytes_total, bytes_to_transfer, bytes_reusable })
+        Ok(Self {
+            transfer_id,
+            bytes_total,
+            bytes_to_transfer,
+            bytes_reusable,
+        })
     }
 }
 
@@ -776,7 +809,10 @@ impl Verify {
             .ok_or_else(|| ProtocolError::Malformed("VERIFY: bad transfer_id"))?;
         let expected_hash = Hash::from_bytes(&buf[16..16 + 32])
             .ok_or_else(|| ProtocolError::Malformed("VERIFY: bad hash"))?;
-        Ok(Self { transfer_id, expected_hash })
+        Ok(Self {
+            transfer_id,
+            expected_hash,
+        })
     }
 }
 
@@ -813,7 +849,11 @@ impl VerifyResult {
         let i = 16 + 1 + 7;
         let computed_hash = Hash::from_bytes(&buf[i..i + 32])
             .ok_or_else(|| ProtocolError::Malformed("VERIFY_RESULT: bad hash"))?;
-        Ok(Self { transfer_id, ok, computed_hash })
+        Ok(Self {
+            transfer_id,
+            ok,
+            computed_hash,
+        })
     }
 }
 
@@ -871,8 +911,487 @@ impl Committed {
 }
 
 // ---------------------------------------------------------------------------
-// Top-level Message enum
+// M3: CHECKPOINT / RESUME / RESUME_STATE / CANCEL / STAT / LIST
 // ---------------------------------------------------------------------------
+
+use crate::state::MAX_WIRE_CHUNKS;
+
+/// `CHECKPOINT` payload (sender → receiver).
+///
+/// Sent at most every `CHECKPOINT_BYTES_INTERVAL` (1 GiB) or
+/// `CHECKPOINT_TIME_INTERVAL_MS` (10 s), whichever comes first. The
+/// receiver uses it to advance its local state DB; it does *not* affect
+/// which chunks the sender ships (the wire is still the source of
+/// truth), it just gives the receiver a save-now event so a crash
+/// between checkpoints loses at most one interval of progress.
+///
+/// Wire layout:
+/// ```text
+/// transfer_id:          16 bytes
+/// bytes_transferred:    u64 LE
+/// verified_up_to:       u64 LE
+/// ts_ms:                u64 LE
+/// completed_count:      varint
+/// completed_chunks:     varint × completed_count
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkpoint {
+    pub transfer_id: TransferId,
+    pub bytes_transferred: u64,
+    pub verified_up_to: u64,
+    pub ts_ms: u64,
+    pub completed_chunks: Vec<u64>,
+}
+
+impl Checkpoint {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        if self.completed_chunks.len() as u64 > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("too many completed chunks"));
+        }
+        let mut out = Vec::with_capacity(16 + 8 * 3 + 11);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.extend_from_slice(&self.bytes_transferred.to_le_bytes());
+        out.extend_from_slice(&self.verified_up_to.to_le_bytes());
+        out.extend_from_slice(&self.ts_ms.to_le_bytes());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(self.completed_chunks.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        for &idx in &self.completed_chunks {
+            let n = varint::encode_varint(idx, &mut tmp);
+            out.extend_from_slice(&tmp[..n]);
+        }
+        Ok(Bytes::from(out))
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 8 * 3 {
+            return Err(ProtocolError::Malformed("CHECKPOINT: truncated header"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("CHECKPOINT: bad transfer_id"))?;
+        let mut i = 16;
+        let bytes_transferred = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let verified_up_to = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let ts_ms = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let (count, consumed) = varint::decode_varint(&buf[i..])?;
+        i += consumed;
+        if count > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("too many completed chunks"));
+        }
+        let mut completed = Vec::with_capacity(count as usize);
+        let mut prev: Option<u64> = None;
+        for _ in 0..count {
+            if i >= buf.len() {
+                return Err(ProtocolError::Malformed("CHECKPOINT: truncated chunks"));
+            }
+            let (idx, consumed) = varint::decode_varint(&buf[i..])?;
+            i += consumed;
+            if let Some(p) = prev {
+                if idx <= p {
+                    return Err(ProtocolError::Malformed("CHECKPOINT: non-monotonic chunks"));
+                }
+            }
+            completed.push(idx);
+            prev = Some(idx);
+        }
+        Ok(Self {
+            transfer_id,
+            bytes_transferred,
+            verified_up_to,
+            ts_ms,
+            completed_chunks: completed,
+        })
+    }
+}
+
+/// `RESUME` payload (client → server). The client asks the server to
+/// return the saved `RESUME_STATE` for a transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resume {
+    pub transfer_id: TransferId,
+    /// Idempotency key. UNIQUE per role; the server uses (role, key)
+    /// to find the canonical state row.
+    pub idempotency_key: String,
+}
+
+impl Resume {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let key = self.idempotency_key.as_bytes();
+        if key.len() > u16::MAX as usize {
+            return Err(ProtocolError::Malformed("RESUME: idempotency_key too long"));
+        }
+        let mut out = Vec::with_capacity(16 + 2 + key.len());
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(key.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        out.extend_from_slice(key);
+        Ok(Bytes::from(out))
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 {
+            return Err(ProtocolError::Malformed("RESUME: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("RESUME: bad transfer_id"))?;
+        let (klen, consumed) = varint::decode_varint(&buf[16..])?;
+        let i = 16 + consumed;
+        let klen_us: usize = klen
+            .try_into()
+            .map_err(|_| ProtocolError::Malformed("RESUME: key too long"))?;
+        if buf.len() < i + klen_us {
+            return Err(ProtocolError::Malformed("RESUME: truncated key"));
+        }
+        let key = std::str::from_utf8(&buf[i..i + klen_us])
+            .map_err(|_| ProtocolError::Malformed("RESUME: key not UTF-8"))?
+            .to_string();
+        Ok(Self {
+            transfer_id,
+            idempotency_key: key,
+        })
+    }
+}
+
+/// `RESUME_STATE` payload (server → client).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeState {
+    pub transfer_id: TransferId,
+    pub staging_relpath: String,
+    pub file_size: u64,
+    pub bytes_completed: u64,
+    pub verified_up_to: u64,
+    pub file_hash: Hash,
+    pub completed_chunks: Vec<u64>,
+}
+
+impl ResumeState {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        if self.completed_chunks.len() as u64 > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("too many completed chunks"));
+        }
+        let path = self.staging_relpath.as_bytes();
+        if path.len() > u16::MAX as usize {
+            return Err(ProtocolError::Malformed("RESUME_STATE: path too long"));
+        }
+        let mut out = Vec::with_capacity(16 + 2 + path.len() + 8 * 3 + 32 + 11);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(path.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        out.extend_from_slice(path);
+        out.extend_from_slice(&self.file_size.to_le_bytes());
+        out.extend_from_slice(&self.bytes_completed.to_le_bytes());
+        out.extend_from_slice(&self.verified_up_to.to_le_bytes());
+        out.extend_from_slice(self.file_hash.as_bytes());
+        let n = varint::encode_varint(self.completed_chunks.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        for &idx in &self.completed_chunks {
+            let n = varint::encode_varint(idx, &mut tmp);
+            out.extend_from_slice(&tmp[..n]);
+        }
+        Ok(Bytes::from(out))
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 {
+            return Err(ProtocolError::Malformed("RESUME_STATE: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("RESUME_STATE: bad transfer_id"))?;
+        let mut i = 16;
+        let (plen, consumed) = varint::decode_varint(&buf[i..])?;
+        i += consumed;
+        let plen_us: usize = plen
+            .try_into()
+            .map_err(|_| ProtocolError::Malformed("RESUME_STATE: path too long"))?;
+        if buf.len() < i + plen_us + 8 * 3 + 32 {
+            return Err(ProtocolError::Malformed("RESUME_STATE: truncated body"));
+        }
+        let path = std::str::from_utf8(&buf[i..i + plen_us])
+            .map_err(|_| ProtocolError::Malformed("RESUME_STATE: path not UTF-8"))?
+            .to_string();
+        i += plen_us;
+        let file_size = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let bytes_completed = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let verified_up_to = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let file_hash = Hash::from_bytes(&buf[i..i + 32])
+            .ok_or_else(|| ProtocolError::Malformed("RESUME_STATE: bad hash"))?;
+        i += 32;
+        let (count, consumed) = varint::decode_varint(&buf[i..])?;
+        i += consumed;
+        if count > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("too many completed chunks"));
+        }
+        let mut completed = Vec::with_capacity(count as usize);
+        let mut prev: Option<u64> = None;
+        for _ in 0..count {
+            if i >= buf.len() {
+                return Err(ProtocolError::Malformed("RESUME_STATE: truncated chunks"));
+            }
+            let (idx, consumed) = varint::decode_varint(&buf[i..])?;
+            i += consumed;
+            if let Some(p) = prev {
+                if idx <= p {
+                    return Err(ProtocolError::Malformed(
+                        "RESUME_STATE: non-monotonic chunks",
+                    ));
+                }
+            }
+            completed.push(idx);
+            prev = Some(idx);
+        }
+        Ok(Self {
+            transfer_id,
+            staging_relpath: path,
+            file_size,
+            bytes_completed,
+            verified_up_to,
+            file_hash,
+            completed_chunks: completed,
+        })
+    }
+}
+
+/// `CANCEL` payload (client → server). User-initiated cancel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cancel {
+    pub transfer_id: TransferId,
+    pub reason_code: u32,
+}
+
+impl Cancel {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(16 + 4);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.extend_from_slice(&self.reason_code.to_le_bytes());
+        Ok(Bytes::from(out))
+    }
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 4 {
+            return Err(ProtocolError::Malformed("CANCEL: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("CANCEL: bad transfer_id"))?;
+        let reason_code = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+        Ok(Self {
+            transfer_id,
+            reason_code,
+        })
+    }
+}
+
+/// `STAT` query (client → server).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatQuery {
+    pub transfer_id: TransferId,
+}
+
+impl StatQuery {
+    pub fn encode(&self) -> Bytes {
+        let mut out = Vec::with_capacity(16);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        Bytes::from(out)
+    }
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 {
+            return Err(ProtocolError::Malformed("STAT: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("STAT: bad transfer_id"))?;
+        Ok(Self { transfer_id })
+    }
+}
+
+/// `STAT_RESULT` payload (server → client).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatResult {
+    pub transfer_id: TransferId,
+    pub found: bool,
+    pub status: String,
+    pub direction: String,
+    pub remote_path: String,
+    pub file_size: u64,
+    pub bytes_completed: u64,
+    pub verified_up_to: u64,
+    pub created_ms: u64,
+    pub updated_ms: u64,
+}
+
+impl StatResult {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(16 + 1 + 8 * 5 + 30);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.push(self.found as u8);
+        out.push(0); // padding for alignment
+        let mut tmp = [0u8; 10];
+        for s in [&self.status, &self.direction, &self.remote_path] {
+            let b = s.as_bytes();
+            if b.len() > u16::MAX as usize {
+                return Err(ProtocolError::Malformed("STAT_RESULT: field too long"));
+            }
+            let n = varint::encode_varint(b.len() as u64, &mut tmp);
+            out.extend_from_slice(&tmp[..n]);
+            out.extend_from_slice(b);
+        }
+        out.extend_from_slice(&self.file_size.to_le_bytes());
+        out.extend_from_slice(&self.bytes_completed.to_le_bytes());
+        out.extend_from_slice(&self.verified_up_to.to_le_bytes());
+        out.extend_from_slice(&self.created_ms.to_le_bytes());
+        out.extend_from_slice(&self.updated_ms.to_le_bytes());
+        Ok(Bytes::from(out))
+    }
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 2 {
+            return Err(ProtocolError::Malformed("STAT_RESULT: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[..16])
+            .ok_or_else(|| ProtocolError::Malformed("STAT_RESULT: bad transfer_id"))?;
+        let found = match buf[16] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProtocolError::Malformed("STAT_RESULT: bad found flag")),
+        };
+        let mut i = 18;
+        let mut read_str = |buf: &[u8], i: &mut usize| -> Result<String, ProtocolError> {
+            let (n, c) = varint::decode_varint(&buf[*i..])?;
+            *i += c;
+            let n_us: usize = n
+                .try_into()
+                .map_err(|_| ProtocolError::Malformed("STAT_RESULT: string too long"))?;
+            if buf.len() < *i + n_us {
+                return Err(ProtocolError::Malformed("STAT_RESULT: truncated string"));
+            }
+            let s = std::str::from_utf8(&buf[*i..*i + n_us])
+                .map_err(|_| ProtocolError::Malformed("STAT_RESULT: not UTF-8"))?
+                .to_string();
+            *i += n_us;
+            Ok(s)
+        };
+        let status = read_str(buf, &mut i)?;
+        let direction = read_str(buf, &mut i)?;
+        let remote_path = read_str(buf, &mut i)?;
+        if buf.len() < i + 8 * 5 {
+            return Err(ProtocolError::Malformed("STAT_RESULT: truncated numbers"));
+        }
+        let file_size = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let bytes_completed = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let verified_up_to = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let created_ms = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        i += 8;
+        let updated_ms = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        Ok(Self {
+            transfer_id,
+            found,
+            status,
+            direction,
+            remote_path,
+            file_size,
+            bytes_completed,
+            verified_up_to,
+            created_ms,
+            updated_ms,
+        })
+    }
+}
+
+/// `LIST` query (client → server).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListQuery {
+    pub url_prefix: String,
+}
+
+impl ListQuery {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let p = self.url_prefix.as_bytes();
+        if p.len() > u16::MAX as usize {
+            return Err(ProtocolError::Malformed("LIST: prefix too long"));
+        }
+        let mut out = Vec::with_capacity(2 + p.len());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(p.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        out.extend_from_slice(p);
+        Ok(Bytes::from(out))
+    }
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        let (n, c) = varint::decode_varint(buf)?;
+        let mut i = c;
+        let n_us: usize = n
+            .try_into()
+            .map_err(|_| ProtocolError::Malformed("LIST: prefix too long"))?;
+        if buf.len() < i + n_us {
+            return Err(ProtocolError::Malformed("LIST: truncated prefix"));
+        }
+        let url_prefix = std::str::from_utf8(&buf[i..i + n_us])
+            .map_err(|_| ProtocolError::Malformed("LIST: not UTF-8"))?
+            .to_string();
+        Ok(Self { url_prefix })
+    }
+}
+
+/// `LIST_RESULT` payload (server → client). Length-prefixed list of
+/// `StatResult` (each prefixed with its own varint length so a
+/// decoder can find entry boundaries without re-encoding).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListResult {
+    pub entries: Vec<StatResult>,
+}
+
+impl ListResult {
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        if self.entries.len() as u64 > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("LIST_RESULT: too many entries"));
+        }
+        let mut out = Vec::new();
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(self.entries.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        for e in &self.entries {
+            let body = e.encode()?;
+            let n = varint::encode_varint(body.len() as u64, &mut tmp);
+            out.extend_from_slice(&tmp[..n]);
+            out.extend_from_slice(&body);
+        }
+        Ok(Bytes::from(out))
+    }
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        let (count, c) = varint::decode_varint(buf)?;
+        if count > MAX_WIRE_CHUNKS {
+            return Err(ProtocolError::Malformed("LIST_RESULT: too many entries"));
+        }
+        let mut i = c;
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            if i >= buf.len() {
+                return Err(ProtocolError::Malformed(
+                    "LIST_RESULT: truncated entry length",
+                ));
+            }
+            let (n, c) = varint::decode_varint(&buf[i..])?;
+            i += c;
+            let n_us: usize = n
+                .try_into()
+                .map_err(|_| ProtocolError::Malformed("LIST_RESULT: entry too long"))?;
+            if buf.len() < i + n_us {
+                return Err(ProtocolError::Malformed("LIST_RESULT: truncated entry"));
+            }
+            let entry = StatResult::decode(&buf[i..i + n_us])?;
+            i += n_us;
+            entries.push(entry);
+        }
+        Ok(Self { entries })
+    }
+}
 
 /// A decoded, typed message body. The frame header has already been parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -907,6 +1426,22 @@ pub enum Message {
     Commit(Commit),
     /// `COMMITTED` (receiver → sender).
     Committed(Committed),
+    /// `CHECKPOINT` (sender → receiver). M3.
+    Checkpoint(Checkpoint),
+    /// `RESUME` (client → server). M3.
+    Resume(Resume),
+    /// `RESUME_STATE` (server → client). M3.
+    ResumeState(ResumeState),
+    /// `CANCEL` (client → server). M3.
+    Cancel(Cancel),
+    /// `STAT` query (client → server). M3.
+    Stat(StatQuery),
+    /// `STAT_RESULT` (server → client). M3.
+    StatResult(StatResult),
+    /// `LIST` query (client → server). M3.
+    List(ListQuery),
+    /// `LIST_RESULT` (server → client). M3.
+    ListResult(ListResult),
 }
 
 impl Message {
@@ -927,6 +1462,14 @@ impl Message {
             Message::VerifyResult(_) => VERIFY_RESULT,
             Message::Commit(_) => COMMIT,
             Message::Committed(_) => COMMITTED,
+            Message::Checkpoint(_) => CHECKPOINT,
+            Message::Resume(_) => RESUME,
+            Message::ResumeState(_) => RESUME_STATE,
+            Message::Cancel(_) => CANCEL,
+            Message::Stat(_) => STAT,
+            Message::StatResult(_) => STAT_RESULT,
+            Message::List(_) => LIST,
+            Message::ListResult(_) => LIST_RESULT,
         }
     }
 
@@ -948,6 +1491,14 @@ impl Message {
             Message::VerifyResult(m) => Ok((VERIFY_RESULT, m.encode()?)),
             Message::Commit(m) => Ok((COMMIT, m.encode()?)),
             Message::Committed(m) => Ok((COMMITTED, m.encode()?)),
+            Message::Checkpoint(m) => Ok((CHECKPOINT, m.encode()?)),
+            Message::Resume(m) => Ok((RESUME, m.encode()?)),
+            Message::ResumeState(m) => Ok((RESUME_STATE, m.encode()?)),
+            Message::Cancel(m) => Ok((CANCEL, m.encode()?)),
+            Message::Stat(m) => Ok((STAT, m.encode())),
+            Message::StatResult(m) => Ok((STAT_RESULT, m.encode()?)),
+            Message::List(m) => Ok((LIST, m.encode()?)),
+            Message::ListResult(m) => Ok((LIST_RESULT, m.encode()?)),
         }
     }
 
@@ -968,11 +1519,14 @@ impl Message {
             VERIFY_RESULT => Ok(Message::VerifyResult(VerifyResult::decode(payload)?)),
             COMMIT => Ok(Message::Commit(Commit::decode(payload)?)),
             COMMITTED => Ok(Message::Committed(Committed::decode(payload)?)),
-            // PONG and HELLO share type ids with PING and HELLO; they are
-            // produced by the encode side. We never receive PONG on the
-            // server or PING on the client as PONG; the direction is
-            // established by the call site (server side treats PING-type
-            // as PING; client side treats it as PONG by context).
+            CHECKPOINT => Ok(Message::Checkpoint(Checkpoint::decode(payload)?)),
+            RESUME => Ok(Message::Resume(Resume::decode(payload)?)),
+            RESUME_STATE => Ok(Message::ResumeState(ResumeState::decode(payload)?)),
+            CANCEL => Ok(Message::Cancel(Cancel::decode(payload)?)),
+            STAT => Ok(Message::Stat(StatQuery::decode(payload)?)),
+            STAT_RESULT => Ok(Message::StatResult(StatResult::decode(payload)?)),
+            LIST => Ok(Message::List(ListQuery::decode(payload)?)),
+            LIST_RESULT => Ok(Message::ListResult(ListResult::decode(payload)?)),
             other => Err(ProtocolError::UnsupportedMessage(other)),
         }
     }
@@ -1005,7 +1559,10 @@ mod tests {
 
     #[test]
     fn ping_roundtrip() {
-        let p = Ping { nonce: 0xDEAD_BEEF, sender_ts_ms: 1234 };
+        let p = Ping {
+            nonce: 0xDEAD_BEEF,
+            sender_ts_ms: 1234,
+        };
         let buf = p.encode();
         let p2 = Ping::decode(&buf).unwrap();
         assert_eq!(p, p2);
@@ -1021,7 +1578,9 @@ mod tests {
 
     #[test]
     fn bye_roundtrip() {
-        let b = Bye { code: ErrorCode::TransferCancelled.to_wire() };
+        let b = Bye {
+            code: ErrorCode::TransferCancelled.to_wire(),
+        };
         let buf = b.encode();
         let b2 = Bye::decode(&buf).unwrap();
         assert_eq!(b, b2);
@@ -1029,7 +1588,10 @@ mod tests {
 
     #[test]
     fn session_init_roundtrip() {
-        let s = SessionOptions { bandwidth_bps: 1_000_000, priority: 7 };
+        let s = SessionOptions {
+            bandwidth_bps: 1_000_000,
+            priority: 7,
+        };
         let buf = s.encode();
         let s2 = SessionOptions::decode(&buf).unwrap();
         assert_eq!(s, s2);
@@ -1064,6 +1626,177 @@ mod tests {
         assert_eq!(TransferOp::from_wire(2).unwrap(), TransferOp::Download);
         assert!(TransferOp::from_wire(0).is_err());
         assert!(TransferOp::from_wire(99).is_err());
+    }
+
+    #[test]
+    fn checkpoint_roundtrip() {
+        let cp = Checkpoint {
+            transfer_id: TransferId::generate(),
+            bytes_transferred: 1_000_000,
+            verified_up_to: 512_000,
+            ts_ms: 1234,
+            completed_chunks: vec![0, 1, 2, 3, 4],
+        };
+        let buf = cp.encode().unwrap();
+        let cp2 = Checkpoint::decode(&buf).unwrap();
+        assert_eq!(cp, cp2);
+    }
+
+    #[test]
+    fn checkpoint_rejects_non_monotonic() {
+        let mut buf = vec![0u8; 16];
+        buf.extend_from_slice(&1000u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(2, &mut tmp);
+        buf.extend_from_slice(&tmp[..n]);
+        let n = varint::encode_varint(5, &mut tmp);
+        buf.extend_from_slice(&tmp[..n]);
+        let n = varint::encode_varint(3, &mut tmp);
+        buf.extend_from_slice(&tmp[..n]);
+        assert!(Checkpoint::decode(&buf).is_err());
+    }
+
+    #[test]
+    fn resume_roundtrip() {
+        let r = Resume {
+            transfer_id: TransferId::generate(),
+            idempotency_key: "abc-123".into(),
+        };
+        let buf = r.encode().unwrap();
+        let r2 = Resume::decode(&buf).unwrap();
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn resume_state_roundtrip() {
+        let r = ResumeState {
+            transfer_id: TransferId::generate(),
+            staging_relpath: "x/1.velcrux-partial".into(),
+            file_size: 10_000_000,
+            bytes_completed: 4_000_000,
+            verified_up_to: 0,
+            file_hash: Hash::of(b"hello"),
+            completed_chunks: vec![0, 1, 2],
+        };
+        let buf = r.encode().unwrap();
+        let r2 = ResumeState::decode(&buf).unwrap();
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn cancel_roundtrip() {
+        let c = Cancel {
+            transfer_id: TransferId::generate(),
+            reason_code: 5000,
+        };
+        let buf = c.encode().unwrap();
+        let c2 = Cancel::decode(&buf).unwrap();
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn stat_query_roundtrip() {
+        let q = StatQuery {
+            transfer_id: TransferId::generate(),
+        };
+        let buf = q.encode();
+        let q2 = StatQuery::decode(&buf).unwrap();
+        assert_eq!(q, q2);
+    }
+
+    #[test]
+    fn stat_result_roundtrip() {
+        let r = StatResult {
+            transfer_id: TransferId::generate(),
+            found: true,
+            status: "active".into(),
+            direction: "upload".into(),
+            remote_path: "data/x.bin".into(),
+            file_size: 12345,
+            bytes_completed: 6000,
+            verified_up_to: 0,
+            created_ms: 1,
+            updated_ms: 2,
+        };
+        let buf = r.encode().unwrap();
+        let r2 = StatResult::decode(&buf).unwrap();
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn list_query_roundtrip() {
+        let q = ListQuery {
+            url_prefix: "data/".into(),
+        };
+        let buf = q.encode().unwrap();
+        let q2 = ListQuery::decode(&buf).unwrap();
+        assert_eq!(q, q2);
+    }
+
+    #[test]
+    fn list_result_roundtrip() {
+        let r = ListResult {
+            entries: vec![
+                StatResult {
+                    transfer_id: TransferId::generate(),
+                    found: true,
+                    status: "active".into(),
+                    direction: "upload".into(),
+                    remote_path: "data/a.bin".into(),
+                    file_size: 1,
+                    bytes_completed: 0,
+                    verified_up_to: 0,
+                    created_ms: 1,
+                    updated_ms: 2,
+                },
+                StatResult {
+                    transfer_id: TransferId::generate(),
+                    found: true,
+                    status: "committed".into(),
+                    direction: "download".into(),
+                    remote_path: "data/b.bin".into(),
+                    file_size: 2,
+                    bytes_completed: 2,
+                    verified_up_to: 2,
+                    created_ms: 3,
+                    updated_ms: 4,
+                },
+            ],
+        };
+        let buf = r.encode().unwrap();
+        let r2 = ListResult::decode(&buf).unwrap();
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn message_enum_full_roundtrip() {
+        let cases = vec![
+            Message::Checkpoint(Checkpoint {
+                transfer_id: TransferId::generate(),
+                bytes_transferred: 1,
+                verified_up_to: 0,
+                ts_ms: 0,
+                completed_chunks: vec![0],
+            }),
+            Message::Resume(Resume {
+                transfer_id: TransferId::generate(),
+                idempotency_key: "k".into(),
+            }),
+            Message::Cancel(Cancel {
+                transfer_id: TransferId::generate(),
+                reason_code: 5000,
+            }),
+            Message::Stat(StatQuery {
+                transfer_id: TransferId::generate(),
+            }),
+        ];
+        for m in cases {
+            let (tb, p) = m.encode().unwrap();
+            let m2 = Message::decode(tb, &p).unwrap();
+            assert_eq!(m, m2);
+        }
     }
 
     #[test]
@@ -1136,7 +1869,10 @@ mod tests {
     #[test]
     fn verify_roundtrip() {
         let tid = crate::util::TransferId::generate();
-        let m = Verify { transfer_id: tid, expected_hash: Hash::of(b"x") };
+        let m = Verify {
+            transfer_id: tid,
+            expected_hash: Hash::of(b"x"),
+        };
         let buf = m.encode().unwrap();
         let m2 = Verify::decode(&buf).unwrap();
         assert_eq!(m, m2);
@@ -1145,7 +1881,11 @@ mod tests {
     #[test]
     fn verify_result_roundtrip() {
         let tid = crate::util::TransferId::generate();
-        let m = VerifyResult { transfer_id: tid, ok: true, computed_hash: Hash::of(b"x") };
+        let m = VerifyResult {
+            transfer_id: tid,
+            ok: true,
+            computed_hash: Hash::of(b"x"),
+        };
         let buf = m.encode().unwrap();
         let m2 = VerifyResult::decode(&buf).unwrap();
         assert_eq!(m, m2);
@@ -1163,7 +1903,10 @@ mod tests {
     #[test]
     fn committed_roundtrip() {
         let tid = crate::util::TransferId::generate();
-        let m = Committed { transfer_id: tid, files: 1 };
+        let m = Committed {
+            transfer_id: tid,
+            files: 1,
+        };
         let buf = m.encode().unwrap();
         let m2 = Committed::decode(&buf).unwrap();
         assert_eq!(m, m2);
@@ -1193,10 +1936,20 @@ mod tests {
                 bytes_reusable: 0,
             }),
             Message::TransferBegin(TransferBegin { transfer_id: tid }),
-            Message::Verify(Verify { transfer_id: tid, expected_hash: Hash::ZERO }),
-            Message::VerifyResult(VerifyResult { transfer_id: tid, ok: true, computed_hash: Hash::ZERO }),
+            Message::Verify(Verify {
+                transfer_id: tid,
+                expected_hash: Hash::ZERO,
+            }),
+            Message::VerifyResult(VerifyResult {
+                transfer_id: tid,
+                ok: true,
+                computed_hash: Hash::ZERO,
+            }),
             Message::Commit(Commit { transfer_id: tid }),
-            Message::Committed(Committed { transfer_id: tid, files: 1 }),
+            Message::Committed(Committed {
+                transfer_id: tid,
+                files: 1,
+            }),
         ];
         for m in cases {
             let (tb, payload) = m.encode().unwrap();
@@ -1205,8 +1958,3 @@ mod tests {
         }
     }
 }
-
-
-
-
-

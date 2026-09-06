@@ -188,44 +188,53 @@ impl ClientSession {
     }
 
     /// Read a single control frame and return it.
-    pub async fn recv_frame(
-        &mut self,
-    ) -> Result<crate::protocol::frame::Frame<'static>> {
+    pub async fn recv_frame(&mut self) -> Result<crate::protocol::frame::Frame<'static>> {
         use crate::protocol::frame::Frame;
         // 5 bytes: 4-byte fixed prefix + 1-byte short varint.
-        let header_start = self.recv.read_exact(5).await?.ok_or_else(|| {
-            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-        })?;
+        let header_start = self
+            .recv
+            .read_exact(5)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
         let mut buf = header_start.to_vec();
         let mut varint_len = 1usize;
         while (buf[4] & 0x80) != 0 {
-            let next = self.recv.read_exact(1).await?.ok_or_else(|| {
-                VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-            })?;
+            let next = self
+                .recv
+                .read_exact(1)
+                .await?
+                .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
             buf.extend_from_slice(&next);
             varint_len += 1;
             if varint_len > 10 {
-                return Err(VelcruxError::Protocol(crate::error::ProtocolError::VarintOverflow));
+                return Err(VelcruxError::Protocol(
+                    crate::error::ProtocolError::VarintOverflow,
+                ));
             }
         }
         let (declared_length, _) = crate::protocol::varint::decode_varint(&buf[4..])?;
         let max = crate::protocol::frame::max_message_size();
         if declared_length > max {
-            return Err(VelcruxError::Protocol(crate::error::ProtocolError::FrameTooLarge {
-                declared: declared_length,
-                limit: max,
-            }));
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::FrameTooLarge {
+                    declared: declared_length,
+                    limit: max,
+                },
+            ));
         }
-        let rid = self.recv.read_exact(8).await?.ok_or_else(|| {
-            VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-        })?;
+        let rid = self
+            .recv
+            .read_exact(8)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
         buf.extend_from_slice(&rid);
         let payload = if declared_length == 0 {
             bytes::Bytes::new()
         } else {
-            self.recv.read_exact(declared_length as usize).await?.ok_or_else(|| {
-                VelcruxError::Protocol(crate::error::ProtocolError::Empty)
-            })?
+            self.recv
+                .read_exact(declared_length as usize)
+                .await?
+                .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?
         };
         buf.extend_from_slice(&payload);
         let frame = crate::protocol::frame::decode_frame(&buf)?;
