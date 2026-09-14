@@ -11,7 +11,7 @@ use rand::RngCore;
 
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
-use crate::protocol::message::{Hello, HelloAck, Limits, Message, Ping, BYE};
+use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Limits, Message, Ping, BYE};
 use crate::transport::{BiRecvStream, BiSendStream, Connection, SharedTransport};
 
 use super::{read_frame, write_frame};
@@ -95,6 +95,25 @@ impl ClientSession {
                 "invalid capability intersection: {s}"
             )));
         }
+
+        // 4. Send AUTH (mTLS with empty token).
+        let auth = Auth::mtls();
+        write_frame(send.as_mut(), &Message::Auth(auth), 0).await?;
+        tracing::debug!("client: AUTH sent");
+
+        // 5. Await AUTH_OK.
+        let frame = read_frame(recv.as_mut())
+            .await?
+            .ok_or_else(|| VelcruxError::Internal("EOF awaiting AUTH_OK".into()))?;
+        tracing::debug!(type = frame.type_byte, "client: frame received");
+        if frame.type_byte != crate::protocol::message::AUTH_OK {
+            return Err(VelcruxError::Internal(format!(
+                "expected AUTH_OK, got type 0x{:02x}",
+                frame.type_byte
+            )));
+        }
+        let auth_ok = AuthOk::decode(&frame.payload)?;
+        tracing::debug!(identity = %auth_ok.identity, "client: AUTH_OK received");
 
         Ok(Self {
             negotiated: Negotiated {

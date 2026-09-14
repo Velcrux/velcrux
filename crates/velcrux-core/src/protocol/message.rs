@@ -318,6 +318,157 @@ impl HelloAck {
 }
 
 // ---------------------------------------------------------------------------
+// AUTH / AUTH_OK (M4)
+// ---------------------------------------------------------------------------
+
+/// `AUTH` mechanism ids (`SECURITY.md` §2). The mechanism is a registry id;
+/// mTLS (0) is the MVP default and carries an empty token because the
+/// identity is already established by the TLS handshake.
+pub const AUTH_MECHANISM_MTLS: u16 = 0;
+/// Reserved for SSH-style public-key auth (Ed25519 over the TLS exporter).
+/// Not implemented in the MVP; a server that receives it replies
+/// `ERROR{AUTH_FAILED}` and closes (`SECURITY.md` §2, §4).
+pub const AUTH_MECHANISM_SSH_PUBKEY: u16 = 1;
+
+/// `AUTH` payload (client → server, `PROTOCOL.md` §4).
+///
+/// Wire layout:
+/// ```text
+/// mechanism:   u16 LE
+/// reserved:    u16 (zero on send, ignored on receive)
+/// token_len:   u32 LE  (bounded by MAX_AUTH_TOKEN; 0 for mTLS)
+/// token:       bytes
+/// ```
+///
+/// The token is opaque at this layer — its meaning is per-mechanism. For
+/// mTLS it is empty: the client certificate presented during the QUIC
+/// handshake *is* the credential, and `AUTH` merely completes the session
+/// state machine (`PROTOCOL.md` §7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Auth {
+    /// Authentication mechanism id. Unknown mechanisms are rejected at
+    /// decode time (fail closed, `SECURITY.md` §1 #5).
+    pub mechanism: u16,
+    /// Opaque, mechanism-specific token. Bounded by `MAX_AUTH_TOKEN`.
+    pub token: Vec<u8>,
+}
+
+impl Auth {
+    /// Build the mTLS `AUTH` message (empty token).
+    pub fn mtls() -> Self {
+        Self {
+            mechanism: AUTH_MECHANISM_MTLS,
+            token: Vec::new(),
+        }
+    }
+
+    /// Encode the payload to bytes.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        if self.token.len() > crate::protocol::limits::MAX_AUTH_TOKEN {
+            return Err(ProtocolError::Malformed("AUTH: token too long"));
+        }
+        let mut out = Vec::with_capacity(4 + 4 + self.token.len());
+        out.extend_from_slice(&self.mechanism.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(self.token.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.token);
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode the payload from `buf`. Bounds checks every length before
+    /// allocation, per `PROTOCOL.md` §3.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        // 2 + 2 + 4 = 8 bytes minimum.
+        if buf.len() < 8 {
+            return Err(ProtocolError::Malformed("AUTH: truncated"));
+        }
+        let mechanism = u16::from_le_bytes([buf[0], buf[1]]);
+        // reserved = buf[2..4], must be zero on send and is ignored.
+        let token_len = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+        if token_len as usize > crate::protocol::limits::MAX_AUTH_TOKEN {
+            return Err(ProtocolError::Malformed("AUTH: token too long"));
+        }
+        let token_len_us = token_len as usize;
+        if buf.len() < 8 + token_len_us {
+            return Err(ProtocolError::Malformed("AUTH: truncated token"));
+        }
+        // Fail closed on unknown mechanisms: an AUTH we cannot understand
+        // must not be treated as a weaker-but-acceptable request.
+        if mechanism != AUTH_MECHANISM_MTLS && mechanism != AUTH_MECHANISM_SSH_PUBKEY {
+            return Err(ProtocolError::Malformed("AUTH: unknown mechanism"));
+        }
+        Ok(Self {
+            mechanism,
+            token: buf[8..8 + token_len_us].to_vec(),
+        })
+    }
+}
+
+/// `AUTH_OK` payload (server → client, `PROTOCOL.md` §4).
+///
+/// Wire layout:
+/// ```text
+/// identity_len:  varint  (bounded by MAX_IDENTITY_LEN)
+/// identity:      UTF-8 bytes
+/// permissions:   u64 LE bitset (`crate::auth::PermSet::to_wire`)
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthOk {
+    /// Server-verified identity name (SAN URI name or CN fallback,
+    /// `SECURITY.md` §2).
+    pub identity: String,
+    /// Granted permission bitset. Wire form is defined by the `auth`
+    /// module; the protocol layer treats it as an opaque u64.
+    pub permissions: u64,
+}
+
+impl AuthOk {
+    /// Encode the payload to bytes.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let ident_bytes = self.identity.as_bytes();
+        if ident_bytes.len() > crate::protocol::limits::MAX_IDENTITY_LEN {
+            return Err(ProtocolError::Malformed("AUTH_OK: identity too long"));
+        }
+        let mut out = Vec::with_capacity(10 + ident_bytes.len());
+        let mut ilen = [0u8; 10];
+        let n = varint::encode_varint(ident_bytes.len() as u64, &mut ilen);
+        out.extend_from_slice(&ilen[..n]);
+        out.extend_from_slice(ident_bytes);
+        out.extend_from_slice(&self.permissions.to_le_bytes());
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode the payload from `buf`.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.is_empty() {
+            return Err(ProtocolError::Malformed("AUTH_OK: empty"));
+        }
+        let (ilen, consumed) = varint::decode_varint(buf)?;
+        let i = consumed;
+        let ilen_us: usize = ilen
+            .try_into()
+            .map_err(|_| ProtocolError::Malformed("AUTH_OK: identity_len too large"))?;
+        if ilen_us > crate::protocol::limits::MAX_IDENTITY_LEN {
+            return Err(ProtocolError::Malformed("AUTH_OK: identity too long"));
+        }
+        // 8 = permissions bitset at the tail.
+        if buf.len() < i + ilen_us + 8 {
+            return Err(ProtocolError::Malformed("AUTH_OK: truncated"));
+        }
+        let identity = std::str::from_utf8(&buf[i..i + ilen_us])
+            .map_err(|_| ProtocolError::Malformed("AUTH_OK: identity not UTF-8"))?
+            .to_string();
+        let off = i + ilen_us;
+        let permissions =
+            u64::from_le_bytes(buf[off..off + 8].try_into().expect("8 bytes for u64"));
+        Ok(Self {
+            identity,
+            permissions,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PING / PONG
 // ---------------------------------------------------------------------------
 
@@ -1400,6 +1551,10 @@ pub enum Message {
     Hello(Hello),
     /// `HELLO_ACK`.
     HelloAck(HelloAck),
+    /// `AUTH` (client → server). M4.
+    Auth(Auth),
+    /// `AUTH_OK` (server → client). M4.
+    AuthOk(AuthOk),
     /// `PING` (client → server).
     Ping(Ping),
     /// `PONG` (server → client). Identical wire form to PING.
@@ -1450,6 +1605,8 @@ impl Message {
         match self {
             Message::Hello(_) => HELLO,
             Message::HelloAck(_) => HELLO_ACK,
+            Message::Auth(_) => AUTH,
+            Message::AuthOk(_) => AUTH_OK,
             Message::Ping(_) | Message::Pong(_) => PING,
             Message::SessionInit(_) => SESSION_INIT,
             Message::Bye(_) => BYE,
@@ -1478,6 +1635,8 @@ impl Message {
         match self {
             Message::Hello(h) => Ok((HELLO, h.encode()?)),
             Message::HelloAck(h) => Ok((HELLO_ACK, h.encode()?)),
+            Message::Auth(a) => Ok((AUTH, a.encode()?)),
+            Message::AuthOk(a) => Ok((AUTH_OK, a.encode()?)),
             Message::Ping(p) => Ok((PING, p.encode())),
             Message::Pong(p) => Ok((PING, p.encode())),
             Message::SessionInit(s) => Ok((SESSION_INIT, s.encode())),

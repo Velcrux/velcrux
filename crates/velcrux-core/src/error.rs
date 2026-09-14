@@ -85,7 +85,7 @@ pub enum ProtocolError {
     Malformed(&'static str),
 
     /// A path validation failure. The detail string is intentionally generic
-    /// (`SECURITY.md` §10: `PERMISSION_DENIED` and `FILE_NOT_FOUND` are
+    /// (`PROTOCOL.md` §10: `PERMISSION_DENIED` and `FILE_NOT_FOUND` are
     /// indistinguishable in timing and detail for paths outside scope).
     #[error("invalid path")]
     InvalidPath,
@@ -93,6 +93,10 @@ pub enum ProtocolError {
     /// A cryptographic identity could not be derived from the peer certificate.
     #[error("invalid identity: {0}")]
     InvalidIdentity(&'static str),
+
+    /// The caller is authenticated but not authorized for this operation/path.
+    #[error("permission denied")]
+    PermissionDenied,
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

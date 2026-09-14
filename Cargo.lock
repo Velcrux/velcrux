@@ -1645,13 +1645,16 @@ dependencies = [
  "rusqlite",
  "rustls",
  "rustls-pemfile",
+ "serde",
  "sha2",
  "tempfile",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "x509-parser",
 ]
 
 [[package]]

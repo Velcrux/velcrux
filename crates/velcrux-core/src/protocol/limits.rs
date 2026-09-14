@@ -63,3 +63,13 @@ pub const CHECKPOINT_BYTES_INTERVAL: u64 = 1 << 30;
 
 /// M3 checkpoint cadence: 10 seconds (sender side).
 pub const CHECKPOINT_TIME_INTERVAL_MS: u64 = 10_000;
+
+/// Maximum size of the opaque token carried in an `AUTH` message, in bytes
+/// (`SECURITY.md` §2). mTLS sends an empty token; future mechanisms
+/// (SSH-style public key) send a signature, which is far smaller. Bounded
+/// so the decoder rejects oversized tokens before allocation.
+pub const MAX_AUTH_TOKEN: usize = 4096;
+
+/// Maximum length of an identity name (`SECURITY.md` §2: SAN URI or CN).
+/// Bounded in the `AUTH_OK` decoder before allocation.
+pub const MAX_IDENTITY_LEN: usize = 255;

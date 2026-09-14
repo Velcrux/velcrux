@@ -27,7 +27,7 @@ use crate::util::Hash;
 
 /// Errors produced by path validation. The variant names are intentionally
 /// not exposed to the wire — callers must collapse to a coarse "not found"
-/// or "denied" detail per `SECURITY.md` §10.
+/// or "denied" detail per `PROTOCOL.md` §10.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VPathError {
     /// Path was empty.

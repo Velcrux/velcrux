@@ -130,7 +130,7 @@ pub const ERROR_CODE_NAMES: &[(u32, &str)] = &[
 
 /// Detail string for an `ERROR` message. The string is sanitised:
 /// `PERMISSION_DENIED` and `FILE_NOT_FOUND` deliberately share the same
-/// detail to avoid leaking existence information (`SECURITY.md` §10).
+/// detail to avoid leaking existence information (`PROTOCOL.md` §10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorDetail(pub String);
 
@@ -172,6 +172,7 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::Malformed(_) => "malformed payload",
             ProtocolError::InvalidPath => "not found",
             ProtocolError::InvalidIdentity(_) => "invalid identity",
+            ProtocolError::PermissionDenied => "not found",
         };
         Self::new(s)
     }

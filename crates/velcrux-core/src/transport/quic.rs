@@ -23,7 +23,7 @@ use rustls::{Certificate, ClientConfig as RustlsClientConfig, PrivateKey, RootCe
 use sha2::{Digest, Sha256};
 
 use crate::error::{Result, TransportError};
-use crate::protocol::limits::{ALPN, QUIC_IDLE_TIMEOUT_SECS, QUIC_KEEPALIVE_SECS};
+use crate::protocol::limits::{ALPN, MAX_IDENTITY_LEN, QUIC_IDLE_TIMEOUT_SECS, QUIC_KEEPALIVE_SECS};
 use crate::transport::identity::Identity;
 use crate::transport::stats::TransportStats;
 
@@ -239,20 +239,17 @@ impl ServerBuilder {
 
     /// Consume the builder and bind to `addr`. Returns a `QuicTransport`.
     ///
-    /// M1: the server accepts any client certificate during the TLS
-    /// handshake. mTLS enforcement — a custom `ClientCertVerifier` that
-    /// checks the chain against the configured `client_roots` — is wired
-    /// in M2 alongside the auth state machine. Until then the server
-    /// does have a TLS handshake with the client but does not verify
-    /// the client's identity cryptographically; the session layer
-    /// treats the connection as anonymous.
+    /// The server requires and verifies a client certificate against the
+    /// configured `client_roots`. Connections without a valid client cert
+    /// are rejected during the TLS handshake.
     pub fn build(self, addr: SocketAddr) -> Result<QuicTransport> {
-        // Quiet the unused-field warning; this will be used in M2.
-        let _client_roots = self.client_roots;
+        let client_roots = self.client_roots;
+
+        let verifier = rustls::server::AllowAnyAuthenticatedClient::new(client_roots);
 
         let mut tls_cfg = rustls::ServerConfig::builder()
             .with_safe_defaults()
-            .with_no_client_auth()
+            .with_client_cert_verifier(Arc::new(verifier))
             .with_single_cert(self.cert_chain, self.key)
             .map_err(TransportError::Tls)?;
         tls_cfg.alpn_protocols = vec![ALPN.to_vec()];
@@ -442,17 +439,26 @@ impl UniRecvStream for QuicRecv {
 }
 
 // ---------------------------------------------------------------------------
-// Identity extraction (M1 stub; full x509 parsing lands in M2)
+// Identity extraction (M4: real x509 parsing per SECURITY.md §2)
 // ---------------------------------------------------------------------------
+
+/// URI prefix that carries the Velcrux identity in a certificate SAN
+/// (`SECURITY.md` §2): `velcrux://identity/<name>`.
+const IDENTITY_URI_PREFIX: &str = "velcrux://identity/";
 
 /// Derive the [`Identity`] from a peer certificate chain.
 ///
-/// M1 uses a simplified approach: the leaf certificate is hashed with
-/// SHA-256 and the fingerprint prefix becomes the identity name. The
-/// issuer fingerprint is the leaf (self-signed dev PKI) or the second
-/// cert in the chain. Full x509 parsing — extracting the SAN URI and the
-/// Common Name per `SECURITY.md` §2 — lands in M2 alongside the auth
-/// state machine.
+/// Per `SECURITY.md` §2 the identity *name* is taken from the leaf
+/// certificate's Subject Alternative Name URI `velcrux://identity/<name>`
+/// when present, otherwise from the subject Common Name. The chain itself
+/// has already been cryptographically verified by rustls during the
+/// QUIC/TLS handshake — mTLS is mandatory (see the module header and
+/// ADR-001). This function only *extracts and validates the name*; it does
+/// not establish trust and must never be used to do so.
+///
+/// The issuer fingerprint is the SHA-256 of the second cert in the chain,
+/// or the leaf itself for a single-cert (self-signed dev PKI) chain. Both
+/// fingerprints are redacted in `Identity`'s `Debug` (`SECURITY.md` §9).
 pub fn identity_from_chain(chain: &[Certificate]) -> Result<Identity> {
     let leaf = chain
         .first()
@@ -464,8 +470,76 @@ pub fn identity_from_chain(chain: &[Certificate]) -> Result<Identity> {
         // Self-signed (or single-cert chain) — issuer == leaf.
         leaf_fp.clone()
     };
-    let name = format!("cert-{}", &leaf_fp[..12]);
+    let name = extract_identity_name(leaf.as_ref())?;
     Ok(Identity::new(name, issuer_fp, leaf_fp))
+}
+
+/// Extract the identity name from a DER-encoded leaf certificate.
+///
+/// SAN URI `velcrux://identity/<name>` wins; failing that, the first
+/// subject Common Name attribute. The result is passed through
+/// [`validate_identity_name`] before returning, so a malformed, oversized,
+/// or control-laden name fails closed rather than reaching authorization,
+/// the state DB, or the logs.
+fn extract_identity_name(leaf_der: &[u8]) -> Result<String> {
+    use x509_parser::certificate::X509Certificate;
+    use x509_parser::extensions::{GeneralName, ParsedExtension};
+    use x509_parser::prelude::FromDer;
+
+    let (_, cert) = X509Certificate::from_der(leaf_der).map_err(|_| {
+        crate::error::ProtocolError::InvalidIdentity("leaf certificate parse failed")
+    })?;
+
+    // 1. Prefer the SAN URI velcrux://identity/<name>. First match wins.
+    let mut name: Option<String> = None;
+    'outer: for ext in cert.extensions() {
+        if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+            for gn in san.general_names.iter() {
+                if let GeneralName::URI(uri) = gn {
+                    if let Some(rest) = uri.strip_prefix(IDENTITY_URI_PREFIX) {
+                        name = Some(rest.to_string());
+                        break 'outer;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to the subject Common Name.
+    if name.is_none() {
+        name = cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|attr| attr.as_str().ok())
+            .map(|s| s.to_string());
+    }
+
+    let name = name.ok_or(crate::error::ProtocolError::InvalidIdentity(
+        "no SAN identity URI and no Common Name",
+    ))?;
+    validate_identity_name(&name)?;
+    Ok(name)
+}
+
+/// Validate an extracted identity name: non-empty, within
+/// `MAX_IDENTITY_LEN` bytes so it always fits the AUTH_OK frame, and free
+/// of control characters so it cannot corrupt logs or smuggle terminal
+/// escapes (`SECURITY.md` §2, §9). Fails closed on any violation.
+fn validate_identity_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(crate::error::ProtocolError::InvalidIdentity("empty identity name").into());
+    }
+    if name.len() > MAX_IDENTITY_LEN {
+        return Err(crate::error::ProtocolError::InvalidIdentity("identity name too long").into());
+    }
+    if name.chars().any(char::is_control) {
+        return Err(crate::error::ProtocolError::InvalidIdentity(
+            "identity name contains control characters",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn hex_fingerprint(der: &[u8]) -> String {
@@ -477,4 +551,101 @@ fn hex_fingerprint(der: &[u8]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
+
+    /// Build a self-signed leaf certificate with the given Common Name and
+    /// an optional SAN URI, returned as a single-element rustls chain.
+    ///
+    /// `identity_from_chain` only *extracts and validates the name* — the
+    /// chain's trust is established earlier by rustls during the real
+    /// handshake — so a self-signed fixture is sufficient and correct here.
+    fn leaf_chain(cn: &str, san_uri: Option<&str>) -> Vec<Certificate> {
+        let mut params = CertificateParams::default();
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, cn);
+        params.distinguished_name = dn;
+        if let Some(uri) = san_uri {
+            params.subject_alt_names = vec![SanType::URI(uri.to_string().try_into().unwrap())];
+        }
+        let key = KeyPair::generate().expect("keypair");
+        let cert = params.self_signed(&key).expect("self-sign");
+        let pem = cert.pem();
+        rustls_pemfile::certs(&mut &pem.as_bytes()[..])
+            .expect("parse leaf PEM")
+            .into_iter()
+            .map(Certificate)
+            .collect()
+    }
+
+    #[test]
+    fn san_uri_identity_wins_over_cn() {
+        // Both a CN and a matching SAN identity URI are present; the SAN
+        // URI must win (`SECURITY.md` §2 precedence).
+        let chain = leaf_chain("common-name-should-lose", Some("velcrux://identity/alice"));
+        let id = identity_from_chain(&chain).expect("identity");
+        assert_eq!(id.name, "alice");
+    }
+
+    #[test]
+    fn falls_back_to_common_name() {
+        // No SAN URI → the subject Common Name is used.
+        let chain = leaf_chain("bob", None);
+        let id = identity_from_chain(&chain).expect("identity");
+        assert_eq!(id.name, "bob");
+    }
+
+    #[test]
+    fn non_velcrux_san_uri_falls_back_to_cn() {
+        // A SAN URI that is not the velcrux identity prefix must be ignored,
+        // falling back to the CN rather than adopting the foreign URI.
+        let chain = leaf_chain("carol", Some("https://example.com/not-an-identity"));
+        let id = identity_from_chain(&chain).expect("identity");
+        assert_eq!(id.name, "carol");
+    }
+
+    #[test]
+    fn empty_chain_is_rejected() {
+        let chain: Vec<Certificate> = Vec::new();
+        assert!(identity_from_chain(&chain).is_err());
+    }
+
+    #[test]
+    fn single_cert_chain_issuer_equals_leaf_fingerprint() {
+        let chain = leaf_chain("dave", Some("velcrux://identity/dave"));
+        let id = identity_from_chain(&chain).expect("identity");
+        // SHA-256 hex is 64 lowercase hex chars.
+        assert_eq!(id.cert_fingerprint.len(), 64);
+        assert!(id.cert_fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
+        // Self-signed / single-cert chain: issuer fingerprint == leaf.
+        assert_eq!(id.issuer_fingerprint, id.cert_fingerprint);
+    }
+
+    #[test]
+    fn validate_identity_name_rejects_empty() {
+        assert!(validate_identity_name("").is_err());
+    }
+
+    #[test]
+    fn validate_identity_name_rejects_control_chars() {
+        assert!(validate_identity_name("bad\nname").is_err());
+        assert!(validate_identity_name("bad\tname").is_err());
+        assert!(validate_identity_name("bad\0name").is_err());
+    }
+
+    #[test]
+    fn validate_identity_name_rejects_oversize() {
+        let big = "x".repeat(MAX_IDENTITY_LEN + 1);
+        assert!(validate_identity_name(&big).is_err());
+    }
+
+    #[test]
+    fn validate_identity_name_accepts_reasonable() {
+        assert!(validate_identity_name("alice").is_ok());
+        assert!(validate_identity_name(&"x".repeat(MAX_IDENTITY_LEN)).is_ok());
+    }
 }

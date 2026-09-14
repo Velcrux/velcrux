@@ -8,23 +8,22 @@
 //! ```
 //!
 //! `ServerConn` is the per-connection actor. It drives a single
-//! `control_stream` task: receive one HELLO, reply HELLO_ACK, then loop
-//! receiving PING/PONG and other control messages until the peer sends BYE
-//! or the connection drops.
-//!
-//! AUTH is a no-op pass-through in M1; the `AWAIT_AUTH` transition
-//! happens immediately. M2 will insert the real authenticator between
-//! `AWAIT_HELLO` and `SERVING`.
+//! `control_stream` task: receive one HELLO, reply HELLO_ACK, await AUTH,
+//! reply AUTH_OK, then loop receiving PING/PONG and other control messages
+//! until the peer sends BYE or the connection drops.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator, Op};
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
-use crate::protocol::message::{Hello, HelloAck, Message, Ping};
-use crate::state::{StateStore, TransferStatus};
-use crate::storage::{LocalFilesystemBackend, VPath};
+use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
+use crate::state::{Direction, StateStore, TransferStatus};
+use crate::storage::LocalFilesystemBackend;
 use crate::transport::Connection;
+use crate::transport::identity::Identity;
 use crate::util::TransferId;
+use std::path::Path;
 use std::sync::Arc;
 
 use super::{read_frame, write_frame};
@@ -92,6 +91,10 @@ pub struct ServerConn {
     /// is `None`, which disables the M3 surface (used by tests that
     /// don't exercise it).
     state: Option<Arc<dyn StateStore>>,
+    /// Authenticator for mTLS.
+    authenticator: Arc<dyn Authenticator>,
+    /// Authorizer for path-based access control.
+    authorizer: Arc<dyn Authorizer>,
 }
 
 impl ServerConn {
@@ -102,7 +105,7 @@ impl ServerConn {
         stats: Arc<ServerStats>,
         backend: Arc<LocalFilesystemBackend>,
     ) -> Self {
-        Self::with_state(server_caps, server_name, stats, backend, None)
+        Self::with_state(server_caps, server_name, stats, backend, None, None, None)
     }
 
     /// Construct a new connection actor with the M3 state store
@@ -113,13 +116,19 @@ impl ServerConn {
         stats: Arc<ServerStats>,
         backend: Arc<LocalFilesystemBackend>,
         state: Option<Arc<dyn StateStore>>,
+        authenticator: Option<Arc<dyn Authenticator>>,
+        authorizer: Option<Arc<dyn Authorizer>>,
     ) -> Self {
+        let authenticator = authenticator.unwrap_or_else(|| Arc::new(MtlsAuthenticator::new()));
+        let authorizer = authorizer.unwrap_or_else(|| Arc::new(FileAuthorizer::new()));
         Self {
             server_caps,
             server_name: server_name.into(),
             stats,
             backend,
             state,
+            authenticator,
+            authorizer,
         }
     }
 
@@ -129,6 +138,13 @@ impl ServerConn {
         self.stats.connections.fetch_add(1, Ordering::Relaxed);
         let mut state = ServerState::AwaitHello;
         let (mut send, mut recv) = conn.accept_bi().await?;
+
+        // Extract the peer identity from the TLS connection.
+        let peer_identity = conn.peer_identity();
+
+        // The identity verified during AWAIT_AUTH, carried into SERVING so
+        // every operation is authorized against it. `None` until AUTH_OK.
+        let mut authenticated_identity: Option<Identity> = None;
 
         loop {
             match state {
@@ -173,7 +189,7 @@ impl ServerConn {
                             write_frame(send.as_mut(), &Message::HelloAck(ack), frame.request_id)
                                 .await?;
                             self.stats.handshakes.fetch_add(1, Ordering::Relaxed);
-                            state = ServerState::Serving;
+                            state = ServerState::AwaitAuth;
                         }
                         _other => {
                             return Err(VelcruxError::Protocol(
@@ -184,7 +200,89 @@ impl ServerConn {
                         }
                     }
                 }
+                ServerState::AwaitAuth => {
+                    let frame = match read_frame(recv.as_mut()).await? {
+                        Some(f) => f,
+                        None => break,
+                    };
+                    match frame.type_byte {
+                        x if x == crate::protocol::message::AUTH => {
+                            let auth = Auth::decode(&frame.payload)?;
+                            // Verify the peer identity is available.
+                            let identity = peer_identity.clone().ok_or_else(|| {
+                                VelcruxError::Protocol(crate::error::ProtocolError::InvalidIdentity(
+                                    "no peer identity",
+                                ))
+                            })?;
+
+                            // Authenticate using the authenticator.
+                            let verified_identity = self.authenticator.authenticate(&identity)?;
+
+                            // For mTLS, the mechanism should be MTLS (0).
+                            if auth.mechanism != crate::protocol::message::AUTH_MECHANISM_MTLS {
+                                let err = crate::protocol::message::ErrorMsg::new(
+                                    crate::protocol::error::ErrorCode::AuthFailed,
+                                    "unsupported auth mechanism",
+                                );
+                                let _ = write_frame(
+                                    send.as_mut(),
+                                    &Message::Error(err),
+                                    frame.request_id,
+                                ).await;
+                                conn.close(
+                                    crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
+                                    b"unsupported auth mechanism",
+                                );
+                                state = ServerState::Closed;
+                                break;
+                            }
+
+                            // Permissions reported in AUTH_OK are the union of
+                            // all grants for this identity (`SECURITY.md` §4).
+                            // Advisory only: every individual operation is still
+                            // authorized against its specific path in SERVING.
+                            // An identity with no grants authenticates but is
+                            // reported — and enforced — as having none.
+                            let permissions = self
+                                .authorizer
+                                .granted_permissions(&verified_identity)
+                                .to_wire();
+
+                            let auth_ok = AuthOk {
+                                identity: verified_identity.name.clone(),
+                                permissions,
+                            };
+                            write_frame(send.as_mut(), &Message::AuthOk(auth_ok), frame.request_id)
+                                .await?;
+
+                            // Carry the verified identity into SERVING.
+                            authenticated_identity = Some(verified_identity);
+                            state = ServerState::Serving;
+                        }
+                        _other => {
+                            return Err(VelcruxError::Protocol(
+                                crate::error::ProtocolError::InvalidStateTransition(
+                                    "expected AUTH",
+                                ),
+                            ));
+                        }
+                    }
+                }
                 ServerState::Serving => {
+                    // Every op in SERVING is authorized against the identity
+                    // verified during AWAIT_AUTH. Reaching SERVING without one
+                    // is an internal invariant violation — fail closed, never
+                    // panic and never serve unauthenticated.
+                    let identity = match authenticated_identity.as_ref() {
+                        Some(id) => id,
+                        None => {
+                            return Err(VelcruxError::Protocol(
+                                crate::error::ProtocolError::InvalidStateTransition(
+                                    "SERVING without authenticated identity",
+                                ),
+                            ));
+                        }
+                    };
                     let frame = match read_frame(recv.as_mut()).await? {
                         Some(f) => f,
                         None => break,
@@ -209,10 +307,13 @@ impl ServerConn {
                             break;
                         }
                         x if x == crate::protocol::message::TRANSFER_CREATE => {
-                            // Dispatch to the transfer state machine.
+                            // Dispatch to the transfer state machine. The path
+                            // is authorized inside, before any filesystem I/O.
                             if let Err(e) = handle_transfer_create(
                                 conn,
                                 &self.backend,
+                                self.authorizer.as_ref(),
+                                identity,
                                 send.as_mut(),
                                 recv.as_mut(),
                                 &frame.payload,
@@ -224,16 +325,32 @@ impl ServerConn {
                             }
                         }
                         x if x == crate::protocol::message::STAT => {
-                            handle_stat(send.as_mut(), &self.state, &frame.payload).await;
+                            handle_stat(
+                                send.as_mut(),
+                                &self.state,
+                                self.authorizer.as_ref(),
+                                identity,
+                                &frame.payload,
+                            )
+                            .await;
                         }
                         x if x == crate::protocol::message::LIST => {
-                            handle_list(send.as_mut(), &self.state, &frame.payload).await;
+                            handle_list(
+                                send.as_mut(),
+                                &self.state,
+                                self.authorizer.as_ref(),
+                                identity,
+                                &frame.payload,
+                            )
+                            .await;
                         }
                         x if x == crate::protocol::message::CANCEL => {
                             handle_cancel(
                                 send.as_mut(),
                                 &self.backend,
                                 &self.state,
+                                self.authorizer.as_ref(),
+                                identity,
                                 &frame.payload,
                             )
                             .await;
@@ -256,7 +373,6 @@ impl ServerConn {
                 ServerState::Closed => break,
                 ServerState::Accepted
                 | ServerState::TlsHandshake
-                | ServerState::AwaitAuth
                 | ServerState::Draining => {
                     return Err(VelcruxError::Protocol(
                         crate::error::ProtocolError::InvalidStateTransition(state.name()),
@@ -268,17 +384,20 @@ impl ServerConn {
     }
 }
 
-#[inline]
-fn break_as_closed(state: &mut ServerState) {
-    *state = ServerState::Closed;
-}
-
 /// Handle a `TRANSFER_CREATE` request: validate path, issue
 /// `TRANSFER_CREATED` + `TRANSFER_PLAN`, await `TRANSFER_BEGIN`, then run
 /// the per-transfer upload or download session.
+///
+/// The destination path is authorized against `identity` **before** any
+/// filesystem access (`stat`, staging). On any authorization or validation
+/// failure the reply is a uniform `FILE_NOT_FOUND` / "not found", so a
+/// caller cannot distinguish "denied", "malformed path", and "does not
+/// exist" (`PROTOCOL.md` §10).
 async fn handle_transfer_create(
     conn: &dyn Connection,
     backend: &LocalFilesystemBackend,
+    authorizer: &dyn Authorizer,
+    identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
     payload: &[u8],
@@ -292,8 +411,16 @@ async fn handle_transfer_create(
     use crate::util::TransferId;
 
     let create = TransferCreate::decode(payload)?;
-    // Validate destination path as a VPath.
-    let dst = match VPath::validate(&create.dst_path) {
+
+    // Authorize the destination path for the requested operation BEFORE any
+    // filesystem access. This both validates the path (traversal, absolute,
+    // control chars) and enforces the identity's grants. Any failure →
+    // uniform "not found".
+    let op = match create.op {
+        TransferOp::Upload => Op::Upload,
+        TransferOp::Download => Op::Download,
+    };
+    let dst = match authorizer.check(identity, op, &create.dst_path) {
         Ok(p) => p,
         Err(_) => {
             let err = crate::protocol::message::ErrorMsg::new(
@@ -404,9 +531,16 @@ async fn handle_transfer_create(
 
 /// M3 server-side handler for `STAT`. Looks up the transfer in the
 /// state DB and replies with `STAT_RESULT`.
+///
+/// The record's `remote_path` is authorized against `identity` (LIST): a
+/// caller that may not list the path gets the same `found: false` reply as
+/// for a genuinely unknown transfer, so STAT cannot be used to probe the
+/// existence of another tenant's transfers (`PROTOCOL.md` §10).
 async fn handle_stat(
     send: &mut dyn crate::transport::BiSendStream,
     state: &Option<Arc<dyn StateStore>>,
+    authorizer: &dyn Authorizer,
+    identity: &Identity,
     payload: &[u8],
 ) {
     use crate::protocol::message::{ListResult, Message, StatQuery, StatResult};
@@ -417,7 +551,7 @@ async fn handle_stat(
     };
     let sr = match state {
         Some(store) => match store.get_transfer(q.transfer_id) {
-            Ok(r) => StatResult {
+            Ok(r) if authorizer.check(identity, Op::List, &r.remote_path).is_ok() => StatResult {
                 transfer_id: r.transfer_id,
                 found: true,
                 status: r.status.name().to_string(),
@@ -429,7 +563,9 @@ async fn handle_stat(
                 created_ms: r.created_ms,
                 updated_ms: r.updated_ms,
             },
-            Err(_) => StatResult {
+            // Unknown transfer OR not authorized to list its path — identical
+            // reply (`PROTOCOL.md` §10).
+            _ => StatResult {
                 transfer_id: q.transfer_id,
                 found: false,
                 status: "missing".into(),
@@ -460,10 +596,14 @@ async fn handle_stat(
 }
 
 /// M3 server-side handler for `LIST`. Replies with a `LIST_RESULT`
-/// of all transfers whose `remote_path` starts with the prefix.
+/// of all transfers whose `remote_path` starts with the prefix **and**
+/// that `identity` is authorized to list. Rows outside the caller's grants
+/// are silently filtered out, so LIST never reveals another tenant's paths.
 async fn handle_list(
     send: &mut dyn crate::transport::BiSendStream,
     state: &Option<Arc<dyn StateStore>>,
+    authorizer: &dyn Authorizer,
+    identity: &Identity,
     payload: &[u8],
 ) {
     use crate::protocol::message::{ListQuery, ListResult, Message, StatResult};
@@ -477,6 +617,7 @@ async fn handle_list(
             match store.list_transfers_by_path(crate::state::Role::Server, &q.url_prefix) {
                 Ok(rows) => rows
                     .into_iter()
+                    .filter(|r| authorizer.check(identity, Op::List, &r.remote_path).is_ok())
                     .map(|r| StatResult {
                         transfer_id: r.transfer_id,
                         found: true,
@@ -502,10 +643,18 @@ async fn handle_list(
 /// M3 server-side handler for `CANCEL`. Marks the transfer as
 /// cancelled in the state DB and best-effort removes the staging
 /// file. There is no reply on the wire; the client uses BYE.
+///
+/// The transfer is authorized against `identity` before it is touched: the
+/// caller must hold the permission its direction implies (upload/download)
+/// on the transfer's own path. An unknown transfer and an unauthorized one
+/// are both silently ignored, so CANCEL cannot probe or affect another
+/// tenant's transfers.
 async fn handle_cancel(
     _send: &mut dyn crate::transport::BiSendStream,
     backend: &Arc<LocalFilesystemBackend>,
     state: &Option<Arc<dyn StateStore>>,
+    authorizer: &dyn Authorizer,
+    identity: &Identity,
     payload: &[u8],
 ) {
     use crate::protocol::message::Cancel;
@@ -516,6 +665,19 @@ async fn handle_cancel(
         Err(_) => return,
     };
     let Some(store) = state else { return };
+    // Look up the transfer so we can authorize against its own path. Unknown
+    // transfer → silently ignore (indistinguishable from unauthorized).
+    let record = match store.get_transfer(c.transfer_id) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let op = match record.direction {
+        Direction::Upload => Op::Upload,
+        Direction::Download => Op::Download,
+    };
+    if authorizer.check(identity, op, &record.remote_path).is_err() {
+        return;
+    }
     let _ = cancel_transfer_m3(backend, store.clone(), c.transfer_id).await;
     let _ = TransferStatus::Cancelled;
 }

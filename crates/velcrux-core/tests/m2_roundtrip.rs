@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
+use velcrux_core::auth::{Authorizer, FileAuthorizer, Grant, PermSet};
 use velcrux_core::protocol::message::{
     Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
 };
@@ -224,11 +225,23 @@ async fn m2_upload_download_round_trip() {
     // 5. Run the server actor loop in the background. It accepts
     //    *two* connections (one per transfer) on the same transport.
     let stats = Arc::new(ServerStats::default());
+    // M4: the server authorizes every operation against the peer identity.
+    // The client presents the SAN URI `velcrux://identity/dev-user`, so we
+    // grant "dev-user" upload/download/list on the `data` prefix — exactly
+    // the paths this round-trip uses. The secure default (no authorizer)
+    // denies everything, so an explicit grant is required even in tests
+    // (`SECURITY.md` §4). This is a *grant*, not a weakening of the default.
+    let authz: Arc<dyn Authorizer> = Arc::new(FileAuthorizer::from_grants(vec![Grant {
+        identity: "dev-user".to_string(),
+        path_prefix: "data".to_string(),
+        permissions: PermSet::UPLOAD | PermSet::DOWNLOAD | PermSet::LIST,
+    }]));
     let server_task: tokio::task::JoinHandle<()> = {
         let server_caps = server_caps;
         let backend = Arc::clone(&backend);
         let stats1 = Arc::clone(&stats);
         let stats2 = Arc::clone(&stats);
+        let authz = Arc::clone(&authz);
         tokio::spawn(async move {
             for n in 0..2 {
                 let conn = server_transport.accept().await.expect("server accept");
@@ -240,8 +253,10 @@ async fn m2_upload_download_round_trip() {
                 } else {
                     Arc::clone(&stats2)
                 };
+                let az = Arc::clone(&authz);
                 tokio::spawn(async move {
-                    let actor = ServerConn::new(caps, "velcruxd", s, b);
+                    let actor =
+                        ServerConn::with_state(caps, "velcruxd", s, b, None, None, Some(az));
                     let r = actor.run(&conn).await;
                     tracing::warn!(n, ?r, "server: actor finished");
                     let _ = r;

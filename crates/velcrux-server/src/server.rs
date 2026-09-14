@@ -14,6 +14,7 @@ use rustls::{Certificate, PrivateKey};
 use serde::Deserialize;
 use tracing::{info, warn};
 
+use velcrux_core::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ServerConn, ServerStats};
 use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
@@ -43,6 +44,11 @@ pub struct SecurityCfg {
     pub certificate: String,
     pub private_key: String,
     pub client_ca: String,
+    /// Path to the authorization grants file (TOML; `SECURITY.md` §4).
+    /// If absent, the server still authenticates clients over mTLS but
+    /// grants them nothing: every operation is denied (deny-by-default).
+    #[serde(default)]
+    pub grants: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +198,35 @@ pub async fn run(config_path: &Path) -> Result<()> {
         None => None,
     };
 
+    // M4: authentication + authorization.
+    //
+    // Authentication is mTLS: the QUIC/TLS handshake already validated the
+    // client certificate chain against the configured `client_ca`, so the
+    // authenticator only confirms the extracted identity is present.
+    //
+    // Authorization is deny-by-default (`SECURITY.md` §4). A grants file
+    // maps identities to path-prefix permissions; with no grants file the
+    // server authenticates clients but authorizes nothing — every
+    // operation is denied. A malformed grants file is a hard startup error
+    // (fail closed) rather than a silent fall-back to deny-all, so an
+    // operator never mistakes a broken config for an intentional lockdown.
+    let authenticator: Arc<dyn Authenticator> = Arc::new(MtlsAuthenticator::new());
+    let authorizer: Arc<dyn Authorizer> = match &cfg.security.grants {
+        Some(path) => {
+            let authz = FileAuthorizer::load(Path::new(path))
+                .with_context(|| format!("load authorization grants file {path}"))?;
+            info!(grants = %path, "authorization grants loaded");
+            Arc::new(authz)
+        }
+        None => {
+            warn!(
+                "no authorization grants file configured (security.grants); \
+                 all operations will be denied (deny-by-default, `SECURITY.md` §4)"
+            );
+            Arc::new(FileAuthorizer::new())
+        }
+    };
+
     let next_id = Arc::new(AtomicU64::new(1));
     loop {
         let conn = match transport.accept().await {
@@ -208,6 +243,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
             Arc::clone(&stats),
             Arc::clone(&backend),
             state_store.clone(),
+            Some(Arc::clone(&authenticator)),
+            Some(Arc::clone(&authorizer)),
         );
         tokio::spawn(async move {
             let conn: QuicConnection = conn;

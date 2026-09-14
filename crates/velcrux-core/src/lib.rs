@@ -21,6 +21,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_docs)]
 
+pub mod auth;
 pub mod chunking;
 pub mod error;
 pub mod protocol;
@@ -36,6 +37,7 @@ pub use chunking::{
     CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
 };
 pub use error::{Result, VelcruxError};
+pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
 pub use state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, JournalRecovery, MockStateStore,
     Role, SqliteStateStore, StateStore, StateStoreError, StateStoreResult, TransferRecord,
