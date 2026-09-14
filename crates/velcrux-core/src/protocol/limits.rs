@@ -31,6 +31,17 @@ pub const DEFAULT_CHUNK_MIN: u64 = 256 * 1024;
 /// (50_000_000). Manifests larger than this must be split.
 pub const MAX_MANIFEST_ENTRIES: u64 = 50_000_000;
 
+/// Maximum total size of a manifest on the wire or spilled to disk, in bytes
+/// (`SECURITY.md` §10, default 8 GiB).
+pub const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+/// Target number of manifest entries per `MANIFEST_BATCH` frame (`PROTOCOL.md` §4).
+pub const MANIFEST_BATCH_SIZE: usize = 4096;
+
+/// Maximum decompressed payload size of a single `MANIFEST_BATCH` frame,
+/// in bytes (`SECURITY.md` §10 decompression-bomb defense).
+pub const MAX_BATCH_DECOMPRESSED_BYTES: usize = 16 * 1024 * 1024;
+
 /// Maximum size of a single path component, in bytes
 /// (`SECURITY.md` §4, derived from common FS limits).
 pub const MAX_PATH_COMPONENT: usize = 255;

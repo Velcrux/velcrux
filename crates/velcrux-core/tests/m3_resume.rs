@@ -693,6 +693,25 @@ async fn run_m3_server_session(
     };
     let _ = write_frame(control_send.as_mut(), &Message::HelloAck(ack), 0).await;
 
+    // AUTH → AUTH_OK (M4).
+    let auth_frame = match read_frame(control_recv.as_mut()).await {
+        Ok(Some(f)) => f,
+        _ => return,
+    };
+    if auth_frame.type_byte != velcrux_core::protocol::message::AUTH {
+        return;
+    }
+    let auth_ok = velcrux_core::protocol::message::AuthOk {
+        identity: "dev-user".into(),
+        permissions: 0xFF,
+    };
+    let _ = write_frame(
+        control_send.as_mut(),
+        &Message::AuthOk(auth_ok),
+        auth_frame.request_id,
+    )
+    .await;
+
     // TRANSFER_CREATE.
     let frame = match read_frame(control_recv.as_mut()).await {
         Ok(Some(f)) => f,

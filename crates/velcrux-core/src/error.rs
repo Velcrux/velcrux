@@ -97,6 +97,10 @@ pub enum ProtocolError {
     /// The caller is authenticated but not authorized for this operation/path.
     #[error("permission denied")]
     PermissionDenied,
+
+    /// A manifest failed validation (hash mismatch, bounds violation, bad format).
+    #[error("invalid manifest: {0}")]
+    InvalidManifest(String),
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

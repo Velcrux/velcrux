@@ -26,9 +26,10 @@ pub use frame::{
 };
 pub use limits::*;
 pub use message::{
-    Bye, Commit, Committed, Hello, HelloAck, Limits, Message, Ping, Pong, SessionInit,
-    SessionOptions, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
-    Verify, VerifyResult, AGENT, BYE, COMMIT, COMMITTED, ERROR, HELLO, HELLO_ACK, PING, PONG,
+    Bye, Commit, Committed, Hello, HelloAck, Limits, ManifestBatch, ManifestBegin, ManifestEnd,
+    Message, Ping, Pong, SessionInit, SessionOptions, TransferBegin, TransferCreate,
+    TransferCreated, TransferOp, TransferPlan, Verify, VerifyResult, AGENT, BYE, COMMIT, COMMITTED,
+    ERROR, HELLO, HELLO_ACK, MANIFEST_BATCH, MANIFEST_BEGIN, MANIFEST_END, PING, PONG,
     SESSION_INIT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN, VERIFY,
     VERIFY_RESULT,
 };

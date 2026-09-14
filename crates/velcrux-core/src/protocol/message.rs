@@ -15,7 +15,10 @@ use bytes::Bytes;
 use crate::error::ProtocolError;
 use crate::protocol::capabilities::{Capabilities, Capability};
 use crate::protocol::error::{ErrorCode, ErrorDetail};
-use crate::protocol::limits::PROTOCOL_VERSION;
+use crate::chunking::ChunkParams;
+use crate::protocol::limits::{
+    MANIFEST_BATCH_SIZE, MAX_MANIFEST_BYTES, MAX_MANIFEST_ENTRIES, PROTOCOL_VERSION,
+};
 use crate::protocol::varint;
 use crate::util::Hash;
 use crate::util::TransferId;
@@ -1544,6 +1547,141 @@ impl ListResult {
     }
 }
 
+/// `MANIFEST_BEGIN` (0x30, sender → receiver).
+///
+/// Declares the total file count, total transfer bytes, negotiated chunker
+/// parameters, and the BLAKE3 digest of the canonical manifest content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestBegin {
+    /// Declared file count in this manifest. Bounded by `MAX_MANIFEST_ENTRIES`.
+    pub file_count: u64,
+    /// Declared total uncompressed bytes across all files. Bounded by `MAX_MANIFEST_BYTES`.
+    pub total_bytes: u64,
+    /// Chunker parameters used to chunk the files described in this manifest.
+    pub chunker_params: ChunkParams,
+    /// BLAKE3 digest over the canonical uncompressed `FileEntry` sequence.
+    pub manifest_hash: Hash,
+}
+
+impl ManifestBegin {
+    /// Encode to binary payload (72 bytes).
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(72);
+        out.extend_from_slice(&self.file_count.to_le_bytes());
+        out.extend_from_slice(&self.total_bytes.to_le_bytes());
+        out.extend_from_slice(&self.chunker_params.min.to_le_bytes());
+        out.extend_from_slice(&self.chunker_params.target.to_le_bytes());
+        out.extend_from_slice(&self.chunker_params.max.to_le_bytes());
+        out.extend_from_slice(self.manifest_hash.as_bytes());
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 72 {
+            return Err(ProtocolError::Malformed("MANIFEST_BEGIN: truncated"));
+        }
+        let file_count = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+        if file_count > MAX_MANIFEST_ENTRIES {
+            return Err(ProtocolError::InvalidManifest(format!(
+                "file count {file_count} exceeds MAX_MANIFEST_ENTRIES {MAX_MANIFEST_ENTRIES}"
+            )));
+        }
+        let total_bytes = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+        if total_bytes > MAX_MANIFEST_BYTES {
+            return Err(ProtocolError::InvalidManifest(format!(
+                "total bytes {total_bytes} exceeds MAX_MANIFEST_BYTES {MAX_MANIFEST_BYTES}"
+            )));
+        }
+        let min = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+        let target = u64::from_le_bytes(buf[24..32].try_into().unwrap());
+        let max = u64::from_le_bytes(buf[32..40].try_into().unwrap());
+        let chunker_params = ChunkParams::new(min, target, max)
+            .ok_or_else(|| ProtocolError::Malformed("MANIFEST_BEGIN: invalid chunk params"))?;
+        let manifest_hash = Hash::from_bytes(&buf[40..72])
+            .ok_or_else(|| ProtocolError::Malformed("MANIFEST_BEGIN: invalid hash"))?;
+
+        Ok(Self {
+            file_count,
+            total_bytes,
+            chunker_params,
+            manifest_hash,
+        })
+    }
+}
+
+/// `MANIFEST_BATCH` (0x31, sender → receiver).
+///
+/// Carries up to 4096 file/chunk entries in a single frame. The payload is
+/// zstd-framed binary bytes representing the canonical encoding of the entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestBatch {
+    /// Zero-based sequential batch index.
+    pub batch_index: u64,
+    /// Number of entries contained in this batch (up to `MANIFEST_BATCH_SIZE`).
+    pub entry_count: u32,
+    /// zstd-compressed payload containing canonical FileEntry bytes.
+    pub compressed_payload: Bytes,
+}
+
+impl ManifestBatch {
+    /// Encode to binary payload.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(12 + self.compressed_payload.len());
+        out.extend_from_slice(&self.batch_index.to_le_bytes());
+        out.extend_from_slice(&self.entry_count.to_le_bytes());
+        out.extend_from_slice(&self.compressed_payload);
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 12 {
+            return Err(ProtocolError::Malformed("MANIFEST_BATCH: truncated"));
+        }
+        let batch_index = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+        let entry_count = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        if entry_count as usize > MANIFEST_BATCH_SIZE {
+            return Err(ProtocolError::InvalidManifest(format!(
+                "batch entry count {entry_count} exceeds MANIFEST_BATCH_SIZE {MANIFEST_BATCH_SIZE}"
+            )));
+        }
+        let compressed_payload = Bytes::copy_from_slice(&buf[12..]);
+        Ok(Self {
+            batch_index,
+            entry_count,
+            compressed_payload,
+        })
+    }
+}
+
+/// `MANIFEST_END` (0x32, sender → receiver).
+///
+/// Marks the end of the manifest exchange. Carries the final BLAKE3 digest,
+/// which MUST match the digest declared in `MANIFEST_BEGIN`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestEnd {
+    /// BLAKE3 digest over the entire canonical manifest stream.
+    pub manifest_hash: Hash,
+}
+
+impl ManifestEnd {
+    /// Encode to binary payload (32 bytes).
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        Ok(Bytes::copy_from_slice(self.manifest_hash.as_bytes()))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() != 32 {
+            return Err(ProtocolError::Malformed("MANIFEST_END: expected 32 bytes"));
+        }
+        let manifest_hash = Hash::from_bytes(buf)
+            .ok_or_else(|| ProtocolError::Malformed("MANIFEST_END: invalid hash"))?;
+        Ok(Self { manifest_hash })
+    }
+}
+
 /// A decoded, typed message body. The frame header has already been parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -1597,6 +1735,12 @@ pub enum Message {
     List(ListQuery),
     /// `LIST_RESULT` (server → client). M3.
     ListResult(ListResult),
+    /// `MANIFEST_BEGIN` (sender → receiver). M5.
+    ManifestBegin(ManifestBegin),
+    /// `MANIFEST_BATCH` (sender → receiver). M5.
+    ManifestBatch(ManifestBatch),
+    /// `MANIFEST_END` (sender → receiver). M5.
+    ManifestEnd(ManifestEnd),
 }
 
 impl Message {
@@ -1627,6 +1771,9 @@ impl Message {
             Message::StatResult(_) => STAT_RESULT,
             Message::List(_) => LIST,
             Message::ListResult(_) => LIST_RESULT,
+            Message::ManifestBegin(_) => MANIFEST_BEGIN,
+            Message::ManifestBatch(_) => MANIFEST_BATCH,
+            Message::ManifestEnd(_) => MANIFEST_END,
         }
     }
 
@@ -1658,6 +1805,9 @@ impl Message {
             Message::StatResult(m) => Ok((STAT_RESULT, m.encode()?)),
             Message::List(m) => Ok((LIST, m.encode()?)),
             Message::ListResult(m) => Ok((LIST_RESULT, m.encode()?)),
+            Message::ManifestBegin(m) => Ok((MANIFEST_BEGIN, m.encode()?)),
+            Message::ManifestBatch(m) => Ok((MANIFEST_BATCH, m.encode()?)),
+            Message::ManifestEnd(m) => Ok((MANIFEST_END, m.encode()?)),
         }
     }
 
@@ -1686,10 +1836,14 @@ impl Message {
             STAT_RESULT => Ok(Message::StatResult(StatResult::decode(payload)?)),
             LIST => Ok(Message::List(ListQuery::decode(payload)?)),
             LIST_RESULT => Ok(Message::ListResult(ListResult::decode(payload)?)),
+            MANIFEST_BEGIN => Ok(Message::ManifestBegin(ManifestBegin::decode(payload)?)),
+            MANIFEST_BATCH => Ok(Message::ManifestBatch(ManifestBatch::decode(payload)?)),
+            MANIFEST_END => Ok(Message::ManifestEnd(ManifestEnd::decode(payload)?)),
             other => Err(ProtocolError::UnsupportedMessage(other)),
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -2109,11 +2263,54 @@ mod tests {
                 transfer_id: tid,
                 files: 1,
             }),
+            Message::ManifestBegin(ManifestBegin {
+                file_count: 42,
+                total_bytes: 1024 * 1024 * 10,
+                chunker_params: ChunkParams::default(),
+                manifest_hash: Hash::ZERO,
+            }),
+            Message::ManifestBatch(ManifestBatch {
+                batch_index: 1,
+                entry_count: 10,
+                compressed_payload: Bytes::from_static(b"compressed_data"),
+            }),
+            Message::ManifestEnd(ManifestEnd {
+                manifest_hash: Hash::ZERO,
+            }),
         ];
         for m in cases {
             let (tb, payload) = m.encode().unwrap();
             let m2 = Message::decode(tb, &payload).unwrap();
             assert_eq!(m, m2);
         }
+    }
+
+    #[test]
+    fn manifest_messages_roundtrip() {
+        let begin = ManifestBegin {
+            file_count: 1000,
+            total_bytes: 50_000_000,
+            chunker_params: ChunkParams::new(128 * 1024, 512 * 1024, 2 * 1024 * 1024).unwrap(),
+            manifest_hash: Hash::from_bytes(&[7u8; 32]).unwrap(),
+        };
+        let bytes = begin.encode().unwrap();
+        let decoded = ManifestBegin::decode(&bytes).unwrap();
+        assert_eq!(begin, decoded);
+
+        let batch = ManifestBatch {
+            batch_index: 3,
+            entry_count: 4096,
+            compressed_payload: Bytes::from_static(b"payload_bytes"),
+        };
+        let bytes = batch.encode().unwrap();
+        let decoded = ManifestBatch::decode(&bytes).unwrap();
+        assert_eq!(batch, decoded);
+
+        let end = ManifestEnd {
+            manifest_hash: Hash::from_bytes(&[9u8; 32]).unwrap(),
+        };
+        let bytes = end.encode().unwrap();
+        let decoded = ManifestEnd::decode(&bytes).unwrap();
+        assert_eq!(end, decoded);
     }
 }

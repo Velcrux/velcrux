@@ -173,6 +173,7 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::InvalidPath => "not found",
             ProtocolError::InvalidIdentity(_) => "invalid identity",
             ProtocolError::PermissionDenied => "not found",
+            ProtocolError::InvalidManifest(_) => "invalid manifest",
         };
         Self::new(s)
     }

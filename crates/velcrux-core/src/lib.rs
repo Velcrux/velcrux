@@ -24,6 +24,7 @@
 pub mod auth;
 pub mod chunking;
 pub mod error;
+pub mod manifest;
 pub mod protocol;
 pub mod session;
 pub mod state;
@@ -38,6 +39,10 @@ pub use chunking::{
 };
 pub use error::{Result, VelcruxError};
 pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
+pub use manifest::{
+    ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
+    ManifestStore, ManifestWriter,
+};
 pub use state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, JournalRecovery, MockStateStore,
     Role, SqliteStateStore, StateStore, StateStoreError, StateStoreResult, TransferRecord,

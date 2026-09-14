@@ -1,5 +1,5 @@
 // Unit tests for `FileAuthorizer` and the auth module.
-use crate::auth::{FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
+use crate::auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
 use crate::error::VelcruxError;
 use crate::transport::identity::Identity;
 
