@@ -88,12 +88,35 @@ Download Pipeline:
 
 ## Installation and Build
 
-### Prerequisites
+### Quick Install (Pre-built Binaries)
 
-- **Rust**: Version 1.80 or later.
-- **Platform Support**: Linux (x86_64, aarch64; Kernel ≥ 5.6 recommended for `openat2`) and macOS.
+**Linux & macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/krishsharma/velcrux/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/krishsharma/velcrux/main/install.ps1 | iex
+```
+
+Or download the pre-compiled binary archives directly from [GitHub Releases](https://github.com/krishsharma/velcrux/releases). Each release contains:
+- `velcrux` / `velcrux.exe` (CLI client)
+- `velcruxd` / `velcruxd.exe` (Server daemon)
+- Pre-generated shell completions (`bash`, `zsh`, `fish`, `powershell`)
+- Cryptographic checksums (`SHA256SUMS.txt`)
+
+### Platform Support
+
+| Operating System | Architecture | Target |
+|---|---|---|
+| **Linux** | x86_64, aarch64 | `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` |
+| **macOS** | Apple Silicon, Intel | `aarch64-apple-darwin`, `x86_64-apple-darwin` |
+| **Windows** | x86_64 | `x86_64-pc-windows-msvc` |
 
 ### Compilation from Source
+
+**Prerequisites:** Rust 1.80 or later.
 
 ```bash
 # Clone the repository
@@ -107,6 +130,7 @@ cargo build --release --workspace
 cargo install --path crates/velcrux-client   # velcrux CLI
 cargo install --path crates/velcrux-server   # velcruxd daemon
 ```
+
 
 ---
 
