@@ -1682,6 +1682,163 @@ impl ManifestEnd {
     }
 }
 
+/// `INVENTORY_HINT` (0x33, receiver → sender).
+///
+/// Optional probabilistic filter (Bloom filter) over chunks the receiver holds,
+/// allowing the sender to skip querying chunks that are definitely absent (`PROTOCOL.md` §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InventoryHint {
+    /// Associated transfer identifier.
+    pub transfer_id: TransferId,
+    /// Declared number of bits in the filter bitset.
+    pub filter_bits: u32,
+    /// Number of hash functions used.
+    pub num_hashes: u8,
+    /// Filter bitset payload.
+    pub bitset: Bytes,
+}
+
+impl InventoryHint {
+    /// Encode to binary payload.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(16 + 4 + 1 + self.bitset.len());
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.extend_from_slice(&self.filter_bits.to_le_bytes());
+        out.push(self.num_hashes);
+        out.extend_from_slice(&self.bitset);
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 4 + 1 {
+            return Err(ProtocolError::Malformed("INVENTORY_HINT: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[0..16])
+            .ok_or_else(|| ProtocolError::Malformed("INVENTORY_HINT: bad transfer_id"))?;
+        let filter_bits = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+        let num_hashes = buf[20];
+        let bitset = Bytes::copy_from_slice(&buf[21..]);
+        Ok(Self {
+            transfer_id,
+            filter_bits,
+            num_hashes,
+            bitset,
+        })
+    }
+}
+
+/// `CHUNK_QUERY` (0x34, sender → receiver).
+///
+/// A batch of chunk hashes queried against the receiver's inventory (`PROTOCOL.md` §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkQuery {
+    /// Associated transfer identifier.
+    pub transfer_id: TransferId,
+    /// Query sequence index.
+    pub query_seq: u64,
+    /// Hashes of chunks being queried.
+    pub chunk_hashes: Vec<Hash>,
+}
+
+impl ChunkQuery {
+    /// Encode to binary payload.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(16 + 8 + 8 + self.chunk_hashes.len() * 32);
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.extend_from_slice(&self.query_seq.to_le_bytes());
+        let mut tmp = [0u8; 10];
+        let n = varint::encode_varint(self.chunk_hashes.len() as u64, &mut tmp);
+        out.extend_from_slice(&tmp[..n]);
+        for h in &self.chunk_hashes {
+            out.extend_from_slice(h.as_bytes());
+        }
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 8 {
+            return Err(ProtocolError::Malformed("CHUNK_QUERY: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[0..16])
+            .ok_or_else(|| ProtocolError::Malformed("CHUNK_QUERY: bad transfer_id"))?;
+        let query_seq = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+        let mut i = 24;
+        let (count, consumed) = varint::decode_varint(&buf[i..])?;
+        i += consumed;
+        if count > MAX_MANIFEST_ENTRIES {
+            return Err(ProtocolError::Malformed("CHUNK_QUERY: too many hashes"));
+        }
+        let count_us = count as usize;
+        if buf.len() < i + count_us * 32 {
+            return Err(ProtocolError::Malformed("CHUNK_QUERY: truncated hashes"));
+        }
+        let mut chunk_hashes = Vec::with_capacity(count_us);
+        for _ in 0..count_us {
+            let h = Hash::from_bytes(&buf[i..i + 32])
+                .ok_or_else(|| ProtocolError::Malformed("CHUNK_QUERY: invalid hash"))?;
+            chunk_hashes.push(h);
+            i += 32;
+        }
+        Ok(Self {
+            transfer_id,
+            query_seq,
+            chunk_hashes,
+        })
+    }
+}
+
+/// `CHUNK_RESPONSE` (0x35, receiver → sender).
+///
+/// An RLE-encoded bitmap of have (1) / need (0) status matching the query order (`PROTOCOL.md` §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkResponse {
+    /// Associated transfer identifier.
+    pub transfer_id: TransferId,
+    /// Query sequence matching the corresponding [`ChunkQuery`].
+    pub query_seq: u64,
+    /// Total number of chunks covered by this response.
+    pub total_chunks: u32,
+    /// Number of chunks the receiver already has.
+    pub have_count: u32,
+    /// Run-length encoded bitmap payload.
+    pub rle_bitmap: Bytes,
+}
+
+impl ChunkResponse {
+    /// Encode to binary payload.
+    pub fn encode(&self) -> Result<Bytes, ProtocolError> {
+        let mut out = Vec::with_capacity(16 + 8 + 4 + 4 + self.rle_bitmap.len());
+        out.extend_from_slice(self.transfer_id.as_bytes());
+        out.extend_from_slice(&self.query_seq.to_le_bytes());
+        out.extend_from_slice(&self.total_chunks.to_le_bytes());
+        out.extend_from_slice(&self.have_count.to_le_bytes());
+        out.extend_from_slice(&self.rle_bitmap);
+        Ok(Bytes::from(out))
+    }
+
+    /// Decode from binary payload.
+    pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
+        if buf.len() < 16 + 8 + 4 + 4 {
+            return Err(ProtocolError::Malformed("CHUNK_RESPONSE: truncated"));
+        }
+        let transfer_id = TransferId::from_bytes(&buf[0..16])
+            .ok_or_else(|| ProtocolError::Malformed("CHUNK_RESPONSE: bad transfer_id"))?;
+        let query_seq = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+        let total_chunks = u32::from_le_bytes(buf[24..28].try_into().unwrap());
+        let have_count = u32::from_le_bytes(buf[28..32].try_into().unwrap());
+        let rle_bitmap = Bytes::copy_from_slice(&buf[32..]);
+        Ok(Self {
+            transfer_id,
+            query_seq,
+            total_chunks,
+            have_count,
+            rle_bitmap,
+        })
+    }
+}
+
 /// A decoded, typed message body. The frame header has already been parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -1741,6 +1898,12 @@ pub enum Message {
     ManifestBatch(ManifestBatch),
     /// `MANIFEST_END` (sender → receiver). M5.
     ManifestEnd(ManifestEnd),
+    /// `INVENTORY_HINT` (receiver → sender). M7.
+    InventoryHint(InventoryHint),
+    /// `CHUNK_QUERY` (sender → receiver). M7.
+    ChunkQuery(ChunkQuery),
+    /// `CHUNK_RESPONSE` (receiver → sender). M7.
+    ChunkResponse(ChunkResponse),
 }
 
 impl Message {
@@ -1774,6 +1937,9 @@ impl Message {
             Message::ManifestBegin(_) => MANIFEST_BEGIN,
             Message::ManifestBatch(_) => MANIFEST_BATCH,
             Message::ManifestEnd(_) => MANIFEST_END,
+            Message::InventoryHint(_) => INVENTORY_HINT,
+            Message::ChunkQuery(_) => CHUNK_QUERY,
+            Message::ChunkResponse(_) => CHUNK_RESPONSE,
         }
     }
 
@@ -1808,6 +1974,9 @@ impl Message {
             Message::ManifestBegin(m) => Ok((MANIFEST_BEGIN, m.encode()?)),
             Message::ManifestBatch(m) => Ok((MANIFEST_BATCH, m.encode()?)),
             Message::ManifestEnd(m) => Ok((MANIFEST_END, m.encode()?)),
+            Message::InventoryHint(m) => Ok((INVENTORY_HINT, m.encode()?)),
+            Message::ChunkQuery(m) => Ok((CHUNK_QUERY, m.encode()?)),
+            Message::ChunkResponse(m) => Ok((CHUNK_RESPONSE, m.encode()?)),
         }
     }
 
@@ -1839,6 +2008,9 @@ impl Message {
             MANIFEST_BEGIN => Ok(Message::ManifestBegin(ManifestBegin::decode(payload)?)),
             MANIFEST_BATCH => Ok(Message::ManifestBatch(ManifestBatch::decode(payload)?)),
             MANIFEST_END => Ok(Message::ManifestEnd(ManifestEnd::decode(payload)?)),
+            INVENTORY_HINT => Ok(Message::InventoryHint(InventoryHint::decode(payload)?)),
+            CHUNK_QUERY => Ok(Message::ChunkQuery(ChunkQuery::decode(payload)?)),
+            CHUNK_RESPONSE => Ok(Message::ChunkResponse(ChunkResponse::decode(payload)?)),
             other => Err(ProtocolError::UnsupportedMessage(other)),
         }
     }
@@ -2277,6 +2449,24 @@ mod tests {
             Message::ManifestEnd(ManifestEnd {
                 manifest_hash: Hash::ZERO,
             }),
+            Message::InventoryHint(InventoryHint {
+                transfer_id: tid,
+                filter_bits: 64,
+                num_hashes: 3,
+                bitset: Bytes::from_static(&[0xFF; 8]),
+            }),
+            Message::ChunkQuery(ChunkQuery {
+                transfer_id: tid,
+                query_seq: 1,
+                chunk_hashes: vec![Hash::ZERO, Hash::from_bytes(&[1u8; 32]).unwrap()],
+            }),
+            Message::ChunkResponse(ChunkResponse {
+                transfer_id: tid,
+                query_seq: 1,
+                total_chunks: 2,
+                have_count: 1,
+                rle_bitmap: Bytes::from_static(&[0x01, 0x01]),
+            }),
         ];
         for m in cases {
             let (tb, payload) = m.encode().unwrap();
@@ -2312,5 +2502,44 @@ mod tests {
         let bytes = end.encode().unwrap();
         let decoded = ManifestEnd::decode(&bytes).unwrap();
         assert_eq!(end, decoded);
+    }
+
+    #[test]
+    fn delta_messages_roundtrip() {
+        let tid = crate::util::TransferId::generate();
+
+        let hint = InventoryHint {
+            transfer_id: tid,
+            filter_bits: 128,
+            num_hashes: 4,
+            bitset: Bytes::from_static(&[0xAA; 16]),
+        };
+        let bytes = hint.encode().unwrap();
+        let decoded = InventoryHint::decode(&bytes).unwrap();
+        assert_eq!(hint, decoded);
+
+        let query = ChunkQuery {
+            transfer_id: tid,
+            query_seq: 42,
+            chunk_hashes: vec![
+                Hash::from_bytes(&[1u8; 32]).unwrap(),
+                Hash::from_bytes(&[2u8; 32]).unwrap(),
+                Hash::from_bytes(&[3u8; 32]).unwrap(),
+            ],
+        };
+        let bytes = query.encode().unwrap();
+        let decoded = ChunkQuery::decode(&bytes).unwrap();
+        assert_eq!(query, decoded);
+
+        let resp = ChunkResponse {
+            transfer_id: tid,
+            query_seq: 42,
+            total_chunks: 100,
+            have_count: 95,
+            rle_bitmap: Bytes::from_static(&[0x5F, 0x05]),
+        };
+        let bytes = resp.encode().unwrap();
+        let decoded = ChunkResponse::decode(&bytes).unwrap();
+        assert_eq!(resp, decoded);
     }
 }

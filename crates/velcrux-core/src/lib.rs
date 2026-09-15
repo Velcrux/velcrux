@@ -29,6 +29,7 @@ pub mod protocol;
 pub mod session;
 pub mod state;
 pub mod storage;
+pub mod sync;
 pub mod transfer;
 pub mod transport;
 pub mod util;
@@ -37,6 +38,10 @@ pub use chunking::{
     create_chunker, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams, Chunker,
     FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN,
     CHUNK_DEFAULT_TARGET,
+};
+pub use sync::{
+    execute_delta_sync, BloomFilter, ChunkExtent, CostEstimator, DeltaProgress, DeltaReconstructor,
+    DeltaSyncReport, LocalInventory, RleBitmap, RleRun, SyncDecision, SyncError, SyncPlan,
 };
 pub use error::{Result, VelcruxError};
 pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
