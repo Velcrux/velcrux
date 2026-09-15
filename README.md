@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/krishsharma/velcrux/actions"><img src="https://img.shields.io/badge/build-passing-2ea44f?style=flat-square" alt="CI Status"></a>
+  <a href="https://github.com/Velcrux/velcrux/actions"><img src="https://img.shields.io/badge/build-passing-2ea44f?style=flat-square" alt="CI Status"></a>
   <img src="https://img.shields.io/badge/definition%20of%20done-15%2F15%20verified-2ea44f?style=flat-square" alt="DoD Status">
   <img src="https://img.shields.io/badge/rustc-1.80%2B-blue?style=flat-square" alt="Rust Version">
   <img src="https://img.shields.io/badge/safety-%23!%5Bforbid(unsafe__code)%5D-crimson?style=flat-square" alt="Safety Guarantee">
@@ -92,15 +92,15 @@ Download Pipeline:
 
 **Linux & macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krishsharma/velcrux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Velcrux/velcrux/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/krishsharma/velcrux/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Velcrux/velcrux/main/install.ps1 | iex
 ```
 
-Or download the pre-compiled binary archives directly from [GitHub Releases](https://github.com/krishsharma/velcrux/releases). Each release contains:
+Or download the pre-compiled binary archives directly from [GitHub Releases](https://github.com/Velcrux/velcrux/releases). Each release contains:
 - `velcrux` / `velcrux.exe` (CLI client)
 - `velcruxd` / `velcruxd.exe` (Server daemon)
 - Pre-generated shell completions (`bash`, `zsh`, `fish`, `powershell`)
@@ -120,7 +120,7 @@ Or download the pre-compiled binary archives directly from [GitHub Releases](htt
 
 ```bash
 # Clone the repository
-git clone https://github.com/krishsharma/velcrux.git
+git clone https://github.com/Velcrux/velcrux.git
 cd velcrux
 
 # Compile optimized release binaries

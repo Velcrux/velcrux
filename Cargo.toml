@@ -11,7 +11,7 @@ version     = "0.1.0"
 edition     = "2021"
 rust-version = "1.75"
 license     = "Apache-2.0 OR MIT"
-repository  = "https://github.com/krishsharma/velcrux"
+repository  = "https://github.com/Velcrux/velcrux"
 
 # Pin the versions that compile together on the current stable toolchain.
 # Quinn 0.10 was built against the rustls 0.22 (rustls::Certificate /

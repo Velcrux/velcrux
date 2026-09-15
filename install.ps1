@@ -1,7 +1,7 @@
 # ==============================================================================
 # Velcrux Windows Installer (PowerShell)
 # Usage:
-#   irm https://raw.githubusercontent.com/krishsharma/velcrux/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Velcrux/velcrux/main/install.ps1 | iex
 # ==============================================================================
 
 [CmdletBinding()]
@@ -12,7 +12,7 @@ param (
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "krishsharma/velcrux"
+$Repo = "Velcrux/velcrux"
 Write-Host "==> Velcrux Windows Installer" -ForegroundColor Cyan
 
 # 1. Architecture Detection

@@ -2,7 +2,7 @@
 # ==============================================================================
 # Velcrux Installer for Linux & macOS
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/krishsharma/velcrux/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Velcrux/velcrux/main/install.sh | bash
 # Or with options:
 #   INSTALL_DIR=~/.local/bin bash install.sh
 #   VERSION=v0.1.0 bash install.sh
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REPO="krishsharma/velcrux"
+REPO="Velcrux/velcrux"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 REQUESTED_VERSION="${VERSION:-latest}"
 
