@@ -32,7 +32,7 @@ jobs:
             archive: tar.gz
             use_cross: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             name: darwin-amd64
             archive: tar.gz
           - target: aarch64-apple-darwin
@@ -82,19 +82,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p completions
-          if [[ "${{ matrix.use_cross }}" == "true" ]]; then
-            cargo run -p velcrux-client -- completions bash > completions/velcrux.bash
-            cargo run -p velcrux-client -- completions zsh > completions/_velcrux
-            cargo run -p velcrux-client -- completions fish > completions/velcrux.fish
-            cargo run -p velcrux-client -- completions powershell > completions/velcrux.ps1
-            cargo run -p velcrux-server -- completions bash > completions/velcruxd.bash
-            cargo run -p velcrux-server -- completions zsh > completions/_velcruxd
-            cargo run -p velcrux-server -- completions fish > completions/velcruxd.fish
-            cargo run -p velcrux-server -- completions powershell > completions/velcruxd.ps1
-          else
-            BIN="target/${{ matrix.target }}/release/velcrux"
-            SERVER_BIN="target/${{ matrix.target }}/release/velcruxd"
-            chmod +x "$BIN" "$SERVER_BIN" || true
+          BIN="target/${{ matrix.target }}/release/velcrux"
+          SERVER_BIN="target/${{ matrix.target }}/release/velcruxd"
+          chmod +x "$BIN" "$SERVER_BIN" 2>/dev/null || true
+          if "$BIN" --version &>/dev/null; then
             "$BIN" completions bash > completions/velcrux.bash
             "$BIN" completions zsh > completions/_velcrux
             "$BIN" completions fish > completions/velcrux.fish
@@ -103,6 +94,15 @@ jobs:
             "$SERVER_BIN" completions zsh > completions/_velcruxd
             "$SERVER_BIN" completions fish > completions/velcruxd.fish
             "$SERVER_BIN" completions powershell > completions/velcruxd.ps1
+          else
+            cargo run -p velcrux-client -- completions bash > completions/velcrux.bash
+            cargo run -p velcrux-client -- completions zsh > completions/_velcrux
+            cargo run -p velcrux-client -- completions fish > completions/velcrux.fish
+            cargo run -p velcrux-client -- completions powershell > completions/velcrux.ps1
+            cargo run -p velcrux-server -- completions bash > completions/velcruxd.bash
+            cargo run -p velcrux-server -- completions zsh > completions/_velcruxd
+            cargo run -p velcrux-server -- completions fish > completions/velcruxd.fish
+            cargo run -p velcrux-server -- completions powershell > completions/velcruxd.ps1
           fi
 
       - name: Generate shell completions (Windows)
