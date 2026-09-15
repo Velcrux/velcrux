@@ -26,5 +26,8 @@ benches/results/
 
 # Fuzz corpora — they grow without bound
 fuzz/corpus/
-fuzz/artifacts/
-*.md
+# Documentation
+!README.md
+!CLAUDE.md
+!docs/**
+
