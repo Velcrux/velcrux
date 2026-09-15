@@ -5,12 +5,18 @@
 //! with bounded memory and atomic commit (`ARCHITECTURE.md` §7, §12).
 
 pub mod bloom;
+pub mod directory;
 pub mod estimator;
 pub mod inventory;
 pub mod reconstruct;
 pub mod rle;
 
 pub use bloom::BloomFilter;
+pub use directory::{
+    plan_directory_sync, resume_interrupted_commit, DeleteMode, DirectoryDiffSummary,
+    DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType,
+    execute_directory_sync,
+};
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use inventory::{ChunkExtent, LocalInventory};
 pub use reconstruct::{DeltaProgress, DeltaReconstructor};

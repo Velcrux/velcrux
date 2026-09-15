@@ -40,9 +40,11 @@ pub use chunking::{
     CHUNK_DEFAULT_TARGET,
 };
 pub use sync::{
-    execute_dedup_sync, execute_delta_sync, BloomFilter, ChunkExtent, CostEstimator, DeltaProgress,
-    DeltaReconstructor, DeltaSyncReport, LocalInventory, RleBitmap, RleRun, SyncDecision,
-    SyncError, SyncPlan,
+    execute_dedup_sync, execute_delta_sync, execute_directory_sync, plan_directory_sync,
+    resume_interrupted_commit, BloomFilter, ChunkExtent, CostEstimator, DeleteMode, DeltaProgress,
+    DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
+    DirectorySyncResult, FileAction, FileActionType, LocalInventory, RleBitmap, RleRun,
+    SyncDecision, SyncError, SyncPlan,
 };
 pub use error::{Result, VelcruxError};
 pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
