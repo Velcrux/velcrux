@@ -20,7 +20,6 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
 #[allow(missing_docs)]
-
 pub mod auth;
 pub mod chunking;
 pub mod error;

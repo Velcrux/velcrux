@@ -110,6 +110,11 @@ enum Cmd {
         #[arg(long)]
         chunk_store: Option<PathBuf>,
     },
+    /// Generate shell completion script (bash, zsh, fish, powershell, elvish).
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -221,6 +226,12 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(&cli.log_format);
 
     match &cli.cmd {
+        Cmd::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(*shell, &mut cmd, "velcrux", &mut std::io::stdout());
+            return Ok(());
+        }
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
             let sni = cli.sni.clone().unwrap_or_else(|| {

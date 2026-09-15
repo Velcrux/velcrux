@@ -234,6 +234,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78ab9a1a7094014a0d0813f8e7c5a0058ad8fe6cf7475b9151364259f5a35d0f"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1325,7 +1334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -1648,6 +1657,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
+ "clap_complete",
  "quinn",
  "rand 0.8.8",
  "rustls",
@@ -1695,6 +1705,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
+ "clap_complete",
  "quinn",
  "rcgen",
  "rustls",

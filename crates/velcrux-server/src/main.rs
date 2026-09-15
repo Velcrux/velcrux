@@ -62,6 +62,11 @@ enum Cmd {
         #[arg(long, default_value_t = 24)]
         hours: u32,
     },
+    /// Generate shell completion script (bash, zsh, fish, powershell, elvish).
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -81,6 +86,12 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(&cli.log_format);
 
     match cli.cmd {
+        Cmd::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "velcruxd", &mut std::io::stdout());
+            return Ok(());
+        }
         Cmd::Run { config } => {
             info!(config = %config.display(), "starting velcruxd");
             server::run(&config)

@@ -15,6 +15,7 @@ path = "src/main.rs"
 velcrux-core = { path = "../velcrux-core" }
 tokio.workspace      = true
 clap.workspace       = true
+clap_complete.workspace = true
 anyhow.workspace     = true
 tracing.workspace    = true
 tracing-subscriber.workspace = true
