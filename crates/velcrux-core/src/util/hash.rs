@@ -69,6 +69,20 @@ impl Hash {
         Some(Self(out))
     }
 
+    /// Parse a 64-character hex string into a `Hash`. Returns `None` if invalid.
+    pub fn from_hex(s: &str) -> Option<Self> {
+        if s.len() != CHUNK_HASH_BYTES * 2 {
+            return None;
+        }
+        let mut out = [0u8; CHUNK_HASH_BYTES];
+        for i in 0..CHUNK_HASH_BYTES {
+            let high = (s.as_bytes()[i * 2] as char).to_digit(16)? as u8;
+            let low = (s.as_bytes()[i * 2 + 1] as char).to_digit(16)? as u8;
+            out[i] = (high << 4) | low;
+        }
+        Some(Self(out))
+    }
+
     /// True if this is the all-zero hash.
     #[inline]
     pub fn is_zero(&self) -> bool {

@@ -4,6 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
+use crate::storage::LocalChunkStore;
 use crate::util::Hash;
 use super::SyncError;
 
@@ -12,8 +13,10 @@ use super::SyncError;
 pub struct DeltaProgress {
     /// Total chunks expected in the destination file.
     pub total_chunks: usize,
-    /// Chunks copied locally from the existing file.
+    /// Chunks copied locally from the existing file at target path.
     pub local_chunks_copied: usize,
+    /// Chunks copied from the content-addressed chunk store.
+    pub store_chunks_copied: usize,
     /// Chunks written from wire transfer.
     pub wire_chunks_written: usize,
     /// Total bytes written to staging so far.
@@ -22,7 +25,7 @@ pub struct DeltaProgress {
     pub total_bytes: u64,
 }
 
-/// Delta reconstructor that writes wire chunks and local file chunks into a staging file,
+/// Delta reconstructor that writes wire chunks, local file chunks, and chunk store chunks into a staging file,
 /// verifies the whole-file BLAKE3 digest, and commits atomically.
 pub struct DeltaReconstructor {
     target_path: PathBuf,
@@ -32,6 +35,7 @@ pub struct DeltaReconstructor {
     total_size: u64,
     total_chunks: usize,
     local_chunks_copied: usize,
+    store_chunks_copied: usize,
     wire_chunks_written: usize,
     bytes_written: u64,
     committed: bool,
@@ -68,6 +72,7 @@ impl DeltaReconstructor {
             total_size,
             total_chunks,
             local_chunks_copied: 0,
+            store_chunks_copied: 0,
             wire_chunks_written: 0,
             bytes_written: 0,
             committed: false,
@@ -111,6 +116,26 @@ impl DeltaReconstructor {
         Ok(())
     }
 
+    /// Copy a chunk from the content-addressed [`LocalChunkStore`] into staging at `dst_offset`.
+    pub fn copy_chunk_from_store(
+        &mut self,
+        chunk_store: &LocalChunkStore,
+        hash: &Hash,
+        dst_offset: u64,
+    ) -> Result<(), SyncError> {
+        let staging = self.staging_file.as_mut().ok_or_else(|| {
+            SyncError::Reconstruction("staging file is closed or committed".into())
+        })?;
+
+        let bytes_copied = chunk_store
+            .copy_to_std_file(hash, staging, dst_offset)
+            .map_err(|e| SyncError::Reconstruction(format!("failed to copy chunk from store: {e}")))?;
+
+        self.store_chunks_copied += 1;
+        self.bytes_written += bytes_copied;
+        Ok(())
+    }
+
     /// Write an incoming chunk received over the wire into staging at `dst_offset`.
     pub fn write_wire_chunk(&mut self, dst_offset: u64, payload: &[u8]) -> Result<(), SyncError> {
         let staging = self.staging_file.as_mut().ok_or_else(|| {
@@ -130,6 +155,7 @@ impl DeltaReconstructor {
         DeltaProgress {
             total_chunks: self.total_chunks,
             local_chunks_copied: self.local_chunks_copied,
+            store_chunks_copied: self.store_chunks_copied,
             wire_chunks_written: self.wire_chunks_written,
             bytes_written: self.bytes_written,
             total_bytes: self.total_size,

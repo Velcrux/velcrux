@@ -21,6 +21,9 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub mod chunk_store;
+pub use chunk_store::{ChunkStore, LocalChunkStore};
+
 use crate::error::{ProtocolError, VelcruxError};
 use crate::protocol::limits::{MAX_PATH_COMPONENT, MAX_PATH_TOTAL};
 use crate::util::Hash;

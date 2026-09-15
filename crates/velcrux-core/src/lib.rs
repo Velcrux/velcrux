@@ -40,8 +40,9 @@ pub use chunking::{
     CHUNK_DEFAULT_TARGET,
 };
 pub use sync::{
-    execute_delta_sync, BloomFilter, ChunkExtent, CostEstimator, DeltaProgress, DeltaReconstructor,
-    DeltaSyncReport, LocalInventory, RleBitmap, RleRun, SyncDecision, SyncError, SyncPlan,
+    execute_dedup_sync, execute_delta_sync, BloomFilter, ChunkExtent, CostEstimator, DeltaProgress,
+    DeltaReconstructor, DeltaSyncReport, LocalInventory, RleBitmap, RleRun, SyncDecision,
+    SyncError, SyncPlan,
 };
 pub use error::{Result, VelcruxError};
 pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
@@ -54,7 +55,10 @@ pub use state::{
     Role, SqliteStateStore, StateStore, StateStoreError, StateStoreResult, TransferRecord,
     TransferStatus, UpsertOutcome, MAX_WIRE_CHUNKS,
 };
-pub use storage::{FileMeta, LocalFilesystemBackend, Staging, StorageBackend, VPath, VPathError};
+pub use storage::{
+    ChunkStore, FileMeta, LocalChunkStore, LocalFilesystemBackend, Staging, StorageBackend, VPath,
+    VPathError,
+};
 pub use transfer::{
     client_download, client_upload, server_download_session, server_staging_path,
     server_upload_session, PipelineConfig, TransferDir, TransferKind, TransferRequest,

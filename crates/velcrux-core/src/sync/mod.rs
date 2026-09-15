@@ -51,7 +51,7 @@ pub enum SyncError {
     Io(#[from] std::io::Error),
 }
 
-/// Detailed outcome and bandwidth metrics of a delta synchronization.
+/// Detailed outcome and bandwidth metrics of a delta or dedup synchronization.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeltaSyncReport {
     /// Strategy executed (Skip, Delta, or Full).
@@ -60,12 +60,16 @@ pub struct DeltaSyncReport {
     pub total_bytes: u64,
     /// Wire bytes transferred.
     pub wire_bytes_transferred: u64,
-    /// Bytes reused from local existing file.
+    /// Bytes reused from local existing file at target path.
     pub local_bytes_reused: u64,
+    /// Bytes reused from the content-addressed chunk store.
+    pub store_bytes_reused: u64,
     /// Number of chunks transferred over the wire.
     pub wire_chunks_count: usize,
-    /// Number of chunks reused locally.
+    /// Number of chunks reused from local file.
     pub local_chunks_count: usize,
+    /// Number of chunks reused from chunk store.
+    pub store_chunks_count: usize,
     /// Total chunks in the file.
     pub total_chunks: usize,
     /// Final verified whole-file BLAKE3 hash.
@@ -73,11 +77,6 @@ pub struct DeltaSyncReport {
 }
 
 /// Execute end-to-end delta synchronization between a source file and a destination file.
-///
-/// If `dst_path` exists, indexes its inventory, exchanges Bloom filter hints,
-/// queries chunk presence, generates RLE bitmaps, evaluates cost (Delta vs Full),
-/// transfers only missing chunks, verifies the whole-file BLAKE3 digest, and
-/// atomically commits to `dst_path`.
 pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>>(
     src_path: P1,
     dst_path: P2,
@@ -85,10 +84,23 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     params: crate::chunking::ChunkParams,
     read_buffer_size: usize,
 ) -> Result<DeltaSyncReport, SyncError> {
+    execute_dedup_sync(src_path, dst_path, mode, params, read_buffer_size, None)
+}
+
+/// Execute end-to-end delta and deduplication synchronization between a source file
+/// and a destination file, optionally consulting and populating a [`LocalChunkStore`].
+pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>>(
+    src_path: P1,
+    dst_path: P2,
+    mode: crate::chunking::ChunkMode,
+    params: crate::chunking::ChunkParams,
+    read_buffer_size: usize,
+    chunk_store: Option<&crate::storage::LocalChunkStore>,
+) -> Result<DeltaSyncReport, SyncError> {
     use std::fs::File;
     use std::io::{Read, Seek, SeekFrom};
     use crate::chunking::ChunkEngine;
-    use crate::protocol::message::{ChunkQuery, ChunkResponse, InventoryHint};
+    use crate::protocol::message::ChunkResponse;
     use crate::util::TransferId;
 
     let src = src_path.as_ref();
@@ -134,8 +146,10 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
                 total_bytes: src_size,
                 wire_bytes_transferred: 0,
                 local_bytes_reused: src_size,
+                store_bytes_reused: 0,
                 wire_chunks_count: 0,
                 local_chunks_count: total_chunks,
+                store_chunks_count: 0,
                 total_chunks,
                 whole_file_hash: src_whole_hash,
             });
@@ -143,54 +157,48 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     }
 
     // 4. Negotiate chunks using InventoryHint, ChunkQuery, and ChunkResponse
-    let (decision, have_status) = if let Some(ref inv) = dst_inventory {
-        let tid = TransferId::generate();
-        let bloom = inv.create_bloom_filter(0.01);
-        let _hint = InventoryHint {
-            transfer_id: tid,
-            filter_bits: bloom.num_bits(),
-            num_hashes: bloom.num_hashes(),
-            bitset: bloom.to_bytes(),
-        };
+    let tid = TransferId::generate();
+    let query_hashes: Vec<_> = src_chunks.iter().map(|(_, _, h)| *h).collect();
 
-        // Query all chunk hashes
-        let query_hashes: Vec<_> = src_chunks.iter().map(|(_, _, h)| *h).collect();
-        let _query = ChunkQuery {
-            transfer_id: tid,
-            query_seq: 1,
-            chunk_hashes: query_hashes.clone(),
-        };
+    // Determine presence in destination file and/or chunk store
+    let mut have_bits = Vec::with_capacity(query_hashes.len());
+    let mut have_sources = Vec::with_capacity(query_hashes.len()); // 0 = none, 1 = local file, 2 = chunk store
 
-        // Destination checks against inventory
-        let mut have_bits = Vec::with_capacity(query_hashes.len());
-        for h in &query_hashes {
-            have_bits.push(inv.contains(h));
+    for h in &query_hashes {
+        if let Some(ref inv) = dst_inventory {
+            if inv.contains(h) {
+                have_bits.push(true);
+                have_sources.push(1u8);
+                continue;
+            }
         }
+        if let Some(store) = chunk_store {
+            if store.contains_sync(h) {
+                have_bits.push(true);
+                have_sources.push(2u8);
+                continue;
+            }
+        }
+        have_bits.push(false);
+        have_sources.push(0u8);
+    }
 
-        let rle = RleBitmap::from_bits(&have_bits);
-        let resp = ChunkResponse {
-            transfer_id: tid,
-            query_seq: 1,
-            total_chunks: rle.total_chunks(),
-            have_count: rle.have_count(),
-            rle_bitmap: rle.encode(),
-        };
-
-        // Sender decodes response
-        let decoded_rle = RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)?;
-        let bits = decoded_rle.to_bits();
-
-        let plan = CostEstimator::default().evaluate(
-            src_size,
-            total_chunks,
-            decoded_rle.have_count() as usize,
-            false,
-        );
-
-        (plan.decision, Some((bits, inv)))
-    } else {
-        (SyncDecision::Full, None)
+    let rle = RleBitmap::from_bits(&have_bits);
+    let resp = ChunkResponse {
+        transfer_id: tid,
+        query_seq: 1,
+        total_chunks: rle.total_chunks(),
+        have_count: rle.have_count(),
+        rle_bitmap: rle.encode(),
     };
+
+    let decoded_rle = RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)?;
+    let plan = CostEstimator::default().evaluate(
+        src_size,
+        total_chunks,
+        decoded_rle.have_count() as usize,
+        false,
+    );
 
     // 5. Staging path
     let staging_path = dst.with_extension(format!(
@@ -208,23 +216,36 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
 
     let mut wire_bytes_transferred = 0u64;
     let mut local_bytes_reused = 0u64;
+    let mut store_bytes_reused = 0u64;
     let mut wire_chunks_count = 0usize;
     let mut local_chunks_count = 0usize;
+    let mut store_chunks_count = 0usize;
 
     let mut src_f = File::open(src)?;
+    let mut dst_f = if dst.exists() { Some(File::open(dst)?) } else { None };
 
-    match (decision, have_status) {
-        (SyncDecision::Delta, Some((bits, inv))) => {
-            let mut dst_f = File::open(dst)?;
+    match plan.decision {
+        SyncDecision::Delta => {
             let mut read_buf = vec![0u8; params.max as usize];
 
             for (i, &(offset, length, hash)) in src_chunks.iter().enumerate() {
-                let have = bits.get(i).copied().unwrap_or(false);
-                if have {
-                    if let Some(extent) = inv.lookup(&hash) {
-                        reconstructor.copy_local_chunk(&mut dst_f, extent.offset, offset, length)?;
-                        local_bytes_reused += length;
-                        local_chunks_count += 1;
+                let source = have_sources[i];
+                if source == 1 {
+                    if let Some(ref inv) = dst_inventory {
+                        if let Some(extent) = inv.lookup(&hash) {
+                            if let Some(ref mut df) = dst_f {
+                                reconstructor.copy_local_chunk(df, extent.offset, offset, length)?;
+                                local_bytes_reused += length;
+                                local_chunks_count += 1;
+                                continue;
+                            }
+                        }
+                    }
+                } else if source == 2 {
+                    if let Some(store) = chunk_store {
+                        reconstructor.copy_chunk_from_store(store, &hash, offset)?;
+                        store_bytes_reused += length;
+                        store_chunks_count += 1;
                         continue;
                     }
                 }
@@ -236,18 +257,26 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
                 reconstructor.write_wire_chunk(offset, slice)?;
                 wire_bytes_transferred += length;
                 wire_chunks_count += 1;
+
+                if let Some(store) = chunk_store {
+                    let _ = store.put_sync(&hash, slice);
+                }
             }
         }
         _ => {
             // Full sync: transfer all chunks from source
             let mut read_buf = vec![0u8; params.max as usize];
-            for &(offset, length, _) in &src_chunks {
+            for &(offset, length, hash) in &src_chunks {
                 src_f.seek(SeekFrom::Start(offset))?;
                 let slice = &mut read_buf[..length as usize];
                 src_f.read_exact(slice)?;
                 reconstructor.write_wire_chunk(offset, slice)?;
                 wire_bytes_transferred += length;
                 wire_chunks_count += 1;
+
+                if let Some(store) = chunk_store {
+                    let _ = store.put_sync(&hash, slice);
+                }
             }
         }
     }
@@ -255,12 +284,14 @@ pub fn execute_delta_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     reconstructor.verify_and_commit()?;
 
     Ok(DeltaSyncReport {
-        decision,
+        decision: plan.decision,
         total_bytes: src_size,
         wire_bytes_transferred,
         local_bytes_reused,
+        store_bytes_reused,
         wire_chunks_count,
         local_chunks_count,
+        store_chunks_count,
         total_chunks,
         whole_file_hash: src_whole_hash,
     })
