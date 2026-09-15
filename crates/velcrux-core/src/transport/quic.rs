@@ -23,7 +23,9 @@ use rustls::{Certificate, ClientConfig as RustlsClientConfig, PrivateKey, RootCe
 use sha2::{Digest, Sha256};
 
 use crate::error::{Result, TransportError};
-use crate::protocol::limits::{ALPN, MAX_IDENTITY_LEN, QUIC_IDLE_TIMEOUT_SECS, QUIC_KEEPALIVE_SECS};
+use crate::protocol::limits::{
+    ALPN, MAX_IDENTITY_LEN, QUIC_IDLE_TIMEOUT_SECS, QUIC_KEEPALIVE_SECS,
+};
 use crate::transport::identity::Identity;
 use crate::transport::stats::TransportStats;
 

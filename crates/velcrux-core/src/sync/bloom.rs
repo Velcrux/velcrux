@@ -1,8 +1,8 @@
 //! Bloom filter for inventory hints (`ARCHITECTURE.md` §7, `PROTOCOL.md` §4).
 
-use bytes::Bytes;
-use crate::util::Hash;
 use super::SyncError;
+use crate::util::Hash;
+use bytes::Bytes;
 
 /// Maximum allowed bloom filter size in bits (16 MB = 134,217,728 bits).
 pub const MAX_BLOOM_BITS: u32 = 16 * 1024 * 1024 * 8;
@@ -26,7 +26,7 @@ impl BloomFilter {
 
         let ln2 = std::f64::consts::LN_2;
         // m = - (n * ln(p)) / (ln(2)^2)
-        let m_bits = (- (n * p.ln()) / (ln2 * ln2)).ceil() as u64;
+        let m_bits = (-(n * p.ln()) / (ln2 * ln2)).ceil() as u64;
         let num_bits = (m_bits as u32).clamp(MIN_BLOOM_BITS, MAX_BLOOM_BITS);
 
         // k = (m / n) * ln(2)
@@ -150,7 +150,8 @@ mod tests {
         assert!(!bloom.contains(&h3));
 
         let bytes = bloom.to_bytes();
-        let decoded = BloomFilter::from_bytes(&bytes, bloom.num_bits(), bloom.num_hashes()).unwrap();
+        let decoded =
+            BloomFilter::from_bytes(&bytes, bloom.num_bits(), bloom.num_hashes()).unwrap();
         assert_eq!(bloom, decoded);
         assert!(decoded.contains(&h1));
         assert!(decoded.contains(&h2));

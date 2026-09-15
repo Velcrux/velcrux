@@ -88,9 +88,9 @@ impl ManifestWriter {
     /// If the current batch reaches `MANIFEST_BATCH_SIZE`, it is flushed to disk.
     pub fn add_entry(&mut self, entry: FileEntry) -> Result<()> {
         if self.file_count >= MAX_MANIFEST_ENTRIES {
-            return Err(VelcruxError::Protocol(ProtocolError::InvalidManifest(format!(
-                "manifest entry count reached limit {MAX_MANIFEST_ENTRIES}"
-            ))));
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidManifest(
+                format!("manifest entry count reached limit {MAX_MANIFEST_ENTRIES}"),
+            )));
         }
 
         self.file_count += 1;
@@ -121,9 +121,11 @@ impl ManifestWriter {
 
         if self.manifest_bytes > MAX_MANIFEST_BYTES {
             let manifest_bytes = self.manifest_bytes;
-            return Err(VelcruxError::Protocol(ProtocolError::InvalidManifest(format!(
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidManifest(
+                format!(
                 "manifest size {manifest_bytes} exceeds MAX_MANIFEST_BYTES {MAX_MANIFEST_BYTES}"
-            ))));
+            ),
+            )));
         }
 
         // Compress with zstd level 3 (ADR-005, ARCHITECTURE.md §11)

@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. Format & Lint
+  # --------------------------------------------------------------------------
+  lint:
+    name: Lint & Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy checks (all targets)
+        run: cargo clippy --workspace --all-targets -- -D clippy::correctness
+
+      - name: Forbid unsafe code verification
+        run: |
+          echo "Verifying #![forbid(unsafe_code)] in all crates..."
+          for crate in crates/*; do
+            if [ -d "$crate/src" ]; then
+              if [ -f "$crate/src/lib.rs" ]; then
+                grep -q "#!\[forbid(unsafe_code)\]" "$crate/src/lib.rs" || { echo "Missing #![forbid(unsafe_code)] in $crate/src/lib.rs"; exit 1; }
+              fi
+              if [ -f "$crate/src/main.rs" ]; then
+                grep -q "#!\[forbid(unsafe_code)\]" "$crate/src/main.rs" || { echo "Missing #![forbid(unsafe_code)] in $crate/src/main.rs"; exit 1; }
+              fi
+            fi
+          done
+          echo "All crates strictly forbid unsafe code!"
+
+  # --------------------------------------------------------------------------
+  # 2. Test Suite (Linux & macOS)
+  # --------------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Run unit & integration tests
+        run: cargo test --workspace -- --nocapture
+
+      - name: Run Milestone 10 performance tests
+        run: cargo test -p velcrux-core --test m10_performance -- --nocapture
+
+  # --------------------------------------------------------------------------
+  # 3. Definition of Done (DoD §83) Validation Suite
+  # --------------------------------------------------------------------------
+  definition-of-done:
+    name: Definition of Done (§83)
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Execute 15-Item Definition of Done Harness
+        run: bash scripts/validate_dod.sh
+
+  # --------------------------------------------------------------------------
+  # 4. Container Build & Packaging Verification
+  # --------------------------------------------------------------------------
+  docker:
+    name: Container Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: velcruxd:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -14,8 +14,8 @@ use tempfile::tempdir;
 use velcrux_core::chunking::{ChunkMode, ChunkParams};
 use velcrux_core::protocol::message::{ChunkQuery, ChunkResponse, InventoryHint};
 use velcrux_core::sync::{
-    execute_delta_sync, ChunkExtent, CostEstimator, DeltaReconstructor,
-    LocalInventory, RleBitmap, SyncDecision, SyncError,
+    execute_delta_sync, ChunkExtent, CostEstimator, DeltaReconstructor, LocalInventory, RleBitmap,
+    SyncDecision, SyncError,
 };
 use velcrux_core::util::{Hash, TransferId};
 
@@ -129,12 +129,7 @@ fn test_exit_criteria_100gb_with_3gb_changed() {
 
     // 5. Cost estimator evaluates transfer
     let estimator = CostEstimator::default();
-    let plan = estimator.evaluate(
-        total_bytes,
-        total_chunks,
-        resp.have_count as usize,
-        false,
-    );
+    let plan = estimator.evaluate(total_bytes, total_chunks, resp.have_count as usize, false);
 
     assert_eq!(plan.decision, SyncDecision::Delta);
     assert_eq!(plan.have_chunks, reused_chunks);
@@ -218,13 +213,8 @@ fn test_real_file_end_to_end_delta_cdc_sync() {
 
     // 3. Execute delta sync with CDC chunking
     let params = ChunkParams::new(64 * 1024, 256 * 1024, 1024 * 1024).unwrap();
-    let report = execute_delta_sync(
-        &src_path,
-        &dst_path,
-        ChunkMode::Cdc,
-        params,
-        256 * 1024,
-    ).unwrap();
+    let report =
+        execute_delta_sync(&src_path, &dst_path, ChunkMode::Cdc, params, 256 * 1024).unwrap();
 
     assert_eq!(report.decision, SyncDecision::Delta);
     assert_eq!(report.whole_file_hash, expected_hash);
@@ -274,13 +264,8 @@ fn test_identical_file_skips_wire_transfer() {
     fs::write(&dst_path, &payload).unwrap();
 
     let params = ChunkParams::new(64 * 1024, 256 * 1024, 512 * 1024).unwrap();
-    let report = execute_delta_sync(
-        &src_path,
-        &dst_path,
-        ChunkMode::Fixed,
-        params,
-        128 * 1024,
-    ).unwrap();
+    let report =
+        execute_delta_sync(&src_path, &dst_path, ChunkMode::Fixed, params, 128 * 1024).unwrap();
 
     assert_eq!(report.decision, SyncDecision::Skip);
     assert_eq!(report.wire_bytes_transferred, 0);
@@ -299,13 +284,8 @@ fn test_missing_destination_falls_back_to_full_sync() {
     fs::write(&src_path, &payload).unwrap();
 
     let params = ChunkParams::new(64 * 1024, 128 * 1024, 256 * 1024).unwrap();
-    let report = execute_delta_sync(
-        &src_path,
-        &dst_path,
-        ChunkMode::Fixed,
-        params,
-        64 * 1024,
-    ).unwrap();
+    let report =
+        execute_delta_sync(&src_path, &dst_path, ChunkMode::Fixed, params, 64 * 1024).unwrap();
 
     assert_eq!(report.decision, SyncDecision::Full);
     assert_eq!(report.wire_bytes_transferred, 2 * 1024 * 1024);
@@ -325,13 +305,9 @@ fn test_reconstruction_corruption_preserves_original_intact() {
     fs::write(&dst_path, original_payload).unwrap();
 
     let expected_hash = Hash::of(b"NEW TARGET DATA");
-    let mut recon = DeltaReconstructor::new(
-        dst_path.clone(),
-        staging_path.clone(),
-        expected_hash,
-        15,
-        1,
-    ).unwrap();
+    let mut recon =
+        DeltaReconstructor::new(dst_path.clone(), staging_path.clone(), expected_hash, 15, 1)
+            .unwrap();
 
     // Write wrong payload into staging
     recon.write_wire_chunk(0, b"CORRUPTED_BYTES").unwrap();

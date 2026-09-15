@@ -121,7 +121,9 @@ impl LocalChunkStore {
         let computed = Hash::of(&buf);
         if computed != *h {
             let _ = fs::remove_file(&path);
-            return Err(VelcruxError::Protocol(ProtocolError::Malformed("checksum mismatch")));
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "checksum mismatch",
+            )));
         }
 
         Ok(Bytes::from(buf))
@@ -131,7 +133,9 @@ impl LocalChunkStore {
     pub fn put_sync(&self, h: &Hash, data: &[u8]) -> Result<(), VelcruxError> {
         let computed = Hash::of(data);
         if computed != *h {
-            return Err(VelcruxError::Protocol(ProtocolError::Malformed("checksum mismatch")));
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "checksum mismatch",
+            )));
         }
 
         let final_path = self.chunk_path(h);
@@ -198,7 +202,9 @@ impl LocalChunkStore {
 
         let computed = Hash::from_bytes(hasher.finalize().as_bytes()).unwrap();
         if computed != *h {
-            return Err(VelcruxError::Protocol(ProtocolError::Malformed("checksum mismatch")));
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "checksum mismatch",
+            )));
         }
 
         Ok(chunk_len)
@@ -294,7 +300,9 @@ impl ChunkStore for LocalChunkStore {
     async fn put(&self, h: &Hash, data: &[u8]) -> Result<(), VelcruxError> {
         let computed = Hash::of(data);
         if computed != *h {
-            return Err(VelcruxError::Protocol(ProtocolError::Malformed("checksum mismatch")));
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "checksum mismatch",
+            )));
         }
 
         let final_path = self.chunk_path(h);
@@ -340,7 +348,9 @@ impl ChunkStore for LocalChunkStore {
         let computed = Hash::of(&buf);
         if computed != *h {
             let _ = tokio::fs::remove_file(&path).await;
-            return Err(VelcruxError::Protocol(ProtocolError::Malformed("checksum mismatch")));
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "checksum mismatch",
+            )));
         }
 
         Ok(Bytes::from(buf))
@@ -420,7 +430,10 @@ mod tests {
         let retrieved = store.get(&hash).await.unwrap();
         assert_eq!(retrieved.as_ref(), payload);
 
-        let batch = store.has_batch(&[hash, Hash::of(b"missing")]).await.unwrap();
+        let batch = store
+            .has_batch(&[hash, Hash::of(b"missing")])
+            .await
+            .unwrap();
         assert_eq!(batch, vec![true, false]);
 
         assert_eq!(store.total_chunks().await.unwrap(), 1);
@@ -436,6 +449,9 @@ mod tests {
         let wrong_hash = Hash::of(b"wrong data");
 
         let err = store.put(&wrong_hash, payload).await.unwrap_err();
-        assert!(matches!(err, VelcruxError::Protocol(ProtocolError::Malformed(_))));
+        assert!(matches!(
+            err,
+            VelcruxError::Protocol(ProtocolError::Malformed(_))
+        ));
     }
 }

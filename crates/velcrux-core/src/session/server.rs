@@ -20,8 +20,8 @@ use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
 use crate::state::{Direction, StateStore, TransferStatus};
 use crate::storage::LocalFilesystemBackend;
-use crate::transport::Connection;
 use crate::transport::identity::Identity;
+use crate::transport::Connection;
 use crate::util::TransferId;
 use std::path::Path;
 use std::sync::Arc;
@@ -210,9 +210,11 @@ impl ServerConn {
                             let auth = Auth::decode(&frame.payload)?;
                             // Verify the peer identity is available.
                             let identity = peer_identity.clone().ok_or_else(|| {
-                                VelcruxError::Protocol(crate::error::ProtocolError::InvalidIdentity(
-                                    "no peer identity",
-                                ))
+                                VelcruxError::Protocol(
+                                    crate::error::ProtocolError::InvalidIdentity(
+                                        "no peer identity",
+                                    ),
+                                )
                             })?;
 
                             // Authenticate using the authenticator.
@@ -228,7 +230,8 @@ impl ServerConn {
                                     send.as_mut(),
                                     &Message::Error(err),
                                     frame.request_id,
-                                ).await;
+                                )
+                                .await;
                                 conn.close(
                                     crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
                                     b"unsupported auth mechanism",
@@ -371,9 +374,7 @@ impl ServerConn {
                     }
                 }
                 ServerState::Closed => break,
-                ServerState::Accepted
-                | ServerState::TlsHandshake
-                | ServerState::Draining => {
+                ServerState::Accepted | ServerState::TlsHandshake | ServerState::Draining => {
                     return Err(VelcruxError::Protocol(
                         crate::error::ProtocolError::InvalidStateTransition(state.name()),
                     ));

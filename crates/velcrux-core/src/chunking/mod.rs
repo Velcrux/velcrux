@@ -436,10 +436,8 @@ pub struct ReuseStats {
 impl ReuseStats {
     /// Compute reuse of `modified_chunks` against `original_chunks`.
     pub fn compute(original_chunks: &[ChunkDesc], modified_chunks: &[ChunkDesc]) -> Self {
-        let original_hashes: std::collections::HashSet<Hash> = original_chunks
-            .iter()
-            .filter_map(|c| c.hash)
-            .collect();
+        let original_hashes: std::collections::HashSet<Hash> =
+            original_chunks.iter().filter_map(|c| c.hash).collect();
 
         let mut reused_bytes = 0u64;
         let mut reused_chunks = 0usize;
@@ -796,7 +794,7 @@ mod tests {
         ];
 
         let modified = vec![
-            ChunkDesc::new(500, h4), // new chunk
+            ChunkDesc::new(500, h4),  // new chunk
             ChunkDesc::new(1000, h2), // reused
             ChunkDesc::new(1000, h3), // reused
         ];

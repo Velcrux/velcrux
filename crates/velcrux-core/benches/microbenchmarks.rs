@@ -20,8 +20,8 @@ use sha2::{Digest, Sha256};
 use velcrux_core::chunking::{ChunkEngine, ChunkMode, ChunkParams};
 use velcrux_core::manifest::{ChunkDesc, FileEntry, ManifestReader, ManifestWriter};
 use velcrux_core::protocol::frame::{
-    decode_data_frame_header, decode_frame, encode_data_frame_header, encode_frame,
-    DataFrameFlags, FrameFlags, DATA_FRAME_HEADER_LEN,
+    decode_data_frame_header, decode_frame, encode_data_frame_header, encode_frame, DataFrameFlags,
+    FrameFlags, DATA_FRAME_HEADER_LEN,
 };
 use velcrux_core::storage::VPath;
 use velcrux_core::sync::{CostEstimator, RleBitmap};
@@ -31,7 +31,9 @@ fn generate_data(size: usize, seed: u64) -> Vec<u8> {
     let mut data = vec![0u8; size];
     let mut state = seed.wrapping_add(0x9E3779B97F4A7C15);
     for chunk in data.chunks_mut(8) {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let bytes = state.to_le_bytes();
         let len = chunk.len();
         chunk.copy_from_slice(&bytes[..len]);
@@ -52,7 +54,11 @@ fn bench_hash_blake3() {
     }
     let elapsed = t0.elapsed();
     let gbps = (size as f64 * iterations as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
-    println!("  hash_blake3:      {:>7.2} GB/s ({:?} / 32MB)", gbps, elapsed / iterations);
+    println!(
+        "  hash_blake3:      {:>7.2} GB/s ({:?} / 32MB)",
+        gbps,
+        elapsed / iterations
+    );
 }
 
 fn bench_hash_sha256() {
@@ -68,7 +74,11 @@ fn bench_hash_sha256() {
     }
     let elapsed = t0.elapsed();
     let gbps = (size as f64 * iterations as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
-    println!("  hash_sha256:      {:>7.2} GB/s ({:?} / 32MB)", gbps, elapsed / iterations);
+    println!(
+        "  hash_sha256:      {:>7.2} GB/s ({:?} / 32MB)",
+        gbps,
+        elapsed / iterations
+    );
 }
 
 fn bench_chunk_fixed() {
@@ -162,12 +172,21 @@ fn bench_frame_codec() {
     let test_hash = Hash::of(b"data");
     let t1 = Instant::now();
     for i in 0..iterations {
-        encode_data_frame_header(&mut data_buf, i as u64 * 4096, 4096, DataFrameFlags::NONE, &test_hash);
+        encode_data_frame_header(
+            &mut data_buf,
+            i as u64 * 4096,
+            4096,
+            DataFrameFlags::NONE,
+            &test_hash,
+        );
         let _ = decode_data_frame_header(&data_buf).unwrap();
     }
     let data_elapsed = t1.elapsed();
     let data_ns = data_elapsed.as_nanos() as f64 / iterations as f64;
-    println!("  data_frame_codec: {:>7.1} ns/op (data header roundtrip)", data_ns);
+    println!(
+        "  data_frame_codec: {:>7.1} ns/op (data header roundtrip)",
+        data_ns
+    );
 }
 
 fn bench_bitmap_ops() {

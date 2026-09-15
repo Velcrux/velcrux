@@ -1,5 +1,7 @@
 // Unit tests for `FileAuthorizer` and the auth module.
-use crate::auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
+use crate::auth::{
+    Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet,
+};
 use crate::error::VelcruxError;
 use crate::transport::identity::Identity;
 
@@ -119,9 +121,7 @@ fn longest_prefix_wins() {
     ]);
     let id = identity("alice");
     // data/sensitive/x matches both grants; the longer one wins.
-    let vpath = authz
-        .check(&id, Op::Download, "data/sensitive/x")
-        .unwrap();
+    let vpath = authz.check(&id, Op::Download, "data/sensitive/x").unwrap();
     assert_eq!(vpath.as_str(), "data/sensitive/x");
     // data/x only matches the broader grant (upload only).
     let vpath = authz.check(&id, Op::Upload, "data/x").unwrap();
@@ -177,12 +177,8 @@ fn component_boundary_matching() {
     }]);
     let id = identity("alice");
     // Exact match works.
-    assert!(authz
-        .check(&id, Op::Upload, "data/customerA")
-        .is_ok());
-    assert!(authz
-        .check(&id, Op::Upload, "data/customerA/file")
-        .is_ok());
+    assert!(authz.check(&id, Op::Upload, "data/customerA").is_ok());
+    assert!(authz.check(&id, Op::Upload, "data/customerA/file").is_ok());
     // data/customerA does NOT match data/customerAB/... (component boundary).
     assert!(matches!(
         authz.check(&id, Op::Upload, "data/customerAB/file"),

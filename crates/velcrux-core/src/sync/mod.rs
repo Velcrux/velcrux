@@ -13,9 +13,9 @@ pub mod rle;
 
 pub use bloom::BloomFilter;
 pub use directory::{
-    plan_directory_sync, resume_interrupted_commit, DeleteMode, DirectoryDiffSummary,
-    DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType,
-    execute_directory_sync,
+    execute_directory_sync, plan_directory_sync, resume_interrupted_commit, DeleteMode,
+    DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction,
+    FileActionType,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use inventory::{ChunkExtent, LocalInventory};
@@ -103,11 +103,11 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     read_buffer_size: usize,
     chunk_store: Option<&crate::storage::LocalChunkStore>,
 ) -> Result<DeltaSyncReport, SyncError> {
-    use std::fs::File;
-    use std::io::{Read, Seek, SeekFrom};
     use crate::chunking::ChunkEngine;
     use crate::protocol::message::ChunkResponse;
     use crate::util::TransferId;
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
 
     let src = src_path.as_ref();
     let dst = dst_path.as_ref();
@@ -118,13 +118,19 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
 
     // 1. Check if destination file exists and build local inventory
     let dst_inventory = if dst.exists() {
-        Some(LocalInventory::from_file(dst, mode, params, read_buffer_size)?)
+        Some(LocalInventory::from_file(
+            dst,
+            mode,
+            params,
+            read_buffer_size,
+        )?)
     } else {
         None
     };
 
     // 2. Scan source file with ChunkEngine to identify chunks and whole-file hash
-    let mut src_reader = std::io::BufReader::with_capacity(read_buffer_size.max(64 * 1024), File::open(src)?);
+    let mut src_reader =
+        std::io::BufReader::with_capacity(read_buffer_size.max(64 * 1024), File::open(src)?);
     let mut src_chunks = Vec::new();
     let mut current_offset = 0u64;
 
@@ -140,7 +146,8 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
             current_offset += desc.length;
             Ok(())
         },
-    ).map_err(|e| SyncError::Reconstruction(format!("failed to scan source file: {e}")))?;
+    )
+    .map_err(|e| SyncError::Reconstruction(format!("failed to scan source file: {e}")))?;
 
     let total_chunks = src_chunks.len();
 
@@ -228,7 +235,11 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     let mut store_chunks_count = 0usize;
 
     let mut src_f = File::open(src)?;
-    let mut dst_f = if dst.exists() { Some(File::open(dst)?) } else { None };
+    let mut dst_f = if dst.exists() {
+        Some(File::open(dst)?)
+    } else {
+        None
+    };
 
     match plan.decision {
         SyncDecision::Delta => {
@@ -240,7 +251,12 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
                     if let Some(ref inv) = dst_inventory {
                         if let Some(extent) = inv.lookup(&hash) {
                             if let Some(ref mut df) = dst_f {
-                                reconstructor.copy_local_chunk(df, extent.offset, offset, length)?;
+                                reconstructor.copy_local_chunk(
+                                    df,
+                                    extent.offset,
+                                    offset,
+                                    length,
+                                )?;
                                 local_bytes_reused += length;
                                 local_chunks_count += 1;
                                 continue;
@@ -302,4 +318,3 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
         whole_file_hash: src_whole_hash,
     })
 }
-

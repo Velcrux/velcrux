@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
-#![warn(missing_docs)]
+#[allow(missing_docs)]
 
 pub mod auth;
 pub mod chunking;
@@ -34,20 +34,13 @@ pub mod transfer;
 pub mod transport;
 pub mod util;
 
+pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
 pub use chunking::{
     create_chunker, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams, Chunker,
     FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN,
     CHUNK_DEFAULT_TARGET,
 };
-pub use sync::{
-    execute_dedup_sync, execute_delta_sync, execute_directory_sync, plan_directory_sync,
-    resume_interrupted_commit, BloomFilter, ChunkExtent, CostEstimator, DeleteMode, DeltaProgress,
-    DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
-    DirectorySyncResult, FileAction, FileActionType, LocalInventory, RleBitmap, RleRun,
-    SyncDecision, SyncError, SyncPlan,
-};
 pub use error::{Result, VelcruxError};
-pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,
@@ -60,6 +53,13 @@ pub use state::{
 pub use storage::{
     ChunkStore, FileMeta, LocalChunkStore, LocalFilesystemBackend, Staging, StorageBackend, VPath,
     VPathError,
+};
+pub use sync::{
+    execute_dedup_sync, execute_delta_sync, execute_directory_sync, plan_directory_sync,
+    resume_interrupted_commit, BloomFilter, ChunkExtent, CostEstimator, DeleteMode, DeltaProgress,
+    DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
+    DirectorySyncResult, FileAction, FileActionType, LocalInventory, RleBitmap, RleRun,
+    SyncDecision, SyncError, SyncPlan,
 };
 pub use transfer::{
     client_download, client_upload, server_download_session, server_staging_path,

@@ -1,8 +1,8 @@
 //! Run-length encoded bitmap for chunk have/need negotiation (`PROTOCOL.md` §4).
 
-use bytes::Bytes;
-use crate::protocol::varint;
 use super::SyncError;
+use crate::protocol::varint;
+use bytes::Bytes;
 
 /// A single run in an RLE bitmap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +156,9 @@ impl RleBitmap {
     pub fn decode(buf: &[u8], expected_total_chunks: u32) -> Result<Self, SyncError> {
         if expected_total_chunks == 0 {
             if !buf.is_empty() {
-                return Err(SyncError::Rle("expected 0 chunks but buffer not empty".into()));
+                return Err(SyncError::Rle(
+                    "expected 0 chunks but buffer not empty".into(),
+                ));
             }
             return Ok(Self::default());
         }

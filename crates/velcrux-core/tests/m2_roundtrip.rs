@@ -26,8 +26,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::auth::{Authorizer, FileAuthorizer, Grant, PermSet};
+use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::protocol::message::{
     Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
 };

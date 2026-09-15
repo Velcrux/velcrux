@@ -59,7 +59,10 @@ fn test_cli_sync_dry_run() {
 
     // Verify destination was NOT modified
     assert!(!dst.join("added.txt").exists());
-    assert_eq!(std::fs::read(dst.join("modified.txt")).unwrap(), b"old version");
+    assert_eq!(
+        std::fs::read(dst.join("modified.txt")).unwrap(),
+        b"old version"
+    );
     assert!(dst.join("orphan.txt").exists());
 }
 
@@ -84,8 +87,14 @@ fn test_cli_sync_full_execute_and_delete_modes() {
         .expect("failed to execute velcrux sync");
 
     assert!(output1.status.success());
-    assert_eq!(std::fs::read(dst.join("file1.txt")).unwrap(), b"file 1 content");
-    assert_eq!(std::fs::read(dst.join("file2.txt")).unwrap(), b"file 2 content");
+    assert_eq!(
+        std::fs::read(dst.join("file1.txt")).unwrap(),
+        b"file 1 content"
+    );
+    assert_eq!(
+        std::fs::read(dst.join("file2.txt")).unwrap(),
+        b"file 2 content"
+    );
     assert!(
         dst.join("orphan.txt").exists(),
         "orphan.txt must be preserved under default DeleteMode::None"
@@ -101,8 +110,14 @@ fn test_cli_sync_full_execute_and_delete_modes() {
         .expect("failed to execute velcrux sync --delete-after");
 
     assert!(output2.status.success());
-    assert_eq!(std::fs::read(dst.join("file1.txt")).unwrap(), b"file 1 content");
-    assert_eq!(std::fs::read(dst.join("file2.txt")).unwrap(), b"file 2 content");
+    assert_eq!(
+        std::fs::read(dst.join("file1.txt")).unwrap(),
+        b"file 1 content"
+    );
+    assert_eq!(
+        std::fs::read(dst.join("file2.txt")).unwrap(),
+        b"file 2 content"
+    );
     assert!(
         !dst.join("orphan.txt").exists(),
         "orphan.txt must be deleted under --delete-after"

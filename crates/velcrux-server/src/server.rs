@@ -365,4 +365,3 @@ async fn serve_prometheus_metrics(listen_addr: &str, stats: Arc<ServerStats>) ->
 
     Ok(())
 }
-

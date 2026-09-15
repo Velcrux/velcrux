@@ -635,14 +635,8 @@ async fn run_sync(
         None
     };
 
-    let result = execute_directory_sync(
-        &src_path,
-        &dst_path,
-        &options,
-        None,
-        store.as_ref(),
-    )
-    .map_err(|e| anyhow::anyhow!("sync failed: {e}"))?;
+    let result = execute_directory_sync(&src_path, &dst_path, &options, None, store.as_ref())
+        .map_err(|e| anyhow::anyhow!("sync failed: {e}"))?;
 
     println!("{}", result.plan.summary.format_display());
 
@@ -681,4 +675,3 @@ fn format_bytes(bytes: u64) -> String {
         format!("{bytes} B")
     }
 }
-

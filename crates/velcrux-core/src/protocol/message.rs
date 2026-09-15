@@ -12,10 +12,10 @@
 
 use bytes::Bytes;
 
+use crate::chunking::ChunkParams;
 use crate::error::ProtocolError;
 use crate::protocol::capabilities::{Capabilities, Capability};
 use crate::protocol::error::{ErrorCode, ErrorDetail};
-use crate::chunking::ChunkParams;
 use crate::protocol::limits::{
     MANIFEST_BATCH_SIZE, MAX_MANIFEST_BYTES, MAX_MANIFEST_ENTRIES, PROTOCOL_VERSION,
 };
@@ -2015,7 +2015,6 @@ impl Message {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -4,9 +4,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
+use super::SyncError;
 use crate::storage::LocalChunkStore;
 use crate::util::Hash;
-use super::SyncError;
 
 /// Progress statistics during delta reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +129,9 @@ impl DeltaReconstructor {
 
         let bytes_copied = chunk_store
             .copy_to_std_file(hash, staging, dst_offset)
-            .map_err(|e| SyncError::Reconstruction(format!("failed to copy chunk from store: {e}")))?;
+            .map_err(|e| {
+                SyncError::Reconstruction(format!("failed to copy chunk from store: {e}"))
+            })?;
 
         self.store_chunks_copied += 1;
         self.bytes_written += bytes_copied;
@@ -170,9 +172,10 @@ impl DeltaReconstructor {
     /// If verification fails:
     ///   - Removes staging file and returns [`SyncError::HashMismatch`].
     pub fn verify_and_commit(mut self) -> Result<(), SyncError> {
-        let mut file = self.staging_file.take().ok_or_else(|| {
-            SyncError::Reconstruction("staging file already closed".into())
-        })?;
+        let mut file = self
+            .staging_file
+            .take()
+            .ok_or_else(|| SyncError::Reconstruction("staging file already closed".into()))?;
 
         file.flush()?;
         file.seek(SeekFrom::Start(0))?;
@@ -250,6 +253,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&existing_path)
             .unwrap();
         existing_file.write_all(&chunk_a).unwrap();
@@ -270,16 +274,21 @@ mod tests {
             expected_hash,
             target_expected.len() as u64,
             3,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Copy chunk A from existing file (offset 0 -> 0)
-        recon.copy_local_chunk(&mut existing_file, 0, 0, 32 * 1024).unwrap();
+        recon
+            .copy_local_chunk(&mut existing_file, 0, 0, 32 * 1024)
+            .unwrap();
 
         // Wire chunk B_new directly (offset 32 KiB)
         recon.write_wire_chunk(32 * 1024, &chunk_b_new).unwrap();
 
         // Copy chunk C from existing file (offset 64 KiB -> 64 KiB)
-        recon.copy_local_chunk(&mut existing_file, 64 * 1024, 64 * 1024, 32 * 1024).unwrap();
+        recon
+            .copy_local_chunk(&mut existing_file, 64 * 1024, 64 * 1024, 32 * 1024)
+            .unwrap();
 
         assert_eq!(recon.progress().local_chunks_copied, 2);
         assert_eq!(recon.progress().wire_chunks_written, 1);
@@ -306,7 +315,8 @@ mod tests {
             expected_hash,
             12,
             1,
-        ).unwrap();
+        )
+        .unwrap();
 
         recon.write_wire_chunk(0, b"corrupt data").unwrap();
         let res = recon.verify_and_commit();

@@ -9,8 +9,6 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-
-
 use crate::error::{ProtocolError, Result, VelcruxError};
 use crate::manifest::codec::decode_file_entry;
 use crate::manifest::entry::FileEntry;
@@ -222,9 +220,8 @@ impl ManifestBatchDecoder {
 
 /// Decompress zstd-compressed batch with a strict maximum decompressed size clamp.
 pub fn decompress_batch(compressed: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = zstd::Decoder::new(compressed).map_err(|_| {
-        VelcruxError::Protocol(ProtocolError::Malformed("invalid zstd header"))
-    })?;
+    let mut decoder = zstd::Decoder::new(compressed)
+        .map_err(|_| VelcruxError::Protocol(ProtocolError::Malformed("invalid zstd header")))?;
 
     let mut out = Vec::new();
     let mut buffer = [0u8; 64 * 1024];

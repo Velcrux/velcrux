@@ -192,12 +192,7 @@ impl FileEntry {
     }
 
     /// Create a directory entry.
-    pub fn directory(
-        path: VPath,
-        mode: u32,
-        mtime_sec: i64,
-        mtime_nsec: u32,
-    ) -> Self {
+    pub fn directory(path: VPath, mode: u32, mtime_sec: i64, mtime_nsec: u32) -> Self {
         Self {
             flags: FileFlags::directory(),
             path,

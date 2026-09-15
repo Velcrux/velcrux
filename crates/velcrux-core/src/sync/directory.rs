@@ -470,7 +470,9 @@ pub fn execute_directory_sync(
     }
 
     // Staging root lives on the same filesystem root under .velcrux-staging
-    let staging_root = dst_dir.join(".velcrux-staging").join(transfer_id.to_string());
+    let staging_root = dst_dir
+        .join(".velcrux-staging")
+        .join(transfer_id.to_string());
     std::fs::create_dir_all(&staging_root)?;
 
     let mut staged_files = Vec::new();

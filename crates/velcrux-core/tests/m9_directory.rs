@@ -152,7 +152,11 @@ fn test_directory_sync_dry_run_leaves_destination_untouched() {
     std::fs::write(src.join("added.txt"), b"brand new file content").unwrap();
 
     // 4. Extraneous file on destination
-    std::fs::write(dst.join("extraneous.txt"), b"should be deleted if delete-after").unwrap();
+    std::fs::write(
+        dst.join("extraneous.txt"),
+        b"should be deleted if delete-after",
+    )
+    .unwrap();
 
     let options = DirectorySyncOptions {
         mode: ChunkMode::Fixed,
@@ -182,7 +186,10 @@ fn test_directory_sync_dry_run_leaves_destination_untouched() {
 
     // Verify destination was NOT modified at all
     assert!(!dst.join("added.txt").exists());
-    assert_eq!(std::fs::read(dst.join("modified.txt")).unwrap(), b"old version");
+    assert_eq!(
+        std::fs::read(dst.join("modified.txt")).unwrap(),
+        b"old version"
+    );
     assert!(dst.join("extraneous.txt").exists());
     assert_eq!(result.files_committed, 0);
     assert_eq!(result.files_transferred, 0);
@@ -211,7 +218,10 @@ fn test_directory_sync_delete_modes() {
     assert_eq!(res1.files_committed, 1);
     assert_eq!(res1.files_deleted, 0);
     assert!(dst.join("live.txt").exists());
-    assert!(dst.join("orphan.txt").exists(), "orphan must NOT be deleted under DeleteMode::None");
+    assert!(
+        dst.join("orphan.txt").exists(),
+        "orphan must NOT be deleted under DeleteMode::None"
+    );
 
     // 2. Run with DeleteMode::DeleteAfter
     let options_delete = DirectorySyncOptions {
@@ -224,7 +234,10 @@ fn test_directory_sync_delete_modes() {
     let res2 = execute_directory_sync(&src, &dst, &options_delete, None, None).unwrap();
     assert_eq!(res2.files_deleted, 1);
     assert!(dst.join("live.txt").exists());
-    assert!(!dst.join("orphan.txt").exists(), "orphan MUST be deleted under DeleteMode::DeleteAfter");
+    assert!(
+        !dst.join("orphan.txt").exists(),
+        "orphan MUST be deleted under DeleteMode::DeleteAfter"
+    );
 }
 
 #[test]
@@ -300,7 +313,10 @@ fn test_stage_failure_leaves_destination_untouched() {
     std::fs::write(src.join("added.txt"), b"added content").unwrap();
 
     // Verify initial destination state
-    assert_eq!(std::fs::read(dst.join("target.txt")).unwrap(), initial_content);
+    assert_eq!(
+        std::fs::read(dst.join("target.txt")).unwrap(),
+        initial_content
+    );
     assert!(!dst.join("added.txt").exists());
 
     // Compute plan
@@ -348,4 +364,3 @@ fn test_stage_failure_leaves_destination_untouched() {
         );
     }
 }
-

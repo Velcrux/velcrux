@@ -60,7 +60,8 @@ async fn test_exit_criteria_second_copy_transfers_zero_bytes() {
         params,
         256 * 1024,
         Some(&chunk_store),
-    ).unwrap();
+    )
+    .unwrap();
 
     assert_eq!(report1.total_bytes, file_size as u64);
     assert_eq!(report1.wire_bytes_transferred, file_size as u64);
@@ -74,7 +75,9 @@ async fn test_exit_criteria_second_copy_transfers_zero_bytes() {
     // 2. Transfer of a second copy of the file:
     // Different source filename, and completely different destination path (where destination DOES NOT EXIST).
     let src2_path = dir.path().join("second_copy_source.bin");
-    let dst2_path = dir.path().join("unrelated_folder/second_copy_destination.bin");
+    let dst2_path = dir
+        .path()
+        .join("unrelated_folder/second_copy_destination.bin");
     fs::write(&src2_path, &content).unwrap();
 
     let report2 = execute_dedup_sync(
@@ -84,7 +87,8 @@ async fn test_exit_criteria_second_copy_transfers_zero_bytes() {
         params,
         256 * 1024,
         Some(&chunk_store),
-    ).unwrap();
+    )
+    .unwrap();
 
     println!(
         "M8 Exit Test Results (Second Copy Transfer):\n\
@@ -150,7 +154,8 @@ async fn test_cross_file_partial_deduplication() {
         params,
         256 * 1024,
         Some(&chunk_store),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(report_base.wire_bytes_transferred, base_size as u64);
 
     // 2. Create derived file: 75% identical chunks + 25% new chunks appended
@@ -174,7 +179,8 @@ async fn test_cross_file_partial_deduplication() {
         params,
         256 * 1024,
         Some(&chunk_store),
-    ).unwrap();
+    )
+    .unwrap();
 
     println!(
         "Cross-File Partial Dedup:\n\

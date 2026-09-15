@@ -82,7 +82,9 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
 
     // 2. path_len: varint, then path bytes
     if offset >= buf.len() {
-        return Err(ProtocolError::Malformed("FILE_ENTRY: truncated path length"));
+        return Err(ProtocolError::Malformed(
+            "FILE_ENTRY: truncated path length",
+        ));
     }
     let (path_len, c) = decode_varint(&buf[offset..])?;
     offset += c;
@@ -107,7 +109,9 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
     // 3. Fixed size header: size (8), mode (4), mtime_sec (8), mtime_nsec (4), hash (32) = 56 bytes
     const FIXED_HDR_LEN: usize = 8 + 4 + 8 + 4 + 32;
     if buf.len() < offset + FIXED_HDR_LEN {
-        return Err(ProtocolError::Malformed("FILE_ENTRY: truncated metadata fields"));
+        return Err(ProtocolError::Malformed(
+            "FILE_ENTRY: truncated metadata fields",
+        ));
     }
     let size = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap());
     offset += 8;
@@ -127,7 +131,9 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
 
     // 4. chunk_count: varint
     if offset >= buf.len() {
-        return Err(ProtocolError::Malformed("FILE_ENTRY: truncated chunk count"));
+        return Err(ProtocolError::Malformed(
+            "FILE_ENTRY: truncated chunk count",
+        ));
     }
     let (chunk_count, c) = decode_varint(&buf[offset..])?;
     offset += c;
@@ -151,9 +157,9 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
                 chunk.length
             )));
         }
-        running_sum = running_sum.checked_add(chunk.length).ok_or_else(|| {
-            ProtocolError::InvalidManifest("chunk length overflow".into())
-        })?;
+        running_sum = running_sum
+            .checked_add(chunk.length)
+            .ok_or_else(|| ProtocolError::InvalidManifest("chunk length overflow".into()))?;
         chunks.push(chunk);
     }
 
@@ -207,7 +213,14 @@ pub fn decode_chunk_desc(buf: &[u8]) -> Result<(ChunkDesc, usize), ProtocolError
         Some(h)
     };
 
-    Ok((ChunkDesc { flags, length, hash }, offset))
+    Ok((
+        ChunkDesc {
+            flags,
+            length,
+            hash,
+        },
+        offset,
+    ))
 }
 
 #[cfg(test)]

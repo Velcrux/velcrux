@@ -87,13 +87,7 @@ pub fn scan_single_file_with_mode(
     )?;
 
     let entry = FileEntry::regular(
-        vpath,
-        file_size,
-        mode,
-        mtime_sec,
-        mtime_nsec,
-        file_hash,
-        chunks,
+        vpath, file_size, mode, mtime_sec, mtime_nsec, file_hash, chunks,
     );
 
     writer.add_entry(entry)?;
@@ -101,10 +95,7 @@ pub fn scan_single_file_with_mode(
 }
 
 /// Recursively scans a directory tree and populates `writer` streaming using default CDC chunking.
-pub fn scan_directory_tree(
-    root: impl AsRef<Path>,
-    writer: &mut ManifestWriter,
-) -> Result<()> {
+pub fn scan_directory_tree(root: impl AsRef<Path>, writer: &mut ManifestWriter) -> Result<()> {
     scan_directory_tree_with_mode(root, writer, ChunkMode::Cdc, ChunkParams::default())
 }
 

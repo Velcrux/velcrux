@@ -7,13 +7,11 @@ use sha2::{Digest, Sha256};
 use velcrux_core::chunking::{ChunkEngine, ChunkMode, ChunkParams};
 use velcrux_core::manifest::{ChunkDesc, FileEntry, ManifestReader, ManifestWriter};
 use velcrux_core::protocol::frame::{
-    decode_data_frame_header, decode_frame, encode_data_frame_header, encode_frame,
-    DataFrameFlags, FrameFlags, DATA_FRAME_HEADER_LEN,
+    decode_data_frame_header, decode_frame, encode_data_frame_header, encode_frame, DataFrameFlags,
+    FrameFlags, DATA_FRAME_HEADER_LEN,
 };
 use velcrux_core::storage::VPath;
-use velcrux_core::sync::{
-    execute_delta_sync, CostEstimator, RleBitmap, SyncDecision,
-};
+use velcrux_core::sync::{execute_delta_sync, CostEstimator, RleBitmap, SyncDecision};
 use velcrux_core::util::Hash;
 
 /// Generate deterministic pseudorandom data per PERFORMANCE.md Rule 1 (never /dev/zero).
@@ -21,7 +19,9 @@ fn generate_pseudorandom_bytes(size: usize, seed: u64) -> Vec<u8> {
     let mut data = vec![0u8; size];
     let mut state = seed.wrapping_add(0x9E3779B97F4A7C15);
     for chunk in data.chunks_mut(8) {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let bytes = state.to_le_bytes();
         let len = chunk.len();
         chunk.copy_from_slice(&bytes[..len]);
@@ -153,7 +153,15 @@ fn test_perf_manifest_streaming_codec() {
     for i in 0..num_entries {
         let vpath = VPath::validate(&format!("dataset/subdir_{}/item_{}.dat", i / 50, i)).unwrap();
         let chunk = ChunkDesc::new(1024, Hash::ZERO);
-        let entry = FileEntry::regular(vpath, 1024, 0o644, 1700000000 + i as i64, 0, Hash::ZERO, vec![chunk]);
+        let entry = FileEntry::regular(
+            vpath,
+            1024,
+            0o644,
+            1700000000 + i as i64,
+            0,
+            Hash::ZERO,
+            vec![chunk],
+        );
         writer.add_entry(entry).unwrap();
     }
     let (begin, _, path) = writer.finish().unwrap();
@@ -212,7 +220,13 @@ fn test_perf_frame_codec_latency() {
 
     let t1 = Instant::now();
     for i in 0..iterations {
-        encode_data_frame_header(&mut data_buf, (i * 4096) as u64, 4096, DataFrameFlags::NONE, &test_hash);
+        encode_data_frame_header(
+            &mut data_buf,
+            (i * 4096) as u64,
+            4096,
+            DataFrameFlags::NONE,
+            &test_hash,
+        );
         let (hdr, _) = decode_data_frame_header(&data_buf).unwrap();
         assert_eq!(hdr.chunk_offset, (i * 4096) as u64);
     }
@@ -223,12 +237,17 @@ fn test_perf_frame_codec_latency() {
         "\n--- Frame Header Codec Latency ---\n\
          Control frame: {:>6.1} ns/op\n\
          Data frame:    {:>6.1} ns/op",
-        ns_per_frame,
-        ns_per_data_frame
+        ns_per_frame, ns_per_data_frame
     );
 
-    assert!(ns_per_frame < 2000.0, "control frame codec must be sub-2-microsecond");
-    assert!(ns_per_data_frame < 2000.0, "data frame header codec must be sub-2-microsecond");
+    assert!(
+        ns_per_frame < 2000.0,
+        "control frame codec must be sub-2-microsecond"
+    );
+    assert!(
+        ns_per_data_frame < 2000.0,
+        "data frame header codec must be sub-2-microsecond"
+    );
 }
 
 #[test]
@@ -263,16 +282,15 @@ fn test_perf_bitmap_ops_scale() {
          RLE encoded:     {} bytes ({:.1}x compression)\n\
          Encode latency:  {:?}\n\
          Decode latency:  {:?}",
-        raw_bytes,
-        rle_bytes,
-        compression_ratio,
-        encode_elapsed,
-        decode_elapsed
+        raw_bytes, rle_bytes, compression_ratio, encode_elapsed, decode_elapsed
     );
 
     assert_eq!(decoded.total_chunks(), total_chunks as u32);
     assert_eq!(decoded.have_count(), rle.have_count());
-    assert!(rle_bytes < 1000, "clustered runs should compress to < 1 KiB");
+    assert!(
+        rle_bytes < 1000,
+        "clustered runs should compress to < 1 KiB"
+    );
 }
 
 #[test]

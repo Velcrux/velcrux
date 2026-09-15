@@ -17,9 +17,7 @@
 use std::io::Cursor;
 use tempfile::tempdir;
 
-use velcrux_core::chunking::{
-    ChunkEngine, ChunkMode, ChunkParams, ReuseStats,
-};
+use velcrux_core::chunking::{ChunkEngine, ChunkMode, ChunkParams, ReuseStats};
 use velcrux_core::manifest::entry::ChunkDesc;
 use velcrux_core::manifest::scanner::{scan_single_file_with_mode, SCANNER_BUFFER_SIZE};
 use velcrux_core::manifest::writer::ManifestWriter;
@@ -191,7 +189,15 @@ fn m6_middle_edit_blast_radius() {
 /// across empty files, sub-chunk files, and multi-megabyte streams.
 #[test]
 fn m6_exact_concatenation_reconstruction() {
-    let test_sizes = [0, 1, 100, 4096, 256 * 1024, 1024 * 1024 + 500, 8 * 1024 * 1024];
+    let test_sizes = [
+        0,
+        1,
+        100,
+        4096,
+        256 * 1024,
+        1024 * 1024 + 500,
+        8 * 1024 * 1024,
+    ];
 
     for &size in &test_sizes {
         let input = generate_test_content(size, 0xCAFEBABE);
@@ -206,20 +212,15 @@ fn m6_exact_concatenation_reconstruction() {
             let mut chunk_count = 0usize;
 
             let reader = Cursor::new(&input);
-            let (whole_hash, total_bytes) = ChunkEngine::chunk_reader(
-                reader,
-                mode,
-                params,
-                64 * 1024,
-                |desc, payload| {
+            let (whole_hash, total_bytes) =
+                ChunkEngine::chunk_reader(reader, mode, params, 64 * 1024, |desc, payload| {
                     assert_eq!(desc.length as usize, payload.len());
                     assert_eq!(desc.hash.unwrap(), Hash::of(payload));
                     reconstructed.extend_from_slice(payload);
                     chunk_count += 1;
                     Ok(())
-                },
-            )
-            .unwrap();
+                })
+                .unwrap();
 
             assert_eq!(total_bytes, size as u64);
             assert_eq!(reconstructed.len(), size);

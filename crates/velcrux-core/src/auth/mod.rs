@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::error::{Result, VelcruxError, ProtocolError};
+use crate::error::{ProtocolError, Result, VelcruxError};
 use crate::storage::{VPath, VPathError};
 use crate::transport::identity::Identity;
 
@@ -27,9 +27,8 @@ impl PermSet {
     pub const ADMIN: PermSet = PermSet(1 << 6);
 
     /// All non-admin permissions.
-    pub const ALL_TRANSFER: PermSet = PermSet(
-        Self::UPLOAD.0 | Self::DOWNLOAD.0 | Self::LIST.0 | Self::SYNC.0 | Self::RESUME.0,
-    );
+    pub const ALL_TRANSFER: PermSet =
+        PermSet(Self::UPLOAD.0 | Self::DOWNLOAD.0 | Self::LIST.0 | Self::SYNC.0 | Self::RESUME.0);
 
     /// Construct from wire u64.
     pub const fn from_wire(bits: u64) -> Self {
@@ -275,8 +274,7 @@ impl Authorizer for FileAuthorizer {
         }
 
         // 3. No matching grant → deny. Deny-by-default (`SECURITY.md` §4).
-        let grant =
-            best.ok_or_else(|| VelcruxError::Protocol(ProtocolError::PermissionDenied))?;
+        let grant = best.ok_or_else(|| VelcruxError::Protocol(ProtocolError::PermissionDenied))?;
 
         // 4. The matched grant must carry the permission this op requires.
         //    `admin` does NOT imply `delete` — each bit is explicit.

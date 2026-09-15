@@ -5,10 +5,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use crate::chunking::{ChunkEngine, ChunkMode, ChunkParams};
-use crate::util::Hash;
 use super::bloom::BloomFilter;
 use super::SyncError;
+use crate::chunking::{ChunkEngine, ChunkMode, ChunkParams};
+use crate::util::Hash;
 
 /// Byte extent of a chunk within a local source file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,12 +59,8 @@ impl LocalInventory {
         let mut offset = 0u64;
         let mut total_chunks = 0usize;
 
-        let (whole_hash, total_bytes) = ChunkEngine::chunk_reader(
-            reader,
-            mode,
-            params,
-            read_buf_size,
-            |desc, _payload| {
+        let (whole_hash, total_bytes) =
+            ChunkEngine::chunk_reader(reader, mode, params, read_buf_size, |desc, _payload| {
                 total_chunks += 1;
                 if let Some(hash) = desc.hash {
                     chunks.entry(hash).or_insert(ChunkExtent {
@@ -74,8 +70,10 @@ impl LocalInventory {
                 }
                 offset += desc.length;
                 Ok(())
-            },
-        ).map_err(|e| SyncError::Inventory(format!("failed to scan file {}: {e}", path.display())))?;
+            })
+            .map_err(|e| {
+                SyncError::Inventory(format!("failed to scan file {}: {e}", path.display()))
+            })?;
 
         Ok(Self {
             chunks,
@@ -145,7 +143,8 @@ mod tests {
         tmp.flush().unwrap();
 
         let params = ChunkParams::new(16 * 1024, 32 * 1024, 64 * 1024).unwrap();
-        let inv = LocalInventory::from_file(tmp.path(), ChunkMode::Fixed, params, 64 * 1024).unwrap();
+        let inv =
+            LocalInventory::from_file(tmp.path(), ChunkMode::Fixed, params, 64 * 1024).unwrap();
 
         assert_eq!(inv.total_bytes(), 128 * 1024);
         assert_eq!(inv.whole_hash(), Some(Hash::of(&payload)));
