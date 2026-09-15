@@ -19,6 +19,7 @@
 .DS_Store
 .idea/
 .vscode/
+.kilo/
 *.swp
 
 # Benchmark results (PERFORMANCE.md §3)
@@ -26,8 +27,11 @@ benches/results/
 
 # Fuzz corpora — they grow without bound
 fuzz/corpus/
-# Documentation
+
+# Hide all markdown files except README.md and CLAUDE.md
+*.md
+**/*.md
 !README.md
 !CLAUDE.md
-!docs/**
+
 
