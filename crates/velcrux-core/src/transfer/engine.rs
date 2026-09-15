@@ -54,7 +54,7 @@ use bytes::Bytes;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 
-use crate::chunking::{ChunkParams, Chunker, RollingChunker};
+use crate::chunking::{create_chunker, ChunkMode, ChunkParams, Chunker, RollingChunker};
 use crate::error::{Result, VelcruxError};
 use crate::protocol::frame::{
     decode_data_frame_header, decode_data_preamble, encode_data_frame, encode_data_preamble,
@@ -79,6 +79,8 @@ pub struct PipelineConfig {
     pub read_buffer_size: usize,
     /// Max in-flight chunks between chunker and writer task.
     pub max_inflight: usize,
+    /// Chunker mode (CDC or Fixed).
+    pub chunk_mode: ChunkMode,
     /// Chunker parameters.
     pub chunk_params: ChunkParams,
 }
@@ -88,6 +90,7 @@ impl Default for PipelineConfig {
         Self {
             read_buffer_size: 2 * 1024 * 1024,
             max_inflight: 4,
+            chunk_mode: ChunkMode::Cdc,
             chunk_params: ChunkParams::default(),
         }
     }
@@ -233,7 +236,7 @@ async fn chunker_to_channel(
     tx: mpsc::Sender<DataItem>,
 ) -> Result<()> {
     let mut file = tokio::fs::File::open(&path).await?;
-    let mut chunker = RollingChunker::new(cfg.chunk_params);
+    let mut chunker = create_chunker(cfg.chunk_mode, cfg.chunk_params);
     let mut read_buf = vec![0u8; cfg.read_buffer_size];
     // Accumulator: bytes that belong to the in-progress chunk and have not
     // yet been emitted. Bounded by `MAX_CHUNK_SIZE` (4 MiB), never grows

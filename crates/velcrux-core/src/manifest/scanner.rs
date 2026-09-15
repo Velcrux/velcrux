@@ -6,24 +6,39 @@
 //! directly into [`ManifestWriter`].
 
 use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 
-use crate::chunking::{ChunkParams, Chunker, RollingChunker};
+use crate::chunking::{ChunkEngine, ChunkMode, ChunkParams};
 use crate::error::{ProtocolError, Result, VelcruxError};
-use crate::manifest::entry::{ChunkDesc, FileEntry};
+use crate::manifest::entry::FileEntry;
 use crate::manifest::writer::ManifestWriter;
 use crate::storage::VPath;
-use crate::util::Hash;
 
 /// Default buffer size used for streaming file reads during manifest scanning (2 MiB).
 pub const SCANNER_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
-/// Stream-scans a single file on disk and adds it to `writer`.
+/// Stream-scans a single file on disk and adds it to `writer` using default CDC chunking.
 pub fn scan_single_file(
     root: impl AsRef<Path>,
     rel_path: impl AsRef<Path>,
     writer: &mut ManifestWriter,
+) -> Result<()> {
+    scan_single_file_with_mode(
+        root,
+        rel_path,
+        writer,
+        ChunkMode::Cdc,
+        ChunkParams::default(),
+    )
+}
+
+/// Stream-scans a single file on disk and adds it to `writer` using the specified chunk mode and parameters.
+pub fn scan_single_file_with_mode(
+    root: impl AsRef<Path>,
+    rel_path: impl AsRef<Path>,
+    writer: &mut ManifestWriter,
+    chunk_mode: ChunkMode,
+    params: ChunkParams,
 ) -> Result<()> {
     let full_path = root.as_ref().join(rel_path.as_ref());
     let metadata = std::fs::symlink_metadata(&full_path)?;
@@ -58,46 +73,18 @@ pub fn scan_single_file(
         Err(_) => (0, 0),
     };
 
-    let mut file = File::open(&full_path)?;
-    let mut read_buf = vec![0u8; SCANNER_BUFFER_SIZE];
-    let mut pending = Vec::new();
-    let mut pending_offset: u64 = 0;
-    let mut chunker = RollingChunker::new(ChunkParams::default());
-    let mut whole_hasher = blake3::Hasher::new();
+    let file = File::open(&full_path)?;
     let mut chunks = Vec::new();
-
-    loop {
-        let n = file.read(&mut read_buf)?;
-        if n == 0 {
-            break;
-        }
-        let slice = &read_buf[..n];
-        whole_hasher.update(slice);
-        pending.extend_from_slice(slice);
-
-        let boundaries = chunker.push(slice)?;
-        for b in &boundaries {
-            let target = b.end() as usize;
-            let need = target - pending_offset as usize;
-            let hash_bytes = blake3::hash(&pending[..need]);
-            let hash = Hash::from_bytes(hash_bytes.as_bytes()).unwrap();
-            chunks.push(ChunkDesc::new(need as u64, hash));
-            pending.drain(..need);
-            pending_offset = b.end();
-        }
-    }
-
-    if let Some(b) = chunker.finish()? {
-        let target = b.end() as usize;
-        let need = target - pending_offset as usize;
-        let hash_bytes = blake3::hash(&pending[..need]);
-        let hash = Hash::from_bytes(hash_bytes.as_bytes()).unwrap();
-        chunks.push(ChunkDesc::new(need as u64, hash));
-        pending.drain(..need);
-    }
-
-    let file_digest = whole_hasher.finalize();
-    let file_hash = Hash::from_bytes(file_digest.as_bytes()).unwrap();
+    let (file_hash, _) = ChunkEngine::chunk_reader(
+        file,
+        chunk_mode,
+        params,
+        SCANNER_BUFFER_SIZE,
+        |desc, _bytes| {
+            chunks.push(desc);
+            Ok(())
+        },
+    )?;
 
     let entry = FileEntry::regular(
         vpath,
@@ -113,10 +100,20 @@ pub fn scan_single_file(
     Ok(())
 }
 
-/// Recursively scans a directory tree and populates `writer` streaming.
+/// Recursively scans a directory tree and populates `writer` streaming using default CDC chunking.
 pub fn scan_directory_tree(
     root: impl AsRef<Path>,
     writer: &mut ManifestWriter,
+) -> Result<()> {
+    scan_directory_tree_with_mode(root, writer, ChunkMode::Cdc, ChunkParams::default())
+}
+
+/// Recursively scans a directory tree and populates `writer` streaming using the specified chunk mode and parameters.
+pub fn scan_directory_tree_with_mode(
+    root: impl AsRef<Path>,
+    writer: &mut ManifestWriter,
+    chunk_mode: ChunkMode,
+    params: ChunkParams,
 ) -> Result<()> {
     let root = root.as_ref();
     let mut stack = vec![root.to_path_buf()];
@@ -140,7 +137,7 @@ pub fn scan_directory_tree(
                 writer.add_entry(FileEntry::directory(vpath, 0o755, 0, 0))?;
                 stack.push(path);
             } else if file_type.is_file() {
-                scan_single_file(root, rel, writer)?;
+                scan_single_file_with_mode(root, rel, writer, chunk_mode, params)?;
             }
         }
     }

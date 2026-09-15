@@ -15,7 +15,11 @@
 //! The default parameters per `ADR-004`: min 256 KiB, target 1 MiB, max 4 MiB.
 //! All are configurable, and both sides must agree (negotiated in HELLO_ACK).
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{ProtocolError, Result};
+use crate::manifest::entry::ChunkDesc;
+use crate::util::Hash;
 
 /// Default minimum chunk size, in bytes (`ADR-004`).
 pub const CHUNK_DEFAULT_MIN: u64 = 256 * 1024;
@@ -24,9 +28,19 @@ pub const CHUNK_DEFAULT_TARGET: u64 = 1024 * 1024;
 /// Default maximum chunk size, in bytes (`ADR-004`).
 pub const CHUNK_DEFAULT_MAX: u64 = 4 * 1024 * 1024;
 
+/// Chunking strategy selected for a transfer or dataset (`ADR-004`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ChunkMode {
+    /// Content-defined chunking (gear rolling hash). Boundaries adapt to content edits.
+    #[default]
+    Cdc,
+    /// Fixed-size chunking. Fast, zero hash-rolling overhead, but sensitive to insertions.
+    Fixed,
+}
+
 /// Parameters for a chunker. Both sides of a transfer must use identical
 /// parameters or reuse is silently destroyed (`ADR-004`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkParams {
     /// Minimum chunk size, in bytes.
     pub min: u64,
@@ -47,12 +61,42 @@ impl Default for ChunkParams {
 }
 
 impl ChunkParams {
-    /// Build with the three named values, validating strict `min < target < max`.
+    /// Build with the three named values.
+    ///
+    /// Validates either `min < target < max` (CDC mode) or `min == target == max` (Fixed mode).
     pub fn new(min: u64, target: u64, max: u64) -> Option<Self> {
+        if min == 0 || max == 0 {
+            return None;
+        }
+        if min == target && target == max {
+            return Some(Self { min, target, max });
+        }
+        if min >= max || target <= min || target >= max {
+            return None;
+        }
+        Some(Self { min, target, max })
+    }
+
+    /// Construct parameters for fixed-size chunking with the given chunk size.
+    pub fn fixed(chunk_size: u64) -> Self {
+        Self {
+            min: chunk_size,
+            target: chunk_size,
+            max: chunk_size,
+        }
+    }
+
+    /// Construct parameters for content-defined chunking.
+    pub fn cdc(min: u64, target: u64, max: u64) -> Option<Self> {
         if min == 0 || max == 0 || min >= max || target <= min || target >= max {
             return None;
         }
         Some(Self { min, target, max })
+    }
+
+    /// True if these parameters represent a fixed-size chunker (`min == target == max`).
+    pub fn is_fixed(&self) -> bool {
+        self.min == self.target && self.target == self.max
     }
 }
 
@@ -114,9 +158,21 @@ impl Chunker for FixedChunker {
         }
         let mut out = Vec::new();
         let cut_at = self.params.target;
-        for _ in buf {
-            self.in_chunk += 1;
-            if self.in_chunk >= cut_at {
+        if cut_at == 0 {
+            return Err(ProtocolError::Malformed("FixedChunker: target chunk size is 0").into());
+        }
+        let mut offset_in_buf = 0usize;
+        let buf_len = buf.len();
+
+        while offset_in_buf < buf_len {
+            let needed = cut_at.saturating_sub(self.in_chunk);
+            let available = (buf_len - offset_in_buf) as u64;
+            if available < needed {
+                self.in_chunk += available;
+                break;
+            } else {
+                self.in_chunk += needed;
+                offset_in_buf += needed as usize;
                 out.push(ChunkBoundary {
                     offset: self.next_offset,
                     length: self.in_chunk,
@@ -278,6 +334,147 @@ impl Chunker for RollingChunker {
     }
     fn offset(&self) -> u64 {
         self.next_offset + self.in_chunk
+    }
+}
+
+/// Alias for [`RollingChunker`] matching `ARCHITECTURE.md` §2 and ADR-004 nomenclature.
+pub type CdcChunker = RollingChunker;
+
+/// Create a boxed [`Chunker`] matching the given mode and parameters.
+pub fn create_chunker(mode: ChunkMode, params: ChunkParams) -> Box<dyn Chunker + Send> {
+    match mode {
+        ChunkMode::Fixed => Box::new(FixedChunker::new(params)),
+        ChunkMode::Cdc => Box::new(RollingChunker::new(params)),
+    }
+}
+
+/// High-throughput streaming chunk engine with strictly bounded memory (`ARCHITECTURE.md` §2).
+///
+/// Feeds chunks to a callback while calculating per-chunk BLAKE3 digests and
+/// the whole-stream BLAKE3 digest in a single streaming pass. At no point is the
+/// whole stream or file buffered in memory.
+pub struct ChunkEngine;
+
+impl ChunkEngine {
+    /// Stream-chunks an `std::io::Read` source with a bounded read buffer.
+    ///
+    /// For every chunk identified by the chunker, invokes `on_chunk` with its [`ChunkDesc`]
+    /// and payload slice.
+    /// Returns the whole-stream BLAKE3 [`Hash`] and total bytes read.
+    pub fn chunk_reader<R: std::io::Read, F>(
+        mut reader: R,
+        mode: ChunkMode,
+        params: ChunkParams,
+        read_buffer_size: usize,
+        mut on_chunk: F,
+    ) -> Result<(Hash, u64)>
+    where
+        F: FnMut(ChunkDesc, &[u8]) -> Result<()>,
+    {
+        let mut chunker = create_chunker(mode, params);
+        let mut whole_hasher = blake3::Hasher::new();
+        let mut read_buf = vec![0u8; read_buffer_size.max(4096)];
+        let mut pending = Vec::with_capacity(params.max.max(read_buffer_size as u64) as usize);
+        let mut pending_offset: u64 = 0;
+        let mut total_bytes: u64 = 0;
+
+        loop {
+            let n = reader.read(&mut read_buf)?;
+            if n == 0 {
+                break;
+            }
+            let slice = &read_buf[..n];
+            whole_hasher.update(slice);
+            pending.extend_from_slice(slice);
+            total_bytes += n as u64;
+
+            let boundaries = chunker.push(slice)?;
+            for b in boundaries {
+                let target = b.end();
+                let need = (target - pending_offset) as usize;
+                let chunk_bytes = &pending[..need];
+                let hash = Hash::of(chunk_bytes);
+                let desc = ChunkDesc::new(need as u64, hash);
+                on_chunk(desc, chunk_bytes)?;
+                pending.drain(..need);
+                pending_offset = target;
+            }
+        }
+
+        if let Some(b) = chunker.finish()? {
+            let target = b.end();
+            let need = (target - pending_offset) as usize;
+            let chunk_bytes = &pending[..need];
+            let hash = Hash::of(chunk_bytes);
+            let desc = ChunkDesc::new(need as u64, hash);
+            on_chunk(desc, chunk_bytes)?;
+            pending.drain(..need);
+        }
+
+        let whole_hash = Hash::from_bytes(whole_hasher.finalize().as_bytes()).unwrap();
+        Ok((whole_hash, total_bytes))
+    }
+}
+
+/// Delta reuse statistics between an original file/dataset and a modified version (`PERFORMANCE.md` §6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReuseStats {
+    /// Total bytes in the modified version.
+    pub total_bytes: u64,
+    /// Bytes from chunks that exist in the original chunk set.
+    pub reused_bytes: u64,
+    /// Total chunks in the modified version.
+    pub total_chunks: usize,
+    /// Chunks found in the original chunk set.
+    pub reused_chunks: usize,
+    /// Ratio of reused bytes to total bytes (0.0 to 1.0).
+    pub byte_reuse_ratio: f64,
+    /// Ratio of reused chunks to total chunks (0.0 to 1.0).
+    pub chunk_reuse_ratio: f64,
+}
+
+impl ReuseStats {
+    /// Compute reuse of `modified_chunks` against `original_chunks`.
+    pub fn compute(original_chunks: &[ChunkDesc], modified_chunks: &[ChunkDesc]) -> Self {
+        let original_hashes: std::collections::HashSet<Hash> = original_chunks
+            .iter()
+            .filter_map(|c| c.hash)
+            .collect();
+
+        let mut reused_bytes = 0u64;
+        let mut reused_chunks = 0usize;
+        let mut total_bytes = 0u64;
+
+        for c in modified_chunks {
+            total_bytes += c.length;
+            if let Some(h) = c.hash {
+                if original_hashes.contains(&h) {
+                    reused_bytes += c.length;
+                    reused_chunks += 1;
+                }
+            }
+        }
+
+        let byte_reuse_ratio = if total_bytes > 0 {
+            reused_bytes as f64 / total_bytes as f64
+        } else {
+            1.0
+        };
+
+        let chunk_reuse_ratio = if !modified_chunks.is_empty() {
+            reused_chunks as f64 / modified_chunks.len() as f64
+        } else {
+            1.0
+        };
+
+        Self {
+            total_bytes,
+            reused_bytes,
+            total_chunks: modified_chunks.len(),
+            reused_chunks,
+            byte_reuse_ratio,
+            chunk_reuse_ratio,
+        }
     }
 }
 
@@ -493,5 +690,123 @@ mod tests {
             deltas1, deltas2,
             "boundary deltas past the insertion must match (deltas1={deltas1:?}, deltas2={deltas2:?})"
         );
+    }
+
+    #[test]
+    fn params_fixed_constructor_and_helpers() {
+        let fixed = ChunkParams::fixed(1024 * 1024);
+        assert!(fixed.is_fixed());
+        assert_eq!(fixed.min, 1024 * 1024);
+        assert_eq!(fixed.target, 1024 * 1024);
+        assert_eq!(fixed.max, 1024 * 1024);
+
+        let from_new = ChunkParams::new(512, 512, 512).unwrap();
+        assert!(from_new.is_fixed());
+
+        let cdc = ChunkParams::cdc(256, 1024, 4096).unwrap();
+        assert!(!cdc.is_fixed());
+        assert_eq!(cdc.min, 256);
+        assert_eq!(cdc.target, 1024);
+        assert_eq!(cdc.max, 4096);
+    }
+
+    #[test]
+    fn fixed_chunker_arbitrary_buffer_slicing() {
+        let chunk_size = 1000u64;
+        let params = ChunkParams::fixed(chunk_size);
+        let mut chunker = FixedChunker::new(params);
+
+        // Feed data in varying chunk sizes: 300, 700, 2500, 500
+        let b1 = chunker.push(&vec![0u8; 300]).unwrap();
+        assert!(b1.is_empty());
+
+        let b2 = chunker.push(&vec![1u8; 700]).unwrap();
+        assert_eq!(b2.len(), 1);
+        assert_eq!(b2[0].offset, 0);
+        assert_eq!(b2[0].length, 1000);
+
+        let b3 = chunker.push(&vec![2u8; 2500]).unwrap();
+        assert_eq!(b3.len(), 2);
+        assert_eq!(b3[0].offset, 1000);
+        assert_eq!(b3[0].length, 1000);
+        assert_eq!(b3[1].offset, 2000);
+        assert_eq!(b3[1].length, 1000);
+
+        let b4 = chunker.push(&vec![3u8; 500]).unwrap();
+        assert_eq!(b4.len(), 1);
+        assert_eq!(b4[0].offset, 3000);
+        assert_eq!(b4[0].length, 1000);
+
+        let last = chunker.finish().unwrap();
+        assert!(last.is_none());
+        assert_eq!(chunker.offset(), 4000);
+    }
+
+    #[test]
+    fn create_chunker_factory() {
+        let fixed_params = ChunkParams::fixed(1024);
+        let mut fixed_c = create_chunker(ChunkMode::Fixed, fixed_params);
+        let b = fixed_c.push(&vec![0u8; 2048]).unwrap();
+        assert_eq!(b.len(), 2);
+
+        let cdc_params = ChunkParams::default();
+        let cdc_c = create_chunker(ChunkMode::Cdc, cdc_params);
+        assert_eq!(cdc_c.offset(), 0);
+    }
+
+    #[test]
+    fn chunk_engine_reader_streaming() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(10_000).collect();
+        let expected_whole_hash = Hash::of(&data);
+
+        let mut collected_chunks = Vec::new();
+        let (whole_hash, total_bytes) = ChunkEngine::chunk_reader(
+            data.as_slice(),
+            ChunkMode::Fixed,
+            ChunkParams::fixed(4000),
+            1024,
+            |desc, bytes| {
+                assert_eq!(desc.length as usize, bytes.len());
+                assert_eq!(desc.hash.unwrap(), Hash::of(bytes));
+                collected_chunks.push(desc);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(total_bytes, 10_000);
+        assert_eq!(whole_hash, expected_whole_hash);
+        assert_eq!(collected_chunks.len(), 3);
+        assert_eq!(collected_chunks[0].length, 4000);
+        assert_eq!(collected_chunks[1].length, 4000);
+        assert_eq!(collected_chunks[2].length, 2000);
+    }
+
+    #[test]
+    fn reuse_stats_calculation() {
+        let h1 = Hash::of(b"chunk1");
+        let h2 = Hash::of(b"chunk2");
+        let h3 = Hash::of(b"chunk3");
+        let h4 = Hash::of(b"chunk4");
+
+        let orig = vec![
+            ChunkDesc::new(1000, h1),
+            ChunkDesc::new(1000, h2),
+            ChunkDesc::new(1000, h3),
+        ];
+
+        let modified = vec![
+            ChunkDesc::new(500, h4), // new chunk
+            ChunkDesc::new(1000, h2), // reused
+            ChunkDesc::new(1000, h3), // reused
+        ];
+
+        let stats = ReuseStats::compute(&orig, &modified);
+        assert_eq!(stats.total_bytes, 2500);
+        assert_eq!(stats.reused_bytes, 2000);
+        assert_eq!(stats.total_chunks, 3);
+        assert_eq!(stats.reused_chunks, 2);
+        assert!((stats.byte_reuse_ratio - 0.8).abs() < 1e-6);
+        assert!((stats.chunk_reuse_ratio - (2.0 / 3.0)).abs() < 1e-6);
     }
 }
