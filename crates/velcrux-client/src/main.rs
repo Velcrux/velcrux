@@ -85,6 +85,31 @@ enum Cmd {
         /// URL prefix, e.g. `velcrux://host:7443/data/`.
         url_prefix: String,
     },
+    /// Synchronize a directory tree incrementally (M9).
+    Sync {
+        /// Source directory or URL.
+        source: String,
+        /// Destination directory or URL.
+        destination: String,
+        /// Calculate changes and print summary without modifying destination.
+        #[arg(long)]
+        dry_run: bool,
+        /// Delete extraneous destination files after all commits succeed.
+        #[arg(long)]
+        delete_after: bool,
+        /// Alias for --delete-after.
+        #[arg(long)]
+        delete: bool,
+        /// Use content-defined chunking (FastCDC) instead of fixed chunking.
+        #[arg(long)]
+        cdc: bool,
+        /// Enable content-addressed chunk store deduplication.
+        #[arg(long)]
+        dedup: bool,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -287,6 +312,28 @@ async fn main() -> anyhow::Result<()> {
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
             run_list(&mut session, &url_prefix).await?;
+        }
+        Cmd::Sync {
+            source,
+            destination,
+            dry_run,
+            delete_after,
+            delete,
+            cdc,
+            dedup,
+            chunk_store,
+        } => {
+            run_sync(
+                source,
+                destination,
+                *dry_run,
+                *delete_after,
+                *delete,
+                *cdc,
+                *dedup,
+                chunk_store,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -529,3 +576,109 @@ async fn run_download(
     eprintln!("download: committed to {local:?}, hash {computed}");
     Ok(())
 }
+
+async fn run_sync(
+    source: &str,
+    destination: &str,
+    dry_run: bool,
+    delete_after: bool,
+    delete: bool,
+    cdc: bool,
+    dedup: bool,
+    chunk_store_path: &Option<PathBuf>,
+) -> anyhow::Result<()> {
+    use velcrux_core::chunking::{ChunkMode, ChunkParams};
+    use velcrux_core::storage::LocalChunkStore;
+    use velcrux_core::sync::{execute_directory_sync, DeleteMode, DirectorySyncOptions};
+
+    let src_path = PathBuf::from(source);
+    let dst_path = PathBuf::from(destination);
+
+    if !src_path.exists() {
+        anyhow::bail!("source path does not exist: {}", src_path.display());
+    }
+
+    let delete_mode = if delete_after || delete {
+        DeleteMode::DeleteAfter
+    } else {
+        DeleteMode::None
+    };
+
+    let mode = if cdc {
+        ChunkMode::Cdc
+    } else {
+        ChunkMode::Fixed
+    };
+
+    let params = if cdc {
+        ChunkParams::new(256 * 1024, 1024 * 1024, 4 * 1024 * 1024)
+            .ok_or_else(|| anyhow::anyhow!("invalid CDC chunk params"))?
+    } else {
+        ChunkParams::new(1024 * 1024, 1024 * 1024, 1024 * 1024)
+            .ok_or_else(|| anyhow::anyhow!("invalid fixed chunk params"))?
+    };
+
+    let options = DirectorySyncOptions {
+        mode,
+        params,
+        delete_mode,
+        dry_run,
+        read_buffer_size: 2 * 1024 * 1024,
+    };
+
+    let store = if dedup {
+        let store_dir = chunk_store_path
+            .clone()
+            .unwrap_or_else(|| dst_path.join(".velcrux-chunks"));
+        Some(LocalChunkStore::new(&store_dir).await?)
+    } else {
+        None
+    };
+
+    let result = execute_directory_sync(
+        &src_path,
+        &dst_path,
+        &options,
+        None,
+        store.as_ref(),
+    )
+    .map_err(|e| anyhow::anyhow!("sync failed: {e}"))?;
+
+    println!("{}", result.plan.summary.format_display());
+
+    if !dry_run {
+        println!();
+        println!(
+            "Transferred: {} files (committed: {}, deleted: {})",
+            result.files_transferred, result.files_committed, result.files_deleted
+        );
+        println!(
+            "Wire data: {} | Local reused: {} | Store reused: {}",
+            format_bytes(result.wire_bytes_transferred),
+            format_bytes(result.local_bytes_reused),
+            format_bytes(result.store_bytes_reused)
+        );
+    }
+
+    Ok(())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    const GIB: u64 = 1024 * MIB;
+    const TIB: u64 = 1024 * GIB;
+
+    if bytes >= TIB {
+        format!("{:.2} TB", bytes as f64 / TIB as f64)
+    } else if bytes >= GIB {
+        format!("{:.2} GB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.2} MB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.2} KB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
