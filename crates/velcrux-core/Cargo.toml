@@ -42,6 +42,10 @@ tracing-subscriber.workspace = true
 rustls.workspace = true
 tempfile         = "3"
 
+[[bench]]
+name = "microbenchmarks"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
