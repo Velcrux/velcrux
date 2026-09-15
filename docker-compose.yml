@@ -1,0 +1,36 @@
+# ==============================================================================
+# Velcrux Docker Compose Deployment (docs/OPERATIONS.md §9)
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  velcruxd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: velcruxd:latest
+    container_name: velcruxd
+    restart: unless-stopped
+    ports:
+      # QUIC Bulk Transfer (must be UDP)
+      - "7443:7443/udp"
+      # Prometheus /metrics endpoint (HTTP/TCP)
+      - "9443:9443/tcp"
+    volumes:
+      # Data storage root and staging (must be on the same persistent volume)
+      - velcrux-data:/data/velcrux
+      # SQLite WAL state database (transfer checkpoints & bitmaps)
+      - velcrux-state:/var/lib/velcrux
+      # Configuration, certificates, and authorization grants
+      - velcrux-config:/etc/velcrux
+    environment:
+      - RUST_LOG=info,velcrux_server=debug,velcrux_core=debug
+
+volumes:
+  velcrux-data:
+    name: velcrux-data
+  velcrux-state:
+    name: velcrux-state
+  velcrux-config:
+    name: velcrux-config

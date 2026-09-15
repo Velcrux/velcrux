@@ -1,0 +1,19 @@
+# Velcrux Authorization Grants Reference (docs/SECURITY.md §4)
+#
+# Deny-by-default: with no grants matching an identity, every operation is denied.
+# Permissions: "upload", "download", "list", "delete", "sync", "resume", "admin"
+
+[[grant]]
+identity    = "admin"
+path        = "/"
+permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"]
+
+[[grant]]
+identity    = "backup-agent"
+path        = "/backups"
+permissions = ["upload", "download", "list", "sync", "resume"]
+
+[[grant]]
+identity    = "readonly-replica"
+path        = "/datasets"
+permissions = ["download", "list", "sync"]
