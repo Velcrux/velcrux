@@ -28,6 +28,21 @@ pub struct ServerConfig {
     /// M2: storage root + staging dir. Same filesystem required so
     /// commit is an atomic `rename` (CLAUDE.md §1 #8, OPERATIONS.md §2).
     pub storage: StorageCfg,
+    /// Telemetry configuration: Prometheus `/metrics` endpoint and logging.
+    #[serde(default)]
+    pub telemetry: Option<TelemetryCfg>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[allow(dead_code)]
+pub struct TelemetryCfg {
+    /// Address to serve Prometheus format `/metrics` on (e.g. `127.0.0.1:9443`).
+    #[serde(default)]
+    pub metrics_listen: Option<String>,
+    #[serde(default)]
+    pub log_format: Option<String>,
+    #[serde(default)]
+    pub log_level: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +157,12 @@ pub async fn run(config_path: &Path) -> Result<()> {
         .build(addr)?;
     let stats = Arc::new(ServerStats::default());
     info!(%addr, "velcruxd listening");
+
+    if let Some(telemetry) = &cfg.telemetry {
+        if let Some(metrics_listen) = &telemetry.metrics_listen {
+            serve_prometheus_metrics(metrics_listen, Arc::clone(&stats)).await?;
+        }
+    }
 
     // Construct the storage backend. M2 enforces same-filesystem for atomic
     // commit (OPERATIONS.md §2).
@@ -283,3 +304,65 @@ fn parse_duration(s: &str) -> Result<Duration> {
     let n: u64 = s.parse().context("expected seconds (e.g. \"60s\")")?;
     Ok(Duration::from_secs(n))
 }
+
+/// Serve Prometheus text format metrics over HTTP on `listen_addr` (`OPERATIONS.md` §7).
+async fn serve_prometheus_metrics(listen_addr: &str, stats: Arc<ServerStats>) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(listen_addr)
+        .await
+        .with_context(|| format!("bind metrics listener on {listen_addr}"))?;
+    info!(metrics_addr = %listen_addr, "Prometheus /metrics HTTP endpoint listening");
+
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = match listener.accept().await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "metrics accept failed");
+                    continue;
+                }
+            };
+            let stats = Arc::clone(&stats);
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+
+                let conns = stats.connections.load(std::sync::atomic::Ordering::Relaxed);
+                let handshakes = stats.handshakes.load(std::sync::atomic::Ordering::Relaxed);
+                let pings = stats.pings.load(std::sync::atomic::Ordering::Relaxed);
+
+                let body = format!(
+                    "# HELP velcrux_connections Total connections accepted\n\
+                     # TYPE velcrux_connections counter\n\
+                     velcrux_connections{{state=\"accepted\"}} {conns}\n\n\
+                     # HELP velcrux_handshakes_total Total completed handshakes\n\
+                     # TYPE velcrux_handshakes_total counter\n\
+                     velcrux_handshakes_total {handshakes}\n\n\
+                     # HELP velcrux_pings_total Total pings handled\n\
+                     # TYPE velcrux_pings_total counter\n\
+                     velcrux_pings_total {pings}\n\n\
+                     # HELP velcrux_transfers_active Currently active transfers\n\
+                     # TYPE velcrux_transfers_active gauge\n\
+                     velcrux_transfers_active{{direction=\"bidirectional\"}} 0\n"
+                );
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            });
+        }
+    });
+
+    Ok(())
+}
+

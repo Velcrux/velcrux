@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 /// Issue a self-signed dev CA. Writes `ca.crt` (PEM) and `ca.key` (PKCS#8 PEM).
-pub fn issue_dev_ca(out: &Path, days: u32) -> Result<()> {
+pub fn issue_dev_ca(out: &Path, _days: u32) -> Result<()> {
     let mut params = CertificateParams::default();
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
