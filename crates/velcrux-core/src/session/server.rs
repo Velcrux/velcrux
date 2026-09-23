@@ -451,7 +451,9 @@ async fn handle_transfer_create(
     };
     let (transfer_id, resumed, bytes_reusable) = match state {
         Some(store) => {
-            match store.get_transfer_by_idempotency(crate::state::Role::Server, &create.idempotency_key) {
+            match store
+                .get_transfer_by_idempotency(crate::state::Role::Server, &create.idempotency_key)
+            {
                 Ok(existing) => {
                     let reusable = match store.read_bitmap(existing.transfer_id) {
                         Ok(bm) => bm.bytes_completed(),
@@ -552,22 +554,20 @@ async fn handle_transfer_create(
     }
 
     let res = match create.op {
-        TransferOp::Upload => {
-            crate::transfer::server_upload_session_with_state(
-                conn,
-                backend,
-                send,
-                recv,
-                state.clone(),
-                resumed,
-                transfer_id,
-                &dst,
-                create.file_size,
-                create.file_hash,
-            )
-            .await
-            .map(|_| ())
-        }
+        TransferOp::Upload => crate::transfer::server_upload_session_with_state(
+            conn,
+            backend,
+            send,
+            recv,
+            state.clone(),
+            resumed,
+            transfer_id,
+            &dst,
+            create.file_size,
+            create.file_hash,
+        )
+        .await
+        .map(|_| ()),
         TransferOp::Download => {
             let file_hash = match backend.stat(&dst).await? {
                 Some(m) => m.file_hash,
@@ -650,7 +650,9 @@ async fn handle_resume(
 
     let record = match store.get_transfer(resume.transfer_id) {
         Ok(r) => r,
-        Err(_) => match store.get_transfer_by_idempotency(crate::state::Role::Server, &resume.idempotency_key) {
+        Err(_) => match store
+            .get_transfer_by_idempotency(crate::state::Role::Server, &resume.idempotency_key)
+        {
             Ok(r) => r,
             Err(_) => {
                 let err = crate::protocol::message::ErrorMsg::new(
@@ -708,22 +710,20 @@ async fn handle_resume(
 
     let dst = VPath::validate(&record.remote_path)?;
     let res = match record.direction {
-        Direction::Upload => {
-            crate::transfer::server_upload_session_with_state(
-                conn,
-                backend,
-                send,
-                recv,
-                state.clone(),
-                true,
-                record.transfer_id,
-                &dst,
-                record.file_size,
-                record.file_hash,
-            )
-            .await
-            .map(|_| ())
-        }
+        Direction::Upload => crate::transfer::server_upload_session_with_state(
+            conn,
+            backend,
+            send,
+            recv,
+            state.clone(),
+            true,
+            record.transfer_id,
+            &dst,
+            record.file_size,
+            record.file_hash,
+        )
+        .await
+        .map(|_| ()),
         Direction::Download => {
             crate::transfer::server_download_session(
                 conn,

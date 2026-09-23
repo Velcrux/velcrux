@@ -439,7 +439,8 @@ impl StorageBackend for LocalFilesystemBackend {
         p: &VPath,
         size_hint: u64,
     ) -> Result<StagingWriter, VelcruxError> {
-        self.open_staging_resumable(transfer_id, p, size_hint, false).await
+        self.open_staging_resumable(transfer_id, p, size_hint, false)
+            .await
     }
 
     async fn open_staging_resumable(
@@ -462,7 +463,10 @@ impl StorageBackend for LocalFilesystemBackend {
             .open(&path)
             .await?;
         let written = if resumed && existed {
-            tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0)
+            tokio::fs::metadata(&path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0)
         } else {
             0
         };

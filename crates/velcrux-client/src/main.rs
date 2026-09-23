@@ -211,7 +211,6 @@ fn parse_url_with_path(s: &str) -> anyhow::Result<(SocketAddr, String)> {
     let addr = (host, port)
         .to_socket_addrs()
         .context("invalid host:port")?
-        .into_iter()
         .next()
         .context("no addresses resolved for host")?;
     Ok((addr, path))
@@ -452,12 +451,12 @@ async fn run_upload(
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
         anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
     }
-    let created = TransferCreated::decode(&frame.payload)?;
+    let created = TransferCreated::decode(frame.payload)?;
     let frame = session.recv_frame().await?;
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
         anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
     }
-    let _plan = TransferPlan::decode(&frame.payload)?;
+    let _plan = TransferPlan::decode(frame.payload)?;
 
     let begin = TransferBegin {
         transfer_id: created.transfer_id,
@@ -478,10 +477,21 @@ async fn run_upload(
         let start_time = std::time::Instant::now();
         while let Some(delta) = progress_rx.recv().await {
             transferred = transferred.saturating_add(delta);
-            if !is_json && (last_print.elapsed() >= std::time::Duration::from_millis(200) || transferred >= file_size) {
+            if !is_json
+                && (last_print.elapsed() >= std::time::Duration::from_millis(200)
+                    || transferred >= file_size)
+            {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
-                let pct = if file_size > 0 { (transferred as f64 / file_size as f64) * 100.0 } else { 100.0 };
+                let rate = if elapsed_secs > 0.0 {
+                    transferred as f64 / elapsed_secs
+                } else {
+                    0.0
+                };
+                let pct = if file_size > 0 {
+                    (transferred as f64 / file_size as f64) * 100.0
+                } else {
+                    100.0
+                };
                 eprint!(
                     "\r[{}] {} / {} ({:.1}%) — {}/s",
                     tid_str,
@@ -565,12 +575,12 @@ async fn run_resume(
     let frame = session.recv_frame().await?;
     if frame.type_byte != velcrux_core::protocol::message::RESUME_STATE {
         if frame.type_byte == velcrux_core::protocol::message::ERROR {
-            let err = velcrux_core::protocol::message::ErrorMsg::decode(&frame.payload)?;
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
             anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
         }
         anyhow::bail!("expected RESUME_STATE, got 0x{:02x}", frame.type_byte);
     }
-    let resume_state = ResumeState::decode(&frame.payload)?;
+    let resume_state = ResumeState::decode(frame.payload)?;
 
     let local_path: PathBuf = if let Some(p) = local_override {
         p.clone()
@@ -610,7 +620,8 @@ async fn run_resume(
     }
 
     let expected_hash = {
-        let mut f = std::fs::File::open(&local_path).with_context(|| format!("open {local_path:?}"))?;
+        let mut f =
+            std::fs::File::open(&local_path).with_context(|| format!("open {local_path:?}"))?;
         let mut h = velcrux_core::HashHasher::new();
         let mut buf = vec![0u8; 2 * 1024 * 1024];
         loop {
@@ -646,10 +657,21 @@ async fn run_resume(
         let start_time = std::time::Instant::now();
         while let Some(delta) = progress_rx.recv().await {
             transferred = transferred.saturating_add(delta);
-            if !is_json && (last_print.elapsed() >= std::time::Duration::from_millis(200) || transferred >= file_size) {
+            if !is_json
+                && (last_print.elapsed() >= std::time::Duration::from_millis(200)
+                    || transferred >= file_size)
+            {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
-                let pct = if file_size > 0 { (transferred as f64 / file_size as f64) * 100.0 } else { 100.0 };
+                let rate = if elapsed_secs > 0.0 {
+                    transferred as f64 / elapsed_secs
+                } else {
+                    0.0
+                };
+                let pct = if file_size > 0 {
+                    (transferred as f64 / file_size as f64) * 100.0
+                } else {
+                    100.0
+                };
                 eprint!(
                     "\r[{}] {} / {} ({:.1}%) — {}/s",
                     tid_str,
@@ -725,7 +747,7 @@ async fn run_stat(
     if frame.type_byte != velcrux_core::protocol::message::STAT_RESULT {
         anyhow::bail!("expected STAT_RESULT, got 0x{:02x}", frame.type_byte);
     }
-    let r = StatResult::decode(&frame.payload)?;
+    let r = StatResult::decode(frame.payload)?;
     if !r.found {
         anyhow::bail!("transfer not found: {}", transfer_id_str);
     }
@@ -753,11 +775,7 @@ async fn run_stat(
     Ok(())
 }
 
-async fn run_list(
-    cli: &Cli,
-    session: &mut ClientSession,
-    url_prefix: &str,
-) -> anyhow::Result<()> {
+async fn run_list(cli: &Cli, session: &mut ClientSession, url_prefix: &str) -> anyhow::Result<()> {
     use velcrux_core::protocol::message::{ListQuery, ListResult, Message};
     use velcrux_core::session::encode_message;
 
@@ -770,7 +788,7 @@ async fn run_list(
     if frame.type_byte != velcrux_core::protocol::message::LIST_RESULT {
         anyhow::bail!("expected LIST_RESULT, got 0x{:02x}", frame.type_byte);
     }
-    let r = ListResult::decode(&frame.payload)?;
+    let r = ListResult::decode(frame.payload)?;
     if cli_log_json(cli) {
         let arr: Vec<_> = r
             .entries
@@ -861,12 +879,12 @@ async fn run_download(
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
         anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
     }
-    let created = TransferCreated::decode(&frame.payload)?;
+    let created = TransferCreated::decode(frame.payload)?;
     let frame = session.recv_frame().await?;
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
         anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
     }
-    let plan = TransferPlan::decode(&frame.payload)?;
+    let plan = TransferPlan::decode(frame.payload)?;
 
     let begin = TransferBegin {
         transfer_id: created.transfer_id,
@@ -890,8 +908,16 @@ async fn run_download(
             transferred = transferred.saturating_add(delta);
             if !is_json && last_print.elapsed() >= std::time::Duration::from_millis(200) {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
-                let pct = if total_bytes > 0 { (transferred as f64 / total_bytes as f64) * 100.0 } else { 0.0 };
+                let rate = if elapsed_secs > 0.0 {
+                    transferred as f64 / elapsed_secs
+                } else {
+                    0.0
+                };
+                let pct = if total_bytes > 0 {
+                    (transferred as f64 / total_bytes as f64) * 100.0
+                } else {
+                    0.0
+                };
                 eprint!(
                     "\r[{}] {} / {} ({:.1}%) — {}/s",
                     tid_str,
@@ -939,6 +965,7 @@ async fn run_download(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sync(
     source: &str,
     destination: &str,

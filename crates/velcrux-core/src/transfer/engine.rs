@@ -254,13 +254,19 @@ pub async fn client_upload_with_state(
             }
 
             if let Some(s) = &store {
-                if bitmap.bytes_completed().saturating_sub(last_checkpoint_bytes) >= 16 * 1024 * 1024 {
+                if bitmap
+                    .bytes_completed()
+                    .saturating_sub(last_checkpoint_bytes)
+                    >= 16 * 1024 * 1024
+                {
                     let _ = s.write_bitmap(transfer_id, &bitmap);
                     last_checkpoint_bytes = bitmap.bytes_completed();
                 }
             }
 
-            next_chunk = bitmap.first_missing_from(next_chunk + 1).unwrap_or(total_chunks);
+            next_chunk = bitmap
+                .first_missing_from(next_chunk + 1)
+                .unwrap_or(total_chunks);
         }
         let _ = data_send.finish().await;
     } else {
@@ -280,8 +286,13 @@ pub async fn client_upload_with_state(
                         hash,
                         payload,
                     } => {
-                        let bytes =
-                            encode_data_frame(offset, length, DataFrameFlags::NONE, &hash, &payload);
+                        let bytes = encode_data_frame(
+                            offset,
+                            length,
+                            DataFrameFlags::NONE,
+                            &hash,
+                            &payload,
+                        );
                         data_send.write_all(Bytes::from(bytes)).await?;
                         if let Some(tx) = &progress_clone {
                             let _ = tx.try_send(length as u64);
@@ -799,7 +810,15 @@ pub async fn client_download(
     transfer_id: TransferId,
     local_path: PathBuf,
 ) -> Result<Hash> {
-    client_download_with_progress(conn, control_send, control_recv, transfer_id, local_path, None).await
+    client_download_with_progress(
+        conn,
+        control_send,
+        control_recv,
+        transfer_id,
+        local_path,
+        None,
+    )
+    .await
 }
 
 /// Client-side download with optional live progress channel.

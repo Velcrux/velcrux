@@ -31,9 +31,7 @@ use velcrux_core::state::{
 };
 use velcrux_core::storage::{LocalFilesystemBackend, StorageBackend, VPath};
 use velcrux_core::transfer::M3_CHUNK_SIZE;
-use velcrux_core::transport::quic::{
-    QuicConnection, ServerBuilder, TransportConfigTunables,
-};
+use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
 use velcrux_core::transport::Transport;
 use velcrux_core::util::{Hash, TransferId};
 
@@ -290,7 +288,10 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
     std::fs::write(&upload_local, &file_bytes).unwrap();
     let expected_hash = Hash::of(&file_bytes);
 
-    let upload_url = format!("velcrux://127.0.0.1:{}/data/uploaded.bin", server_handle.addr.port());
+    let upload_url = format!(
+        "velcrux://127.0.0.1:{}/data/uploaded.bin",
+        server_handle.addr.port()
+    );
     let upload_output = Command::new(&bin)
         .arg("--ca")
         .arg(&pki.ca_cert_path)
@@ -312,8 +313,14 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
         String::from_utf8_lossy(&upload_output.stderr)
     );
     let upload_stdout = String::from_utf8_lossy(&upload_output.stdout);
-    assert!(upload_stdout.contains("transfer_id:"), "stdout: {upload_stdout}");
-    assert!(upload_stdout.contains("server hash matches: true"), "stdout: {upload_stdout}");
+    assert!(
+        upload_stdout.contains("transfer_id:"),
+        "stdout: {upload_stdout}"
+    );
+    assert!(
+        upload_stdout.contains("server hash matches: true"),
+        "stdout: {upload_stdout}"
+    );
 
     // Extract transfer_id
     let transfer_id = upload_stdout
@@ -329,11 +336,15 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
     assert_eq!(server_content.len(), file_bytes.len());
     assert_eq!(Hash::of(&server_content), expected_hash);
 
-    let server_staging = staging_root.join(format!("{transfer_id}-data_uploaded.bin.velcrux-partial"));
+    let server_staging =
+        staging_root.join(format!("{transfer_id}-data_uploaded.bin.velcrux-partial"));
     assert!(!server_staging.exists(), "staging file was not cleaned up!");
 
     let rec = state_store.get_transfer(TransferId::from_string(transfer_id).unwrap());
-    eprintln!("server state_store.get_transfer for {transfer_id}: {:?}", rec);
+    eprintln!(
+        "server state_store.get_transfer for {transfer_id}: {:?}",
+        rec
+    );
 
     // 3. STAT test (Human & JSON)
     let stat_output = Command::new(&bin)
@@ -356,8 +367,14 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
         String::from_utf8_lossy(&stat_output.stdout)
     );
     let stat_stdout = String::from_utf8_lossy(&stat_output.stdout);
-    assert!(stat_stdout.contains(transfer_id), "stat stdout: {stat_stdout}");
-    assert!(stat_stdout.contains("committed"), "stat stdout: {stat_stdout}");
+    assert!(
+        stat_stdout.contains(transfer_id),
+        "stat stdout: {stat_stdout}"
+    );
+    assert!(
+        stat_stdout.contains("committed"),
+        "stat stdout: {stat_stdout}"
+    );
 
     let stat_json_output = Command::new(&bin)
         .arg("--ca")
@@ -432,7 +449,10 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
         .arg("--key")
         .arg(&pki.client_key_path)
         .arg("list")
-        .arg(format!("velcrux://127.0.0.1:{}/data/", server_handle.addr.port()))
+        .arg(format!(
+            "velcrux://127.0.0.1:{}/data/",
+            server_handle.addr.port()
+        ))
         .output()
         .expect("exec list");
     assert!(
@@ -453,7 +473,10 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
         .arg(&pki.client_key_path)
         .arg("--json")
         .arg("list")
-        .arg(format!("velcrux://127.0.0.1:{}/data/", server_handle.addr.port()))
+        .arg(format!(
+            "velcrux://127.0.0.1:{}/data/",
+            server_handle.addr.port()
+        ))
         .output()
         .expect("exec list --json");
     assert!(list_json_output.status.success());
@@ -601,7 +624,10 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
 
     // Verify committed file on server filesystem
     let server_resumed_file = storage_root.join("data").join("resumed.bin");
-    assert!(server_resumed_file.exists(), "resumed file should exist on server");
+    assert!(
+        server_resumed_file.exists(),
+        "resumed file should exist on server"
+    );
     let server_resumed_content = std::fs::read(&server_resumed_file).unwrap();
     assert_eq!(server_resumed_content.len(), resume_size as usize);
     assert_eq!(Hash::of(&server_resumed_content), resume_hash);
