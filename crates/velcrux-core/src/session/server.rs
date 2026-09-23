@@ -19,11 +19,9 @@ use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
 use crate::state::{Direction, StateStore, TransferStatus};
-use crate::storage::LocalFilesystemBackend;
+use crate::storage::{LocalFilesystemBackend, VPath};
 use crate::transport::identity::Identity;
 use crate::transport::Connection;
-use crate::util::TransferId;
-use std::path::Path;
 use std::sync::Arc;
 
 use super::{read_frame, write_frame};
@@ -316,6 +314,7 @@ impl ServerConn {
                                 conn,
                                 &self.backend,
                                 self.authorizer.as_ref(),
+                                &self.state,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -325,6 +324,23 @@ impl ServerConn {
                             {
                                 // Best-effort error reply; then continue.
                                 tracing::warn!(error = %e, "transfer dispatch failed");
+                            }
+                        }
+                        x if x == crate::protocol::message::RESUME => {
+                            if let Err(e) = handle_resume(
+                                conn,
+                                &self.backend,
+                                self.authorizer.as_ref(),
+                                &self.state,
+                                identity,
+                                send.as_mut(),
+                                recv.as_mut(),
+                                &frame.payload,
+                                frame.request_id,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "resume dispatch failed");
                             }
                         }
                         x if x == crate::protocol::message::STAT => {
@@ -398,6 +414,7 @@ async fn handle_transfer_create(
     conn: &dyn Connection,
     backend: &LocalFilesystemBackend,
     authorizer: &dyn Authorizer,
+    state: &Option<Arc<dyn StateStore>>,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -432,7 +449,22 @@ async fn handle_transfer_create(
             return Ok(());
         }
     };
-    let transfer_id = TransferId::generate();
+    let (transfer_id, resumed, bytes_reusable) = match state {
+        Some(store) => {
+            match store.get_transfer_by_idempotency(crate::state::Role::Server, &create.idempotency_key) {
+                Ok(existing) => {
+                    let reusable = match store.read_bitmap(existing.transfer_id) {
+                        Ok(bm) => bm.bytes_completed(),
+                        Err(_) => 0,
+                    };
+                    (existing.transfer_id, true, reusable)
+                }
+                Err(_) => (TransferId::generate(), false, 0),
+            }
+        }
+        None => (TransferId::generate(), false, 0),
+    };
+
     let bytes_total = match create.op {
         TransferOp::Upload => create.file_size,
         TransferOp::Download => match backend.stat(&dst).await? {
@@ -447,16 +479,56 @@ async fn handle_transfer_create(
             }
         },
     };
+
+    if let Some(store) = state {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let record = crate::state::TransferRecord {
+            transfer_id,
+            idempotency_key: create.idempotency_key.clone(),
+            role: crate::state::Role::Server,
+            direction: match create.op {
+                TransferOp::Upload => Direction::Upload,
+                TransferOp::Download => Direction::Download,
+            },
+            status: TransferStatus::Active,
+            remote_path: create.dst_path.clone(),
+            local_path: String::new(),
+            file_size: bytes_total,
+            file_hash: create.file_hash,
+            verified_up_to: 0,
+            last_checkpoint_ms: now,
+            bytes_completed: bytes_reusable,
+            staging_relpath: format!("{}/{}", transfer_id, dst.as_path().display()),
+            created_ms: now,
+            updated_ms: now,
+        };
+        if let Err(e) = store.upsert_transfer(&record) {
+            tracing::warn!("server: upsert_transfer failed for {transfer_id}: {e}");
+        }
+        if create.op == TransferOp::Upload {
+            let _ = store.write_journal(&crate::state::CommitJournalEntry {
+                transfer_id,
+                file_id: 1,
+                remote_path: create.dst_path.clone(),
+                status: crate::state::CommitStatus::Pending,
+                updated_ms: now,
+            });
+        }
+    }
+
     let created = TransferCreated {
         transfer_id,
-        resumed: false,
+        resumed,
         max_chunk_size: MAX_CHUNK_SIZE,
     };
     let plan = TransferPlan {
         transfer_id,
         bytes_total,
-        bytes_to_transfer: bytes_total,
-        bytes_reusable: 0,
+        bytes_to_transfer: bytes_total.saturating_sub(bytes_reusable),
+        bytes_reusable,
     };
     write_frame(send, &Message::TransferCreated(created), 0).await?;
     write_frame(send, &Message::TransferPlan(plan), 0).await?;
@@ -479,19 +551,22 @@ async fn handle_transfer_create(
         ));
     }
 
-    match create.op {
+    let res = match create.op {
         TransferOp::Upload => {
-            crate::transfer::server_upload_session(
+            crate::transfer::server_upload_session_with_state(
                 conn,
                 backend,
                 send,
                 recv,
+                state.clone(),
+                resumed,
                 transfer_id,
                 &dst,
                 create.file_size,
                 create.file_hash,
             )
-            .await?;
+            .await
+            .map(|_| ())
         }
         TransferOp::Download => {
             let file_hash = match backend.stat(&dst).await? {
@@ -515,19 +590,169 @@ async fn handle_transfer_create(
                 bytes_total,
                 file_hash,
             )
-            .await?;
+            .await
+        }
+    };
+
+    if let Some(store) = state {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if res.is_ok() {
+            if let Ok(mut record) = store.get_transfer(transfer_id) {
+                record.status = TransferStatus::Committed;
+                record.bytes_completed = bytes_total;
+                record.verified_up_to = bytes_total;
+                record.updated_ms = now;
+                let _ = store.update_transfer(&record);
+            }
+            if create.op == TransferOp::Upload {
+                let _ = store.mark_journal_committed(transfer_id, 1);
+            }
         }
     }
 
-    // We don't write a COMMITTED reply here — the per-transfer session
-    // does it as part of its own VERIFY/COMMIT exchange.
     let _ = Committed {
         transfer_id,
         files: 1,
     };
     let _ = Commit { transfer_id };
 
-    Ok(())
+    res
+}
+
+async fn handle_resume(
+    conn: &dyn Connection,
+    backend: &Arc<LocalFilesystemBackend>,
+    authorizer: &dyn Authorizer,
+    state: &Option<Arc<dyn StateStore>>,
+    identity: &Identity,
+    send: &mut dyn crate::transport::BiSendStream,
+    recv: &mut dyn crate::transport::BiRecvStream,
+    payload: &[u8],
+    request_id: u64,
+) -> Result<()> {
+    use crate::protocol::message::{Message, Resume, ResumeState, TransferBegin};
+
+    let resume = match Resume::decode(payload) {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    let Some(store) = state else {
+        let err = crate::protocol::message::ErrorMsg::new(
+            crate::protocol::error::ErrorCode::FileNotFound,
+            "not found",
+        );
+        let _ = write_frame(send, &Message::Error(err), request_id).await;
+        return Ok(());
+    };
+
+    let record = match store.get_transfer(resume.transfer_id) {
+        Ok(r) => r,
+        Err(_) => match store.get_transfer_by_idempotency(crate::state::Role::Server, &resume.idempotency_key) {
+            Ok(r) => r,
+            Err(_) => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                let _ = write_frame(send, &Message::Error(err), request_id).await;
+                return Ok(());
+            }
+        },
+    };
+
+    let op = match record.direction {
+        Direction::Upload => Op::Resume,
+        Direction::Download => Op::Download,
+    };
+    if authorizer.check(identity, op, &record.remote_path).is_err() {
+        let err = crate::protocol::message::ErrorMsg::new(
+            crate::protocol::error::ErrorCode::FileNotFound,
+            "not found",
+        );
+        let _ = write_frame(send, &Message::Error(err), request_id).await;
+        return Ok(());
+    }
+
+    let bitmap = store.read_bitmap(record.transfer_id).unwrap_or_default();
+    let rs = ResumeState {
+        transfer_id: record.transfer_id,
+        staging_relpath: record.staging_relpath.clone(),
+        file_size: record.file_size,
+        bytes_completed: bitmap.bytes_completed(),
+        verified_up_to: record.verified_up_to,
+        file_hash: record.file_hash,
+        completed_chunks: bitmap.indices().collect(),
+    };
+    write_frame(send, &Message::ResumeState(rs), request_id).await?;
+
+    // Await TRANSFER_BEGIN.
+    let frame = read_frame(recv)
+        .await?
+        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+    if frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
+        ));
+    }
+    let begin = TransferBegin::decode(&frame.payload)?;
+    if begin.transfer_id != record.transfer_id {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition(
+                "TRANSFER_BEGIN transfer_id mismatch",
+            ),
+        ));
+    }
+
+    let dst = VPath::validate(&record.remote_path)?;
+    let res = match record.direction {
+        Direction::Upload => {
+            crate::transfer::server_upload_session_with_state(
+                conn,
+                backend,
+                send,
+                recv,
+                state.clone(),
+                true,
+                record.transfer_id,
+                &dst,
+                record.file_size,
+                record.file_hash,
+            )
+            .await
+            .map(|_| ())
+        }
+        Direction::Download => {
+            crate::transfer::server_download_session(
+                conn,
+                backend,
+                send,
+                recv,
+                record.transfer_id,
+                &dst,
+                record.file_size,
+                record.file_hash,
+            )
+            .await
+        }
+    };
+
+    if res.is_ok() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if let Ok(mut r) = store.get_transfer(record.transfer_id) {
+            r.status = TransferStatus::Committed;
+            r.bytes_completed = record.file_size;
+            r.verified_up_to = record.file_size;
+            r.updated_ms = now;
+            let _ = store.update_transfer(&r);
+        }
+    }
+    res
 }
 
 /// M3 server-side handler for `STAT`. Looks up the transfer in the
@@ -613,9 +838,10 @@ async fn handle_list(
         Ok(q) => q,
         Err(_) => return,
     };
+    let clean_prefix = q.url_prefix.trim_start_matches('/');
     let entries: Vec<StatResult> = match state {
         Some(store) => {
-            match store.list_transfers_by_path(crate::state::Role::Server, &q.url_prefix) {
+            match store.list_transfers_by_path(crate::state::Role::Server, clean_prefix) {
                 Ok(rows) => rows
                     .into_iter()
                     .filter(|r| authorizer.check(identity, Op::List, &r.remote_path).is_ok())

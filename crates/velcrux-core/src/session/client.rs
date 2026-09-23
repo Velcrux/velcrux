@@ -11,7 +11,7 @@ use rand::RngCore;
 
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
-use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Limits, Message, Ping, BYE};
+use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Limits, Message, Ping};
 use crate::transport::{BiRecvStream, BiSendStream, Connection, SharedTransport};
 
 use super::{read_frame, write_frame};
@@ -217,7 +217,7 @@ impl ClientSession {
             .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
         let mut buf = header_start.to_vec();
         let mut varint_len = 1usize;
-        while (buf[4] & 0x80) != 0 {
+        while (buf[buf.len() - 1] & 0x80) != 0 {
             let next = self
                 .recv
                 .read_exact(1)

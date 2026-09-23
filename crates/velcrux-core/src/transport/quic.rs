@@ -282,6 +282,13 @@ pub struct QuicTransport {
     endpoint: Endpoint,
 }
 
+impl QuicTransport {
+    /// Local address the transport endpoint is bound to.
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.endpoint.local_addr()
+    }
+}
+
 #[async_trait]
 impl Transport for QuicTransport {
     type Conn = QuicConnection;

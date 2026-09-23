@@ -61,8 +61,9 @@ pub use sync::{
     SyncDecision, SyncError, SyncPlan,
 };
 pub use transfer::{
-    client_download, client_upload, server_download_session, server_staging_path,
-    server_upload_session, PipelineConfig, TransferDir, TransferKind, TransferRequest,
+    client_download, client_download_with_progress, client_upload, client_upload_with_state,
+    server_download_session, server_staging_path, server_upload_session,
+    server_upload_session_with_state, PipelineConfig, TransferDir, TransferKind, TransferRequest,
 };
 pub use transport::{Connection, SharedTransport};
 pub use util::{Hash, HashAlgorithm, HashHasher};

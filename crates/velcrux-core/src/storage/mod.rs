@@ -210,6 +210,18 @@ pub trait StorageBackend: Send + Sync {
         size_hint: u64,
     ) -> Result<StagingWriter, VelcruxError>;
 
+    /// Open a staging file for writing, optionally preserving existing data if resuming.
+    async fn open_staging_resumable(
+        &self,
+        transfer_id: &str,
+        p: &VPath,
+        size_hint: u64,
+        resumed: bool,
+    ) -> Result<StagingWriter, VelcruxError> {
+        let _ = resumed;
+        self.open_staging(transfer_id, p, size_hint).await
+    }
+
     /// Atomically commit a staged file.
     async fn commit(
         &self,
@@ -425,22 +437,39 @@ impl StorageBackend for LocalFilesystemBackend {
         &self,
         transfer_id: &str,
         p: &VPath,
+        size_hint: u64,
+    ) -> Result<StagingWriter, VelcruxError> {
+        self.open_staging_resumable(transfer_id, p, size_hint, false).await
+    }
+
+    async fn open_staging_resumable(
+        &self,
+        transfer_id: &str,
+        p: &VPath,
         _size_hint: u64,
+        resumed: bool,
     ) -> Result<StagingWriter, VelcruxError> {
         let path = self.staging_path(transfer_id, p);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
+        let existed = tokio::fs::try_exists(&path).await.unwrap_or(false);
+        let truncate = if resumed && existed { false } else { true };
         let file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .truncate(true)
+            .truncate(truncate)
             .open(&path)
             .await?;
+        let written = if resumed && existed {
+            tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
         Ok(StagingWriter {
             staging: Staging::new(path),
             file,
-            written: 0,
+            written,
         })
     }
 

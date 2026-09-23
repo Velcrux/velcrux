@@ -39,6 +39,14 @@ struct Cli {
     #[arg(long, default_value = "text", global = true)]
     log_format: String,
 
+    /// Output machine-readable JSON on stdout.
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Path to client state SQLite database.
+    #[arg(long, env = "VELCRUX_STATE_DB", global = true)]
+    state_db: Option<PathBuf>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -69,16 +77,28 @@ enum Cmd {
     Resume {
         /// Transfer id (26-character ULID).
         transfer_id: String,
+        /// Target server URL (e.g. `velcrux://host:port/`).
+        #[arg(long, default_value = "velcrux://localhost:7443/")]
+        server: String,
+        /// Local file path (required if not found in client state store).
+        #[arg(long)]
+        local: Option<PathBuf>,
     },
     /// Cancel an in-progress transfer. M3.
     Cancel {
         /// Transfer id (26-character ULID).
         transfer_id: String,
+        /// Target server URL (e.g. `velcrux://host:port/`).
+        #[arg(long, default_value = "velcrux://localhost:7443/")]
+        server: String,
     },
     /// Show state of a single transfer. M3.
     Stat {
         /// Transfer id (26-character ULID).
         transfer_id: String,
+        /// Target server URL (e.g. `velcrux://host:port/`).
+        #[arg(long, default_value = "velcrux://localhost:7443/")]
+        server: String,
     },
     /// List transfers by URL prefix. M3.
     List {
@@ -122,9 +142,16 @@ fn init_tracing(format: &str) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,velcrux_core=debug"));
     if format == "json" {
-        let _ = fmt().with_env_filter(filter).json().try_init();
+        let _ = fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .json()
+            .try_init();
     } else {
-        let _ = fmt().with_env_filter(filter).try_init();
+        let _ = fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .try_init();
     }
 }
 
@@ -220,6 +247,39 @@ fn build_transport(cli: &Cli) -> anyhow::Result<SharedTransport> {
     Ok(transport)
 }
 
+fn open_client_state_store(cli: &Cli) -> Option<Arc<dyn velcrux_core::state::StateStore>> {
+    if let Some(path) = &cli.state_db {
+        if let Ok(store) = velcrux_core::state::SqliteStateStore::new(path) {
+            return Some(Arc::new(store));
+        }
+    } else if let Some(home) = std::env::var_os("HOME") {
+        let path = PathBuf::from(home).join(".velcrux").join("client.db");
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(store) = velcrux_core::state::SqliteStateStore::new(&path) {
+            return Some(Arc::new(store));
+        }
+    }
+    None
+}
+
+fn cli_log_json(cli: &Cli) -> bool {
+    cli.json || cli.log_format == "json" || std::env::var("VELCRUX_OUTPUT_JSON").is_ok()
+}
+
+fn get_sni(cli: &Cli, url: &str) -> String {
+    cli.sni.clone().unwrap_or_else(|| {
+        url.split("://")
+            .nth(1)
+            .unwrap_or("localhost")
+            .split(':')
+            .next()
+            .unwrap_or("localhost")
+            .to_string()
+    })
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -234,15 +294,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
-            let sni = cli.sni.clone().unwrap_or_else(|| {
-                url.split("://")
-                    .nth(1)
-                    .unwrap_or("localhost")
-                    .split(':')
-                    .next()
-                    .unwrap_or("localhost")
-                    .to_string()
-            });
+            let sni = get_sni(&cli, url);
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, "connecting");
             let mut session = ClientSession::connect(transport, addr, &sni).await?;
@@ -253,76 +305,76 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Upload { local, url } => {
             let (addr, path) = parse_url_with_path(url)?;
-            let sni = cli.sni.clone().unwrap_or_else(|| {
-                url.split("://")
-                    .nth(1)
-                    .unwrap_or("localhost")
-                    .split(':')
-                    .next()
-                    .unwrap_or("localhost")
-                    .to_string()
-            });
+            let sni = get_sni(&cli, url);
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
-            run_upload(&conn, &mut session, local, &path).await?;
+            let store = open_client_state_store(&cli);
+            run_upload(&cli, &conn, &mut session, local, &path, &store).await?;
         }
         Cmd::Download { url, local } => {
             let (addr, path) = parse_url_with_path(url)?;
-            let sni = cli.sni.clone().unwrap_or_else(|| {
-                url.split("://")
-                    .nth(1)
-                    .unwrap_or("localhost")
-                    .split(':')
-                    .next()
-                    .unwrap_or("localhost")
-                    .to_string()
-            });
+            let sni = get_sni(&cli, url);
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
-            run_download(&conn, &mut session, local, &path).await?;
+            run_download(&cli, &conn, &mut session, local, &path).await?;
         }
-        Cmd::Resume { transfer_id } => {
-            anyhow::bail!(
-                "`velcrux resume {}` is a stub in this revision; \
-                 use the M3 integration test or call TRANSFER_CREATE \
-                 with the same idempotency key (see tests/m3_resume.rs).",
-                transfer_id
-            );
+        Cmd::Resume {
+            transfer_id,
+            server,
+            local,
+        } => {
+            let (addr, _) = parse_url_with_path(server)?;
+            let sni = get_sni(&cli, server);
+            let transport = build_transport(&cli)?;
+            info!(%addr, %sni, "connecting for resume");
+            let conn = transport.connect(addr, &sni).await?;
+            let (send, recv) = conn.open_bi().await?;
+            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            info!(version = session.negotiated().version, "HELLO_ACK");
+            let store = open_client_state_store(&cli);
+            run_resume(&cli, &conn, &mut session, transfer_id, local, &store).await?;
         }
-        Cmd::Cancel { transfer_id } => {
-            let (addr, _) = parse_url_with_path("velcrux://localhost:7443/")?;
-            let sni = "localhost".to_string();
+        Cmd::Cancel {
+            transfer_id,
+            server,
+        } => {
+            let (addr, _) = parse_url_with_path(server)?;
+            let sni = get_sni(&cli, server);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
-            run_cancel(&mut session, &transfer_id).await?;
+            run_cancel(&cli, &mut session, transfer_id).await?;
         }
-        Cmd::Stat { transfer_id } => {
-            let (addr, _) = parse_url_with_path("velcrux://localhost:7443/")?;
-            let sni = "localhost".to_string();
+        Cmd::Stat {
+            transfer_id,
+            server,
+        } => {
+            let (addr, _) = parse_url_with_path(server)?;
+            let sni = get_sni(&cli, server);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
-            run_stat(&mut session, &transfer_id).await?;
+            run_stat(&cli, &mut session, transfer_id).await?;
         }
         Cmd::List { url_prefix } => {
-            let (addr, _) = parse_url_with_path(&url_prefix)?;
-            let sni = "localhost".to_string();
+            let (addr, path) = parse_url_with_path(url_prefix)?;
+            let sni = get_sni(&cli, url_prefix);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
             let (send, recv) = conn.open_bi().await?;
             let mut session = ClientSession::from_handshake_parts(send, recv).await?;
-            run_list(&mut session, &url_prefix).await?;
+            let clean_prefix = path.trim_start_matches('/').to_string();
+            run_list(&cli, &mut session, &clean_prefix).await?;
         }
         Cmd::Sync {
             source,
@@ -351,16 +403,19 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_upload(
+    cli: &Cli,
     conn: &dyn velcrux_core::transport::Connection,
     session: &mut ClientSession,
     local: &PathBuf,
     url_path: &str,
+    store: &Option<Arc<dyn velcrux_core::state::StateStore>>,
 ) -> anyhow::Result<()> {
     use std::io::Read;
     use velcrux_core::protocol::message::{
         Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
     };
     use velcrux_core::session::encode_message;
+    use velcrux_core::state::ChunkBitmap;
 
     let file_size = std::fs::metadata(local)
         .with_context(|| format!("stat {local:?}"))?
@@ -381,11 +436,12 @@ async fn run_upload(
         h.finalize()
     };
 
+    let idempotency_key = velcrux_core::util::TransferId::generate().to_string();
     let create = TransferCreate {
         op: TransferOp::Upload,
         src_path: local.display().to_string(),
         dst_path: url_path.trim_start_matches('/').to_string(),
-        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        idempotency_key: idempotency_key.clone(),
         file_size,
         file_hash: expected_hash,
     };
@@ -409,27 +465,254 @@ async fn run_upload(
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
+    let is_json = cli_log_json(cli);
+    if !is_json {
+        println!("transfer_id: {}", created.transfer_id);
+    }
+
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<u64>(100);
+    let tid_str = created.transfer_id.to_string();
+    let progress_handle = tokio::spawn(async move {
+        let mut transferred = 0u64;
+        let mut last_print = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
+        while let Some(delta) = progress_rx.recv().await {
+            transferred = transferred.saturating_add(delta);
+            if !is_json && (last_print.elapsed() >= std::time::Duration::from_millis(200) || transferred >= file_size) {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
+                let pct = if file_size > 0 { (transferred as f64 / file_size as f64) * 100.0 } else { 100.0 };
+                eprint!(
+                    "\r[{}] {} / {} ({:.1}%) — {}/s",
+                    tid_str,
+                    format_bytes(transferred),
+                    format_bytes(file_size),
+                    pct,
+                    format_bytes(rate as u64)
+                );
+                last_print = std::time::Instant::now();
+            }
+        }
+        if !is_json && transferred > 0 {
+            eprintln!();
+        }
+    });
+
     let cfg = velcrux_core::PipelineConfig::default();
-    let computed = velcrux_core::client_upload(
+    let computed = velcrux_core::client_upload_with_state(
         conn,
         session.send_mut_owned(),
         session.recv_mut_owned(),
+        store.clone(),
         created.transfer_id,
+        &idempotency_key,
         local.clone(),
+        url_path.trim_start_matches('/'),
         file_size,
         expected_hash,
+        ChunkBitmap::new(),
         cfg,
+        Some(progress_tx),
     )
     .await?;
-    eprintln!(
-        "upload: committed {} bytes; server hash matches: {}",
-        file_size,
-        computed == expected_hash
-    );
+
+    let _ = progress_handle.await;
+
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "transfer_complete",
+            "op": "upload",
+            "transfer_id": created.transfer_id.to_string(),
+            "file_size": file_size,
+            "file_hash": computed.to_string(),
+            "status": "committed"
+        });
+        println!("{out}");
+    } else {
+        println!(
+            "upload: committed {} bytes; server hash matches: {}",
+            file_size,
+            computed == expected_hash
+        );
+    }
     Ok(())
 }
 
-async fn run_stat(session: &mut ClientSession, transfer_id_str: &str) -> anyhow::Result<()> {
+async fn run_resume(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    transfer_id_str: &str,
+    local_override: &Option<PathBuf>,
+    store: &Option<Arc<dyn velcrux_core::state::StateStore>>,
+) -> anyhow::Result<()> {
+    use std::io::Read;
+    use velcrux_core::protocol::message::{Message, Resume, ResumeState, TransferBegin};
+    use velcrux_core::session::encode_message;
+    use velcrux_core::state::ChunkBitmap;
+
+    let transfer_id = velcrux_core::util::TransferId::from_string(transfer_id_str)
+        .ok_or_else(|| anyhow::anyhow!("invalid transfer id: {transfer_id_str}"))?;
+
+    let resume_req = Resume {
+        transfer_id,
+        idempotency_key: String::new(),
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::Resume(resume_req), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::RESUME_STATE {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(&frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
+        anyhow::bail!("expected RESUME_STATE, got 0x{:02x}", frame.type_byte);
+    }
+    let resume_state = ResumeState::decode(&frame.payload)?;
+
+    let local_path: PathBuf = if let Some(p) = local_override {
+        p.clone()
+    } else if let Some(s) = store {
+        if let Ok(rec) = s.get_transfer(transfer_id) {
+            PathBuf::from(rec.local_path)
+        } else {
+            let base = std::path::Path::new(&resume_state.staging_relpath)
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("download"));
+            base
+        }
+    } else {
+        let base = std::path::Path::new(&resume_state.staging_relpath)
+            .file_name()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("download"));
+        base
+    };
+
+    if !local_path.exists() {
+        anyhow::bail!(
+            "local file not found at {}: please specify --local <path>",
+            local_path.display()
+        );
+    }
+
+    let file_size = std::fs::metadata(&local_path)
+        .with_context(|| format!("stat {local_path:?}"))?
+        .len();
+    if file_size != resume_state.file_size {
+        anyhow::bail!(
+            "local file size ({file_size}) does not match remote transfer size ({})",
+            resume_state.file_size
+        );
+    }
+
+    let expected_hash = {
+        let mut f = std::fs::File::open(&local_path).with_context(|| format!("open {local_path:?}"))?;
+        let mut h = velcrux_core::HashHasher::new();
+        let mut buf = vec![0u8; 2 * 1024 * 1024];
+        loop {
+            let n = f
+                .read(&mut buf)
+                .with_context(|| format!("read {local_path:?}"))?;
+            if n == 0 {
+                break;
+            }
+            h.feed(&buf[..n]);
+        }
+        h.finalize()
+    };
+    if expected_hash != resume_state.file_hash {
+        anyhow::bail!("local file hash does not match transfer file hash");
+    }
+
+    let begin = TransferBegin { transfer_id };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let bitmap = ChunkBitmap::from_sorted_indices(
+        &resume_state.completed_chunks,
+        resume_state.bytes_completed,
+    );
+
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<u64>(100);
+    let tid_str = transfer_id.to_string();
+    let is_json = cli_log_json(cli);
+    let progress_handle = tokio::spawn(async move {
+        let mut transferred = 0u64;
+        let mut last_print = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
+        while let Some(delta) = progress_rx.recv().await {
+            transferred = transferred.saturating_add(delta);
+            if !is_json && (last_print.elapsed() >= std::time::Duration::from_millis(200) || transferred >= file_size) {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
+                let pct = if file_size > 0 { (transferred as f64 / file_size as f64) * 100.0 } else { 100.0 };
+                eprint!(
+                    "\r[{}] {} / {} ({:.1}%) — {}/s",
+                    tid_str,
+                    format_bytes(transferred),
+                    format_bytes(file_size),
+                    pct,
+                    format_bytes(rate as u64)
+                );
+                last_print = std::time::Instant::now();
+            }
+        }
+        if !is_json && transferred > 0 {
+            eprintln!();
+        }
+    });
+
+    let cfg = velcrux_core::PipelineConfig::default();
+    let computed = velcrux_core::client_upload_with_state(
+        conn,
+        session.send_mut_owned(),
+        session.recv_mut_owned(),
+        store.clone(),
+        transfer_id,
+        "",
+        local_path,
+        &resume_state.staging_relpath,
+        file_size,
+        expected_hash,
+        bitmap,
+        cfg,
+        Some(progress_tx),
+    )
+    .await?;
+
+    let _ = progress_handle.await;
+
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "transfer_complete",
+            "op": "resume",
+            "transfer_id": transfer_id.to_string(),
+            "file_size": file_size,
+            "file_hash": computed.to_string(),
+            "status": "committed"
+        });
+        println!("{out}");
+    } else {
+        println!("transfer_id: {}", transfer_id);
+        println!(
+            "resume: committed {} bytes; server hash matches: {}",
+            file_size,
+            computed == expected_hash
+        );
+    }
+    Ok(())
+}
+
+async fn run_stat(
+    cli: &Cli,
+    session: &mut ClientSession,
+    transfer_id_str: &str,
+) -> anyhow::Result<()> {
     use velcrux_core::protocol::message::{Message, StatQuery, StatResult};
     use velcrux_core::session::encode_message;
 
@@ -446,7 +729,7 @@ async fn run_stat(session: &mut ClientSession, transfer_id_str: &str) -> anyhow:
     if !r.found {
         anyhow::bail!("transfer not found: {}", transfer_id_str);
     }
-    if cli_log_json() {
+    if cli_log_json(cli) {
         let obj = serde_json::json!({
             "v": 1,
             "event": "stat",
@@ -470,7 +753,11 @@ async fn run_stat(session: &mut ClientSession, transfer_id_str: &str) -> anyhow:
     Ok(())
 }
 
-async fn run_list(session: &mut ClientSession, url_prefix: &str) -> anyhow::Result<()> {
+async fn run_list(
+    cli: &Cli,
+    session: &mut ClientSession,
+    url_prefix: &str,
+) -> anyhow::Result<()> {
     use velcrux_core::protocol::message::{ListQuery, ListResult, Message};
     use velcrux_core::session::encode_message;
 
@@ -484,7 +771,7 @@ async fn run_list(session: &mut ClientSession, url_prefix: &str) -> anyhow::Resu
         anyhow::bail!("expected LIST_RESULT, got 0x{:02x}", frame.type_byte);
     }
     let r = ListResult::decode(&frame.payload)?;
-    if cli_log_json() {
+    if cli_log_json(cli) {
         let arr: Vec<_> = r
             .entries
             .iter()
@@ -515,7 +802,11 @@ async fn run_list(session: &mut ClientSession, url_prefix: &str) -> anyhow::Resu
     Ok(())
 }
 
-async fn run_cancel(session: &mut ClientSession, transfer_id_str: &str) -> anyhow::Result<()> {
+async fn run_cancel(
+    cli: &Cli,
+    session: &mut ClientSession,
+    transfer_id_str: &str,
+) -> anyhow::Result<()> {
     use velcrux_core::protocol::error::ErrorCode;
     use velcrux_core::protocol::message::{Cancel, Message};
     use velcrux_core::session::encode_message;
@@ -529,15 +820,22 @@ async fn run_cancel(session: &mut ClientSession, transfer_id_str: &str) -> anyho
     let buf = bytes::Bytes::from(encode_message(&Message::Cancel(c), 0)?);
     session.send_mut().write_all(buf).await?;
     session.bye().await.ok();
-    println!("cancel requested: {transfer_id_str}");
+    if cli_log_json(cli) {
+        let obj = serde_json::json!({
+            "v": 1,
+            "event": "cancel",
+            "transfer_id": transfer_id_str,
+            "status": "cancelled",
+        });
+        println!("{obj}");
+    } else {
+        println!("cancel requested: {transfer_id_str}");
+    }
     Ok(())
 }
 
-fn cli_log_json() -> bool {
-    std::env::var("VELCRUX_OUTPUT_JSON").is_ok()
-}
-
 async fn run_download(
+    cli: &Cli,
     conn: &dyn velcrux_core::transport::Connection,
     session: &mut ClientSession,
     local: &PathBuf,
@@ -568,7 +866,7 @@ async fn run_download(
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
         anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
     }
-    let _plan = TransferPlan::decode(&frame.payload)?;
+    let plan = TransferPlan::decode(&frame.payload)?;
 
     let begin = TransferBegin {
         transfer_id: created.transfer_id,
@@ -576,15 +874,68 @@ async fn run_download(
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
-    let computed = velcrux_core::client_download(
+    let is_json = cli_log_json(cli);
+    if !is_json {
+        println!("transfer_id: {}", created.transfer_id);
+    }
+
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<u64>(100);
+    let tid_str = created.transfer_id.to_string();
+    let total_bytes = plan.bytes_total;
+    let progress_handle = tokio::spawn(async move {
+        let mut transferred = 0u64;
+        let mut last_print = std::time::Instant::now();
+        let start_time = std::time::Instant::now();
+        while let Some(delta) = progress_rx.recv().await {
+            transferred = transferred.saturating_add(delta);
+            if !is_json && last_print.elapsed() >= std::time::Duration::from_millis(200) {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let rate = if elapsed_secs > 0.0 { transferred as f64 / elapsed_secs } else { 0.0 };
+                let pct = if total_bytes > 0 { (transferred as f64 / total_bytes as f64) * 100.0 } else { 0.0 };
+                eprint!(
+                    "\r[{}] {} / {} ({:.1}%) — {}/s",
+                    tid_str,
+                    format_bytes(transferred),
+                    format_bytes(total_bytes),
+                    pct,
+                    format_bytes(rate as u64)
+                );
+                last_print = std::time::Instant::now();
+            }
+        }
+        if !is_json && transferred > 0 {
+            eprintln!();
+        }
+        transferred
+    });
+
+    let computed = velcrux_core::client_download_with_progress(
         conn,
         session.send_mut_owned(),
         session.recv_mut_owned(),
         created.transfer_id,
         local.clone(),
+        Some(progress_tx),
     )
     .await?;
-    eprintln!("download: committed to {local:?}, hash {computed}");
+
+    let transferred_bytes = progress_handle.await.unwrap_or(0);
+
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "transfer_complete",
+            "op": "download",
+            "transfer_id": created.transfer_id.to_string(),
+            "bytes_completed": transferred_bytes,
+            "file_hash": computed.to_string(),
+            "local_path": local.display().to_string(),
+            "status": "committed"
+        });
+        println!("{out}");
+    } else {
+        println!("download: committed to {local:?}, hash {computed}");
+    }
     Ok(())
 }
 

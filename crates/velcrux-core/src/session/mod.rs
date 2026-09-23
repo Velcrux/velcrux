@@ -64,7 +64,7 @@ pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'sta
     // We have the full varint; compute remaining header bytes.
     let (declared_length, _consumed) = crate::protocol::varint::decode_varint(&buf[4..])?;
     // request_id (8 bytes)
-    let request_id_off = 4 + varint_len;
+    let _request_id_off = 4 + varint_len;
     let rid = match recv.read_exact(8).await? {
         Some(b) => b,
         None => return Ok(None),

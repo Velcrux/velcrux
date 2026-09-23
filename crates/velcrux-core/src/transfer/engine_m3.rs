@@ -513,9 +513,8 @@ pub async fn cancel_transfer(
         let mut updated = rec;
         updated.status = TransferStatus::Cancelled;
         updated.updated_ms = current_ms();
-        let _ = store.update_transfer(&updated).map_err(map_state_err)?;
+        store.update_transfer(&updated).map_err(map_state_err)?;
     }
-    let _ = store.delete_transfer(transfer_id).map_err(map_state_err);
     Ok(())
 }
 

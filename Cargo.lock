@@ -1660,6 +1660,7 @@ dependencies = [
  "clap_complete",
  "quinn",
  "rand 0.8.8",
+ "rcgen",
  "rustls",
  "rustls-pemfile",
  "serde_json",
