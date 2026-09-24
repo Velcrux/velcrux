@@ -70,6 +70,7 @@ use crate::state::{
     TransferStatus,
 };
 use crate::storage::{FileMeta, LocalFilesystemBackend, StorageBackend, VPath};
+use crate::transfer::rate_limit::RateLimiter;
 use crate::transport::{BiRecvStream, BiSendStream, Connection};
 use crate::util::{Hash, HashHasher, TransferId};
 
@@ -93,6 +94,8 @@ pub struct PipelineConfig {
     pub chunk_params: ChunkParams,
     /// Number of parallel QUIC data streams (default: 1, range 1..=16).
     pub parallel_streams: usize,
+    /// Optional rate limiter for bandwidth throttling (Option F).
+    pub rate_limiter: Option<RateLimiter>,
 }
 
 impl Default for PipelineConfig {
@@ -103,7 +106,19 @@ impl Default for PipelineConfig {
             chunk_mode: ChunkMode::Cdc,
             chunk_params: ChunkParams::default(),
             parallel_streams: 1,
+            rate_limiter: None,
         }
+    }
+}
+
+impl PipelineConfig {
+    pub fn with_rate_limit(mut self, bytes_per_sec: u64) -> Self {
+        if bytes_per_sec > 0 {
+            self.rate_limiter = Some(RateLimiter::new(bytes_per_sec));
+        } else {
+            self.rate_limiter = None;
+        }
+        self
     }
 }
 
@@ -275,6 +290,7 @@ pub async fn client_upload_stream(
         let next_work_idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let local_path = Arc::new(local_path.clone());
         let shared_bitmap = Arc::new(tokio::sync::Mutex::new(bitmap.clone()));
+        let rate_limiter = cfg.rate_limiter.clone();
         let mut handles = Vec::with_capacity(parallel);
 
         for worker_idx in 0..parallel {
@@ -284,6 +300,7 @@ pub async fn client_upload_stream(
             let local_path = Arc::clone(&local_path);
             let shared_bitmap = Arc::clone(&shared_bitmap);
             let progress_clone = progress_tx.clone();
+            let limiter_clone = rate_limiter.clone();
             let tid = transfer_id;
 
             let handle = tokio::spawn(async move {
@@ -320,6 +337,9 @@ pub async fn client_upload_stream(
                             &hash,
                             &buf,
                         );
+                        if let Some(ref lim) = limiter_clone {
+                            lim.acquire(want).await;
+                        }
                         data_send.write_all(Bytes::from(bytes)).await?;
                         {
                             let mut bm = shared_bitmap.lock().await;
@@ -394,6 +414,9 @@ pub async fn client_upload_stream(
                 bitmap.mark_complete(next_chunk, read as u64);
                 let bytes =
                     encode_data_frame(offset, read as u32, DataFrameFlags::NONE, &hash, &buf);
+                if let Some(ref lim) = cfg.rate_limiter {
+                    lim.acquire(read).await;
+                }
                 data_send.write_all(Bytes::from(bytes)).await?;
 
                 if let Some(tx) = &progress_tx {
@@ -418,6 +441,7 @@ pub async fn client_upload_stream(
             let _ = data_send.finish().await;
         } else {
             // CDC streaming pipeline.
+            let rate_limiter = cfg.rate_limiter.clone();
             let (tx, mut rx) = mpsc::channel::<DataItem>(cfg.max_inflight);
             let read_path = local_path.clone();
             let chunker_task =
@@ -442,6 +466,9 @@ pub async fn client_upload_stream(
                                 &hash,
                                 &payload,
                             );
+                            if let Some(ref lim) = rate_limiter {
+                                lim.acquire(length as usize).await;
+                            }
                             data_send.write_all(Bytes::from(bytes)).await?;
                             if let Some(tx) = &progress_clone {
                                 let _ = tx.try_send(length as u64);
@@ -1122,6 +1149,7 @@ pub async fn client_download_stream(
         progress_tx,
         false,
         1,
+        None,
     )
     .await
 }
@@ -1136,6 +1164,7 @@ pub async fn client_download_stream_with_staging(
     progress_tx: Option<mpsc::Sender<u64>>,
     staging_prepopulated: bool,
     parallel_streams: usize,
+    rate_limiter: Option<RateLimiter>,
 ) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
@@ -1166,6 +1195,7 @@ pub async fn client_download_stream_with_staging(
             let mut data_recv = conn.accept_uni().await?;
             let staging_file = Arc::clone(&staging_file);
             let progress_clone = progress_tx.clone();
+            let limiter_clone = rate_limiter.clone();
             let tid = transfer_id;
 
             let handle = tokio::spawn(async move {
@@ -1206,6 +1236,10 @@ pub async fn client_download_stream_with_staging(
                         let mut f = staging_file.lock().await;
                         f.seek(std::io::SeekFrom::Start(hdr.chunk_offset)).await?;
                         f.write_all(&payload).await?;
+                    }
+
+                    if let Some(ref lim) = limiter_clone {
+                        lim.acquire(payload_len).await;
                     }
 
                     if let Some(ref tx) = progress_clone {
@@ -1267,6 +1301,10 @@ pub async fn client_download_stream_with_staging(
                 .seek(std::io::SeekFrom::Start(hdr.chunk_offset))
                 .await?;
             staging_file.write_all(&payload).await?;
+
+            if let Some(ref lim) = rate_limiter {
+                lim.acquire(payload_len).await;
+            }
 
             if let Some(tx) = &progress_tx {
                 let _ = tx.try_send(payload_len as u64);

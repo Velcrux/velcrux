@@ -16,6 +16,9 @@
 
 pub mod engine;
 pub mod engine_m3;
+pub mod rate_limit;
+
+pub use rate_limit::{parse_rate_limit, RateLimiter};
 
 pub use engine::{
     client_download, client_download_stream, client_download_stream_with_staging,

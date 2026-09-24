@@ -64,9 +64,10 @@ pub use sync::{
 pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,
     client_download_with_progress, client_upload, client_upload_stream, client_upload_with_state,
-    server_download_session, server_download_session_with_delta, server_staging_path,
-    server_upload_session, server_upload_session_with_delta, server_upload_session_with_state,
-    PipelineConfig, TransferDir, TransferKind, TransferRequest,
+    parse_rate_limit, server_download_session, server_download_session_with_delta,
+    server_staging_path, server_upload_session, server_upload_session_with_delta,
+    server_upload_session_with_state, PipelineConfig, RateLimiter, TransferDir, TransferKind,
+    TransferRequest,
 };
 pub use transport::{Connection, SharedTransport};
 pub use util::{Hash, HashAlgorithm, HashHasher};

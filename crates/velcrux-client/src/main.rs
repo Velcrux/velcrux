@@ -69,6 +69,15 @@ struct Cli {
     )]
     parallel: usize,
 
+    /// Bandwidth rate limit (Option F, e.g. "10M", "500K", "1G", "1048576", default: unlimited).
+    #[arg(
+        long = "rate-limit",
+        short = 'R',
+        env = "VELCRUX_RATE_LIMIT",
+        global = true
+    )]
+    rate_limit: Option<String>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -361,6 +370,7 @@ struct FileClientConfig {
     dedup: Option<bool>,
     chunk_store: Option<PathBuf>,
     parallel: Option<usize>,
+    rate_limit: Option<String>,
 }
 
 fn load_client_config(cli: &mut Cli) {
@@ -400,6 +410,9 @@ fn load_client_config(cli: &mut Cli) {
                             cli.parallel = p;
                         }
                     }
+                    if cli.rate_limit.is_none() {
+                        cli.rate_limit = file_cfg.rate_limit;
+                    }
                     if cli.log_format == "text" {
                         if let Some(fmt) = file_cfg.log_format {
                             cli.log_format = fmt;
@@ -416,10 +429,22 @@ fn load_client_config(cli: &mut Cli) {
     }
 }
 
+fn get_rate_limiter(cli: &Cli) -> anyhow::Result<Option<velcrux_core::RateLimiter>> {
+    if let Some(ref r) = cli.rate_limit {
+        let bytes_per_sec = velcrux_core::parse_rate_limit(r)
+            .map_err(|e| anyhow::anyhow!("invalid --rate-limit: {e}"))?;
+        if bytes_per_sec > 0 {
+            return Ok(Some(velcrux_core::RateLimiter::new(bytes_per_sec)));
+        }
+    }
+    Ok(None)
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut cli = Cli::parse();
     load_client_config(&mut cli);
+    let _ = get_rate_limiter(&cli)?;
     init_tracing(&cli.log_format);
 
     match &cli.cmd {
@@ -748,8 +773,10 @@ async fn upload_file_stream(
         (None, None)
     };
 
+    let rate_limiter = get_rate_limiter(cli)?;
     let mut cfg = velcrux_core::PipelineConfig {
         parallel_streams: cli.parallel.clamp(1, 16),
+        rate_limiter,
         ..Default::default()
     };
     if !initial_bitmap.is_empty() {
@@ -966,8 +993,10 @@ async fn run_resume(
         }
     });
 
+    let rate_limiter = get_rate_limiter(cli)?;
     let cfg = velcrux_core::PipelineConfig {
         parallel_streams: cli.parallel.clamp(1, 16),
+        rate_limiter,
         ..Default::default()
     };
     let (send_half, recv_half) = session.stream_halves_mut();
@@ -1371,6 +1400,7 @@ async fn download_file_stream(
         (None, None)
     };
 
+    let rate_limiter = get_rate_limiter(cli)?;
     let (send_half, recv_half) = session.stream_halves_mut();
     let computed = velcrux_core::client_download_stream_with_staging(
         conn,
@@ -1381,6 +1411,7 @@ async fn download_file_stream(
         progress_tx,
         staging_prepopulated,
         cli.parallel.clamp(1, 16),
+        rate_limiter,
     )
     .await?;
 
