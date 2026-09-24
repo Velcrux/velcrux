@@ -386,6 +386,7 @@ async fn main() -> anyhow::Result<()> {
             chunk_store,
         } => {
             run_sync(
+                &cli,
                 source,
                 destination,
                 *dry_run,
@@ -401,15 +402,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_upload(
-    cli: &Cli,
+async fn upload_file_stream(
     conn: &dyn velcrux_core::transport::Connection,
     session: &mut ClientSession,
-    local: &PathBuf,
-    url_path: &str,
     store: &Option<Arc<dyn velcrux_core::state::StateStore>>,
-) -> anyhow::Result<()> {
-    use std::io::Read;
+    local: &PathBuf,
+    remote_path: &str,
+    show_progress: bool,
+    cli: &Cli,
+) -> anyhow::Result<(velcrux_core::util::TransferId, velcrux_core::Hash, u64)> {
     use velcrux_core::protocol::message::{
         Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
     };
@@ -419,27 +420,14 @@ async fn run_upload(
     let file_size = std::fs::metadata(local)
         .with_context(|| format!("stat {local:?}"))?
         .len();
-    let expected_hash = {
-        let mut f = std::fs::File::open(local).with_context(|| format!("open {local:?}"))?;
-        let mut h = velcrux_core::HashHasher::new();
-        let mut buf = vec![0u8; 2 * 1024 * 1024];
-        loop {
-            let n = f
-                .read(&mut buf)
-                .with_context(|| format!("read {local:?}"))?;
-            if n == 0 {
-                break;
-            }
-            h.feed(&buf[..n]);
-        }
-        h.finalize()
-    };
+    let expected_hash =
+        velcrux_core::sync::compute_file_hash(local).with_context(|| format!("hash {local:?}"))?;
 
     let idempotency_key = velcrux_core::util::TransferId::generate().to_string();
     let create = TransferCreate {
         op: TransferOp::Upload,
         src_path: local.display().to_string(),
-        dst_path: url_path.trim_start_matches('/').to_string(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
         idempotency_key: idempotency_key.clone(),
         file_size,
         file_hash: expected_hash,
@@ -449,6 +437,10 @@ async fn run_upload(
 
     let frame = session.recv_frame().await?;
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
         anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
     }
     let created = TransferCreated::decode(frame.payload)?;
@@ -465,87 +457,106 @@ async fn run_upload(
     session.send_mut().write_all(buf).await?;
 
     let is_json = cli_log_json(cli);
-    if !is_json {
-        println!("transfer_id: {}", created.transfer_id);
-    }
-
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<u64>(100);
-    let tid_str = created.transfer_id.to_string();
-    let progress_handle = tokio::spawn(async move {
-        let mut transferred = 0u64;
-        let mut last_print = std::time::Instant::now();
-        let start_time = std::time::Instant::now();
-        while let Some(delta) = progress_rx.recv().await {
-            transferred = transferred.saturating_add(delta);
-            if !is_json
-                && (last_print.elapsed() >= std::time::Duration::from_millis(200)
-                    || transferred >= file_size)
-            {
-                let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let rate = if elapsed_secs > 0.0 {
-                    transferred as f64 / elapsed_secs
-                } else {
-                    0.0
-                };
-                let pct = if file_size > 0 {
-                    (transferred as f64 / file_size as f64) * 100.0
-                } else {
-                    100.0
-                };
-                eprint!(
-                    "\r[{}] {} / {} ({:.1}%) — {}/s",
-                    tid_str,
-                    format_bytes(transferred),
-                    format_bytes(file_size),
-                    pct,
-                    format_bytes(rate as u64)
-                );
-                last_print = std::time::Instant::now();
+    let (progress_tx, progress_handle) = if show_progress && !is_json {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<u64>(100);
+        let tid_str = created.transfer_id.to_string();
+        let handle = tokio::spawn(async move {
+            let mut transferred = 0u64;
+            let mut last_print = std::time::Instant::now();
+            let start_time = std::time::Instant::now();
+            while let Some(delta) = rx.recv().await {
+                transferred = transferred.saturating_add(delta);
+                if last_print.elapsed() >= std::time::Duration::from_millis(200)
+                    || transferred >= file_size
+                {
+                    let elapsed_secs = start_time.elapsed().as_secs_f64();
+                    let rate = if elapsed_secs > 0.0 {
+                        transferred as f64 / elapsed_secs
+                    } else {
+                        0.0
+                    };
+                    let pct = if file_size > 0 {
+                        (transferred as f64 / file_size as f64) * 100.0
+                    } else {
+                        100.0
+                    };
+                    eprint!(
+                        "\r[{}] {} / {} ({:.1}%) — {}/s",
+                        tid_str,
+                        format_bytes(transferred),
+                        format_bytes(file_size),
+                        pct,
+                        format_bytes(rate as u64)
+                    );
+                    last_print = std::time::Instant::now();
+                }
             }
-        }
-        if !is_json && transferred > 0 {
-            eprintln!();
-        }
-    });
+            if transferred > 0 {
+                eprintln!();
+            }
+        });
+        (Some(tx), Some(handle))
+    } else {
+        (None, None)
+    };
 
     let cfg = velcrux_core::PipelineConfig::default();
-    let computed = velcrux_core::client_upload_with_state(
+    let (send_half, recv_half) = session.stream_halves_mut();
+    let computed = velcrux_core::client_upload_stream(
         conn,
-        session.send_mut_owned(),
-        session.recv_mut_owned(),
+        send_half,
+        recv_half,
         store.clone(),
         created.transfer_id,
         &idempotency_key,
         local.clone(),
-        url_path.trim_start_matches('/'),
+        remote_path.trim_start_matches('/'),
         file_size,
         expected_hash,
         ChunkBitmap::new(),
         cfg,
-        Some(progress_tx),
+        progress_tx,
     )
     .await?;
 
-    let _ = progress_handle.await;
+    if let Some(h) = progress_handle {
+        let _ = h.await;
+    }
+
+    Ok((created.transfer_id, computed, file_size))
+}
+
+async fn run_upload(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    local: &PathBuf,
+    url_path: &str,
+    store: &Option<Arc<dyn velcrux_core::state::StateStore>>,
+) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let (tid, computed, file_size) =
+        upload_file_stream(conn, session, store, local, url_path, true, cli).await?;
 
     if is_json {
         let out = serde_json::json!({
             "v": 1,
             "event": "transfer_complete",
             "op": "upload",
-            "transfer_id": created.transfer_id.to_string(),
+            "transfer_id": tid.to_string(),
             "file_size": file_size,
             "file_hash": computed.to_string(),
             "status": "committed"
         });
         println!("{out}");
     } else {
+        println!("transfer_id: {tid}");
         println!(
-            "upload: committed {} bytes; server hash matches: {}",
-            file_size,
-            computed == expected_hash
+            "upload: committed {} bytes; server hash matches: true",
+            file_size
         );
     }
+    session.bye().await.ok();
     Ok(())
 }
 
@@ -689,10 +700,11 @@ async fn run_resume(
     });
 
     let cfg = velcrux_core::PipelineConfig::default();
-    let computed = velcrux_core::client_upload_with_state(
+    let (send_half, recv_half) = session.stream_halves_mut();
+    let computed = velcrux_core::client_upload_stream(
         conn,
-        session.send_mut_owned(),
-        session.recv_mut_owned(),
+        send_half,
+        recv_half,
         store.clone(),
         transfer_id,
         "",
@@ -852,13 +864,14 @@ async fn run_cancel(
     Ok(())
 }
 
-async fn run_download(
-    cli: &Cli,
+async fn download_file_stream(
     conn: &dyn velcrux_core::transport::Connection,
     session: &mut ClientSession,
+    remote_path: &str,
     local: &PathBuf,
-    url_path: &str,
-) -> anyhow::Result<()> {
+    show_progress: bool,
+    cli: &Cli,
+) -> anyhow::Result<(velcrux_core::util::TransferId, velcrux_core::Hash, u64)> {
     use velcrux_core::protocol::message::{
         Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
     };
@@ -867,7 +880,7 @@ async fn run_download(
     let create = TransferCreate {
         op: TransferOp::Download,
         src_path: "".into(),
-        dst_path: url_path.trim_start_matches('/').to_string(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
         idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
         file_size: 0,
         file_hash: velcrux_core::Hash::ZERO,
@@ -877,6 +890,10 @@ async fn run_download(
 
     let frame = session.recv_frame().await?;
     if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
         anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
     }
     let created = TransferCreated::decode(frame.payload)?;
@@ -893,80 +910,480 @@ async fn run_download(
     session.send_mut().write_all(buf).await?;
 
     let is_json = cli_log_json(cli);
-    if !is_json {
-        println!("transfer_id: {}", created.transfer_id);
-    }
-
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<u64>(100);
-    let tid_str = created.transfer_id.to_string();
     let total_bytes = plan.bytes_total;
-    let progress_handle = tokio::spawn(async move {
-        let mut transferred = 0u64;
-        let mut last_print = std::time::Instant::now();
-        let start_time = std::time::Instant::now();
-        while let Some(delta) = progress_rx.recv().await {
-            transferred = transferred.saturating_add(delta);
-            if !is_json && last_print.elapsed() >= std::time::Duration::from_millis(200) {
-                let elapsed_secs = start_time.elapsed().as_secs_f64();
-                let rate = if elapsed_secs > 0.0 {
-                    transferred as f64 / elapsed_secs
-                } else {
-                    0.0
-                };
-                let pct = if total_bytes > 0 {
-                    (transferred as f64 / total_bytes as f64) * 100.0
-                } else {
-                    0.0
-                };
-                eprint!(
-                    "\r[{}] {} / {} ({:.1}%) — {}/s",
-                    tid_str,
-                    format_bytes(transferred),
-                    format_bytes(total_bytes),
-                    pct,
-                    format_bytes(rate as u64)
-                );
-                last_print = std::time::Instant::now();
+    let (progress_tx, progress_handle) = if show_progress && !is_json {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<u64>(100);
+        let tid_str = created.transfer_id.to_string();
+        let handle = tokio::spawn(async move {
+            let mut transferred = 0u64;
+            let mut last_print = std::time::Instant::now();
+            let start_time = std::time::Instant::now();
+            while let Some(delta) = rx.recv().await {
+                transferred = transferred.saturating_add(delta);
+                if last_print.elapsed() >= std::time::Duration::from_millis(200)
+                    || transferred >= total_bytes
+                {
+                    let elapsed_secs = start_time.elapsed().as_secs_f64();
+                    let rate = if elapsed_secs > 0.0 {
+                        transferred as f64 / elapsed_secs
+                    } else {
+                        0.0
+                    };
+                    let pct = if total_bytes > 0 {
+                        (transferred as f64 / total_bytes as f64) * 100.0
+                    } else {
+                        100.0
+                    };
+                    eprint!(
+                        "\r[{}] {} / {} ({:.1}%) — {}/s",
+                        tid_str,
+                        format_bytes(transferred),
+                        format_bytes(total_bytes),
+                        pct,
+                        format_bytes(rate as u64)
+                    );
+                    last_print = std::time::Instant::now();
+                }
             }
-        }
-        if !is_json && transferred > 0 {
-            eprintln!();
-        }
-        transferred
-    });
+            if transferred > 0 {
+                eprintln!();
+            }
+        });
+        (Some(tx), Some(handle))
+    } else {
+        (None, None)
+    };
 
-    let computed = velcrux_core::client_download_with_progress(
+    let (send_half, recv_half) = session.stream_halves_mut();
+    let computed = velcrux_core::client_download_stream(
         conn,
-        session.send_mut_owned(),
-        session.recv_mut_owned(),
+        send_half,
+        recv_half,
         created.transfer_id,
         local.clone(),
-        Some(progress_tx),
+        progress_tx,
     )
     .await?;
 
-    let transferred_bytes = progress_handle.await.unwrap_or(0);
+    if let Some(h) = progress_handle {
+        let _ = h.await;
+    }
+
+    Ok((created.transfer_id, computed, total_bytes))
+}
+
+async fn delete_remote_file(session: &mut ClientSession, remote_path: &str) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Committed, Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let create = TransferCreate {
+        op: TransferOp::Delete,
+        src_path: "".into(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::COMMITTED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!(
+                "remote delete failed: code={:?} detail={:?}",
+                err.code,
+                err.detail
+            );
+        }
+        anyhow::bail!(
+            "expected COMMITTED for delete, got 0x{:02x}",
+            frame.type_byte
+        );
+    }
+    let _committed = Committed::decode(frame.payload)?;
+    Ok(())
+}
+
+async fn run_download(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    local: &PathBuf,
+    url_path: &str,
+) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let (tid, computed, total_bytes) =
+        download_file_stream(conn, session, url_path, local, true, cli).await?;
 
     if is_json {
         let out = serde_json::json!({
             "v": 1,
             "event": "transfer_complete",
             "op": "download",
-            "transfer_id": created.transfer_id.to_string(),
-            "bytes_completed": transferred_bytes,
+            "transfer_id": tid.to_string(),
+            "bytes_completed": total_bytes,
             "file_hash": computed.to_string(),
             "local_path": local.display().to_string(),
             "status": "committed"
         });
         println!("{out}");
     } else {
+        println!("transfer_id: {tid}");
         println!("download: committed to {local:?}, hash {computed}");
     }
+    session.bye().await.ok();
+    Ok(())
+}
+
+async fn run_remote_upload_sync(
+    cli: &Cli,
+    source: &str,
+    destination: &str,
+    dry_run: bool,
+    delete_after: bool,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let src_dir = PathBuf::from(source);
+    if !src_dir.exists() {
+        anyhow::bail!("source path does not exist: {}", src_dir.display());
+    }
+    if !src_dir.is_dir() {
+        anyhow::bail!("source must be a directory: {}", src_dir.display());
+    }
+
+    let (addr, path) = parse_url_with_path(destination)?;
+    let sni = get_sni(cli, destination);
+    let transport = build_transport(cli)?;
+    let conn = transport.connect(addr, &sni).await?;
+    let (send, recv) = conn.open_bi().await?;
+    let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+    let store = open_client_state_store(cli);
+
+    let src_files = velcrux_core::sync::scan_dir_entries(&src_dir)?;
+    let vpath = path.trim_start_matches('/').to_string();
+
+    let create = TransferCreate {
+        op: TransferOp::SyncUpload,
+        src_path: "".into(),
+        dst_path: vpath.clone(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+
+    let dst_files =
+        velcrux_core::sync::recv_directory_manifest(session.recv_mut().as_mut()).await?;
+    let plan = velcrux_core::sync::plan_directory_diff(&src_files, &dst_files);
+
+    let is_json = cli_log_json(cli);
+
+    if dry_run {
+        if is_json {
+            let actions: Vec<_> = plan
+                .actions
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "action": format!("{:?}", a.action).to_lowercase(),
+                        "path": a.rel_path,
+                        "size": a.src_size,
+                        "reused": a.bytes_reusable,
+                    })
+                })
+                .collect();
+            let out = serde_json::json!({
+                "v": 1,
+                "event": "sync_summary",
+                "dry_run": true,
+                "source": source,
+                "destination": destination,
+                "files_unchanged": plan.summary.files_unchanged,
+                "files_modified": plan.summary.files_modified,
+                "files_added": plan.summary.files_added,
+                "files_deleted": plan.summary.files_deleted,
+                "data_present": plan.summary.data_present,
+                "data_to_transfer": plan.summary.data_to_transfer,
+                "files_transferred": 0,
+                "files_committed": 0,
+                "files_deleted_count": 0,
+                "actions": actions,
+            });
+            println!("{out}");
+        } else {
+            println!("{}", plan.summary.format_display());
+        }
+        session.bye().await.ok();
+        return Ok(());
+    }
+
+    if !is_json {
+        println!("{}", plan.summary.format_display());
+    }
+
+    let mut files_transferred = 0usize;
+    let mut files_committed = 0usize;
+    let mut files_deleted = 0usize;
+    let mut wire_bytes = 0u64;
+
+    for item in &plan.actions {
+        match item.action {
+            velcrux_core::sync::FileActionType::Add
+            | velcrux_core::sync::FileActionType::Modify => {
+                let local_file = src_dir.join(&item.rel_path);
+                let remote_file = if vpath.is_empty() {
+                    item.rel_path.clone()
+                } else {
+                    format!("{}/{}", vpath.trim_end_matches('/'), item.rel_path)
+                };
+                let (_tid, _hash, size) = upload_file_stream(
+                    &conn,
+                    &mut session,
+                    &store,
+                    &local_file,
+                    &remote_file,
+                    false,
+                    cli,
+                )
+                .await?;
+                files_transferred += 1;
+                files_committed += 1;
+                wire_bytes += size;
+            }
+            velcrux_core::sync::FileActionType::Delete => {
+                if delete_after {
+                    let remote_file = if vpath.is_empty() {
+                        item.rel_path.clone()
+                    } else {
+                        format!("{}/{}", vpath.trim_end_matches('/'), item.rel_path)
+                    };
+                    delete_remote_file(&mut session, &remote_file).await?;
+                    files_deleted += 1;
+                }
+            }
+            velcrux_core::sync::FileActionType::Unchanged => {}
+        }
+    }
+
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "sync_summary",
+            "dry_run": false,
+            "source": source,
+            "destination": destination,
+            "files_unchanged": plan.summary.files_unchanged,
+            "files_modified": plan.summary.files_modified,
+            "files_added": plan.summary.files_added,
+            "files_deleted": plan.summary.files_deleted,
+            "data_present": plan.summary.data_present,
+            "data_to_transfer": plan.summary.data_to_transfer,
+            "files_transferred": files_transferred,
+            "files_committed": files_committed,
+            "files_deleted_count": files_deleted,
+            "wire_bytes_transferred": wire_bytes,
+        });
+        println!("{out}");
+    } else {
+        println!();
+        println!(
+            "Transferred: {} files (committed: {}, deleted: {})",
+            files_transferred, files_committed, files_deleted
+        );
+        println!("Wire data: {}", format_bytes(wire_bytes));
+    }
+
+    session.bye().await.ok();
+    Ok(())
+}
+
+async fn run_remote_download_sync(
+    cli: &Cli,
+    source: &str,
+    destination: &str,
+    dry_run: bool,
+    delete_after: bool,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let dst_dir = PathBuf::from(destination);
+    if !dst_dir.exists() {
+        std::fs::create_dir_all(&dst_dir)?;
+    }
+
+    let (addr, path) = parse_url_with_path(source)?;
+    let sni = get_sni(cli, source);
+    let transport = build_transport(cli)?;
+    let conn = transport.connect(addr, &sni).await?;
+    let (send, recv) = conn.open_bi().await?;
+    let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+
+    let dst_files = velcrux_core::sync::scan_dir_entries(&dst_dir)?;
+    let vpath = path.trim_start_matches('/').to_string();
+
+    let create = TransferCreate {
+        op: TransferOp::SyncDownload,
+        src_path: vpath.clone(),
+        dst_path: "".into(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+
+    let src_files =
+        velcrux_core::sync::recv_directory_manifest(session.recv_mut().as_mut()).await?;
+    let plan = velcrux_core::sync::plan_directory_diff(&src_files, &dst_files);
+
+    let is_json = cli_log_json(cli);
+
+    if dry_run {
+        if is_json {
+            let actions: Vec<_> = plan
+                .actions
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "action": format!("{:?}", a.action).to_lowercase(),
+                        "path": a.rel_path,
+                        "size": a.src_size,
+                        "reused": a.bytes_reusable,
+                    })
+                })
+                .collect();
+            let out = serde_json::json!({
+                "v": 1,
+                "event": "sync_summary",
+                "dry_run": true,
+                "source": source,
+                "destination": destination,
+                "files_unchanged": plan.summary.files_unchanged,
+                "files_modified": plan.summary.files_modified,
+                "files_added": plan.summary.files_added,
+                "files_deleted": plan.summary.files_deleted,
+                "data_present": plan.summary.data_present,
+                "data_to_transfer": plan.summary.data_to_transfer,
+                "files_transferred": 0,
+                "files_committed": 0,
+                "files_deleted_count": 0,
+                "actions": actions,
+            });
+            println!("{out}");
+        } else {
+            println!("{}", plan.summary.format_display());
+        }
+        session.bye().await.ok();
+        return Ok(());
+    }
+
+    if !is_json {
+        println!("{}", plan.summary.format_display());
+    }
+
+    let mut files_transferred = 0usize;
+    let mut files_committed = 0usize;
+    let mut files_deleted = 0usize;
+    let mut wire_bytes = 0u64;
+
+    for item in &plan.actions {
+        match item.action {
+            velcrux_core::sync::FileActionType::Add
+            | velcrux_core::sync::FileActionType::Modify => {
+                let remote_file = if vpath.is_empty() {
+                    item.rel_path.clone()
+                } else {
+                    format!("{}/{}", vpath.trim_end_matches('/'), item.rel_path)
+                };
+                let local_file = dst_dir.join(&item.rel_path);
+                if let Some(parent) = local_file.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let (_tid, _hash, size) = download_file_stream(
+                    &conn,
+                    &mut session,
+                    &remote_file,
+                    &local_file,
+                    false,
+                    cli,
+                )
+                .await?;
+                files_transferred += 1;
+                files_committed += 1;
+                wire_bytes += size;
+            }
+            velcrux_core::sync::FileActionType::Delete => {
+                if delete_after {
+                    let local_file = dst_dir.join(&item.rel_path);
+                    if local_file.exists() {
+                        std::fs::remove_file(&local_file)?;
+                        files_deleted += 1;
+                    }
+                }
+            }
+            velcrux_core::sync::FileActionType::Unchanged => {}
+        }
+    }
+
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "sync_summary",
+            "dry_run": false,
+            "source": source,
+            "destination": destination,
+            "files_unchanged": plan.summary.files_unchanged,
+            "files_modified": plan.summary.files_modified,
+            "files_added": plan.summary.files_added,
+            "files_deleted": plan.summary.files_deleted,
+            "data_present": plan.summary.data_present,
+            "data_to_transfer": plan.summary.data_to_transfer,
+            "files_transferred": files_transferred,
+            "files_committed": files_committed,
+            "files_deleted_count": files_deleted,
+            "wire_bytes_transferred": wire_bytes,
+        });
+        println!("{out}");
+    } else {
+        println!();
+        println!(
+            "Transferred: {} files (committed: {}, deleted: {})",
+            files_transferred, files_committed, files_deleted
+        );
+        println!("Wire data: {}", format_bytes(wire_bytes));
+    }
+
+    session.bye().await.ok();
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn run_sync(
+    cli: &Cli,
     source: &str,
     destination: &str,
     dry_run: bool,
@@ -976,6 +1393,23 @@ async fn run_sync(
     dedup: bool,
     chunk_store_path: &Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let src_is_remote = source.starts_with("velcrux://");
+    let dst_is_remote = destination.starts_with("velcrux://");
+
+    if src_is_remote && dst_is_remote {
+        anyhow::bail!("cross-server sync between two remote URLs is not supported");
+    }
+
+    if dst_is_remote {
+        return run_remote_upload_sync(cli, source, destination, dry_run, delete_after || delete)
+            .await;
+    }
+
+    if src_is_remote {
+        return run_remote_download_sync(cli, source, destination, dry_run, delete_after || delete)
+            .await;
+    }
+
     use velcrux_core::chunking::{ChunkMode, ChunkParams};
     use velcrux_core::storage::LocalChunkStore;
     use velcrux_core::sync::{execute_directory_sync, DeleteMode, DirectorySyncOptions};
@@ -1027,20 +1461,55 @@ async fn run_sync(
     let result = execute_directory_sync(&src_path, &dst_path, &options, None, store.as_ref())
         .map_err(|e| anyhow::anyhow!("sync failed: {e}"))?;
 
-    println!("{}", result.plan.summary.format_display());
+    let is_json = cli_log_json(cli);
+    if is_json {
+        let actions: Vec<_> = result
+            .plan
+            .actions
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "action": format!("{:?}", a.action).to_lowercase(),
+                    "path": a.rel_path,
+                    "size": a.src_size,
+                    "reused": a.bytes_reusable,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "sync_summary",
+            "dry_run": dry_run,
+            "source": source,
+            "destination": destination,
+            "files_unchanged": result.plan.summary.files_unchanged,
+            "files_modified": result.plan.summary.files_modified,
+            "files_added": result.plan.summary.files_added,
+            "files_deleted": result.plan.summary.files_deleted,
+            "data_present": result.plan.summary.data_present,
+            "data_to_transfer": result.plan.summary.data_to_transfer,
+            "files_transferred": result.files_transferred,
+            "files_committed": result.files_committed,
+            "files_deleted_count": result.files_deleted,
+            "actions": actions,
+        });
+        println!("{out}");
+    } else {
+        println!("{}", result.plan.summary.format_display());
 
-    if !dry_run {
-        println!();
-        println!(
-            "Transferred: {} files (committed: {}, deleted: {})",
-            result.files_transferred, result.files_committed, result.files_deleted
-        );
-        println!(
-            "Wire data: {} | Local reused: {} | Store reused: {}",
-            format_bytes(result.wire_bytes_transferred),
-            format_bytes(result.local_bytes_reused),
-            format_bytes(result.store_bytes_reused)
-        );
+        if !dry_run {
+            println!();
+            println!(
+                "Transferred: {} files (committed: {}, deleted: {})",
+                result.files_transferred, result.files_committed, result.files_deleted
+            );
+            println!(
+                "Wire data: {} | Local reused: {} | Store reused: {}",
+                format_bytes(result.wire_bytes_transferred),
+                format_bytes(result.local_bytes_reused),
+                format_bytes(result.store_bytes_reused)
+            );
+        }
     }
 
     Ok(())

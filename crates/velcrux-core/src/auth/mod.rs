@@ -248,13 +248,18 @@ fn normalize_grant_prefix(raw: &str) -> std::result::Result<String, VPathError> 
 
 impl Authorizer for FileAuthorizer {
     fn check(&self, identity: &Identity, op: Op, raw_path: &str) -> Result<VPath> {
-        // 1. Validate the untrusted wire path FIRST, before any grant lookup.
-        //    A malformed path is rejected regardless of grants. Traversal,
-        //    absolute paths, control chars, and over-long components are all
-        //    caught here (`storage::VPath::validate`).
-        let vpath = VPath::validate(raw_path)
-            .map_err(|_| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
-        let path = vpath.as_str();
+        let trimmed = raw_path.trim_start_matches('/').trim_end_matches('/');
+        let (vpath, path) = if trimmed.is_empty() {
+            if op == Op::Sync || op == Op::List {
+                (VPath::root(), "")
+            } else {
+                return Err(VelcruxError::Protocol(ProtocolError::InvalidPath));
+            }
+        } else {
+            let v = VPath::validate(trimmed)
+                .map_err(|_| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
+            (v, trimmed)
+        };
 
         // 2. Longest-matching-prefix grant for this identity. Matching is at
         //    component boundaries so `data/customerA` does NOT match

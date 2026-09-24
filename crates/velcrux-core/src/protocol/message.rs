@@ -677,6 +677,12 @@ pub enum TransferOp {
     Upload = 1,
     /// Single-file download.
     Download = 2,
+    /// Directory sync upload.
+    SyncUpload = 3,
+    /// Directory sync download.
+    SyncDownload = 4,
+    /// File deletion.
+    Delete = 5,
 }
 
 impl TransferOp {
@@ -685,6 +691,9 @@ impl TransferOp {
         match b {
             1 => Ok(Self::Upload),
             2 => Ok(Self::Download),
+            3 => Ok(Self::SyncUpload),
+            4 => Ok(Self::SyncDownload),
+            5 => Ok(Self::Delete),
             _ => Err(ProtocolError::Malformed("TRANSFER_CREATE: unknown op")),
         }
     }
@@ -2108,6 +2117,9 @@ mod tests {
     fn transfer_op_roundtrip() {
         assert_eq!(TransferOp::from_wire(1).unwrap(), TransferOp::Upload);
         assert_eq!(TransferOp::from_wire(2).unwrap(), TransferOp::Download);
+        assert_eq!(TransferOp::from_wire(3).unwrap(), TransferOp::SyncUpload);
+        assert_eq!(TransferOp::from_wire(4).unwrap(), TransferOp::SyncDownload);
+        assert_eq!(TransferOp::from_wire(5).unwrap(), TransferOp::Delete);
         assert!(TransferOp::from_wire(0).is_err());
         assert!(TransferOp::from_wire(99).is_err());
     }

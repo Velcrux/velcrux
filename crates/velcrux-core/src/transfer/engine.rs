@@ -172,6 +172,40 @@ pub async fn client_upload_with_state(
     remote_path: &str,
     file_size: u64,
     expected_hash: Hash,
+    bitmap: ChunkBitmap,
+    cfg: PipelineConfig,
+    progress_tx: Option<mpsc::Sender<u64>>,
+) -> Result<Hash> {
+    client_upload_stream(
+        conn,
+        control_send.as_mut(),
+        control_recv.as_mut(),
+        store,
+        transfer_id,
+        idempotency_key,
+        local_path,
+        remote_path,
+        file_size,
+        expected_hash,
+        bitmap,
+        cfg,
+        progress_tx,
+    )
+    .await
+}
+
+/// Resumable client-side upload over borrowed control streams.
+pub async fn client_upload_stream(
+    conn: &dyn Connection,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    store: Option<Arc<dyn StateStore>>,
+    transfer_id: TransferId,
+    idempotency_key: &str,
+    local_path: PathBuf,
+    remote_path: &str,
+    file_size: u64,
+    expected_hash: Hash,
     mut bitmap: ChunkBitmap,
     cfg: PipelineConfig,
     progress_tx: Option<mpsc::Sender<u64>>,
@@ -826,6 +860,26 @@ pub async fn client_download_with_progress(
     conn: &dyn Connection,
     mut control_send: Box<dyn BiSendStream>,
     mut control_recv: Box<dyn BiRecvStream>,
+    transfer_id: TransferId,
+    local_path: PathBuf,
+    progress_tx: Option<mpsc::Sender<u64>>,
+) -> Result<Hash> {
+    client_download_stream(
+        conn,
+        control_send.as_mut(),
+        control_recv.as_mut(),
+        transfer_id,
+        local_path,
+        progress_tx,
+    )
+    .await
+}
+
+/// Client-side download over borrowed control streams.
+pub async fn client_download_stream(
+    conn: &dyn Connection,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
     local_path: PathBuf,
     progress_tx: Option<mpsc::Sender<u64>>,

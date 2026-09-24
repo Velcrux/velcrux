@@ -185,6 +185,11 @@ impl ClientSession {
         &mut self.recv
     }
 
+    /// Mutable borrow of both control stream halves at once.
+    pub fn stream_halves_mut(&mut self) -> (&mut dyn BiSendStream, &mut dyn BiRecvStream) {
+        (self.send.as_mut(), self.recv.as_mut())
+    }
+
     /// Move the send half out of the session. Used by M2 transfer
     /// pipelines that need to write/read the control stream directly.
     ///

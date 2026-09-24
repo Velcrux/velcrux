@@ -187,6 +187,65 @@ struct ScannedFile {
     size: u64,
 }
 
+/// Scanned directory entry with size and whole-file BLAKE3 hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedEntry {
+    pub size: u64,
+    pub hash: Hash,
+}
+
+/// Recursively scan all files in a directory root and compute their size and whole-file hash.
+pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, ScannedEntry>> {
+    let mut files = BTreeMap::new();
+    if !root.exists() {
+        return Ok(files);
+    }
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+            // Skip staging, chunk store, and partial files
+            if name_str.starts_with(".velcrux-staging")
+                || name_str.starts_with(".velcrux-chunks")
+                || name_str.ends_with(".velcrux-partial")
+            {
+                continue;
+            }
+
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() {
+                let rel = path
+                    .strip_prefix(root)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                let rel_str = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join("/");
+
+                let metadata = entry.metadata()?;
+                let hash = compute_file_hash(&path)?;
+                files.insert(
+                    rel_str,
+                    ScannedEntry {
+                        size: metadata.len(),
+                        hash,
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(files)
+}
+
 fn scan_dir_files(root: &Path) -> std::io::Result<BTreeMap<String, ScannedFile>> {
     let mut files = BTreeMap::new();
     if !root.exists() {
@@ -203,7 +262,10 @@ fn scan_dir_files(root: &Path) -> std::io::Result<BTreeMap<String, ScannedFile>>
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
             // Skip staging and partial files
-            if name_str.starts_with(".velcrux-staging") || name_str.ends_with(".velcrux-partial") {
+            if name_str.starts_with(".velcrux-staging")
+                || name_str.starts_with(".velcrux-chunks")
+                || name_str.ends_with(".velcrux-partial")
+            {
                 continue;
             }
 
@@ -234,7 +296,8 @@ fn scan_dir_files(root: &Path) -> std::io::Result<BTreeMap<String, ScannedFile>>
     Ok(files)
 }
 
-fn compute_file_hash(path: &Path) -> std::io::Result<Hash> {
+/// Compute whole-file BLAKE3 hash.
+pub fn compute_file_hash(path: &Path) -> std::io::Result<Hash> {
     let mut file = File::open(path)?;
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -247,6 +310,246 @@ fn compute_file_hash(path: &Path) -> std::io::Result<Hash> {
     }
     let digest = hasher.finalize();
     Ok(Hash::from_bytes(digest.as_bytes()).expect("blake3 length"))
+}
+
+/// Plan a directory reconciliation diff between source and destination file maps.
+pub fn plan_directory_diff(
+    src_files: &BTreeMap<String, ScannedEntry>,
+    dst_files: &BTreeMap<String, ScannedEntry>,
+) -> DirectoryPlan {
+    let mut actions = Vec::new();
+    let mut files_unchanged = 0usize;
+    let mut files_modified = 0usize;
+    let mut files_added = 0usize;
+    let mut files_deleted = 0usize;
+    let mut data_present = 0u64;
+    let mut data_to_transfer = 0u64;
+
+    let mut all_paths = BTreeMap::new();
+    for (p, sf) in src_files {
+        all_paths.insert(p.clone(), (Some(sf), None));
+    }
+    for (p, df) in dst_files {
+        all_paths
+            .entry(p.clone())
+            .and_modify(|pair| pair.1 = Some(df))
+            .or_insert((None, Some(df)));
+    }
+
+    for (rel_path, (sf_opt, df_opt)) in all_paths {
+        match (sf_opt, df_opt) {
+            (Some(sf), Some(df)) => {
+                if sf.size == df.size && sf.hash == df.hash {
+                    files_unchanged += 1;
+                    data_present += sf.size;
+                    actions.push(FileAction {
+                        rel_path,
+                        action: FileActionType::Unchanged,
+                        src_size: sf.size,
+                        dst_size: df.size,
+                        src_hash: Some(sf.hash),
+                        bytes_to_transfer: 0,
+                        bytes_reusable: sf.size,
+                    });
+                } else {
+                    files_modified += 1;
+                    data_to_transfer += sf.size;
+                    actions.push(FileAction {
+                        rel_path,
+                        action: FileActionType::Modify,
+                        src_size: sf.size,
+                        dst_size: df.size,
+                        src_hash: Some(sf.hash),
+                        bytes_to_transfer: sf.size,
+                        bytes_reusable: 0,
+                    });
+                }
+            }
+            (Some(sf), None) => {
+                files_added += 1;
+                data_to_transfer += sf.size;
+                actions.push(FileAction {
+                    rel_path,
+                    action: FileActionType::Add,
+                    src_size: sf.size,
+                    dst_size: 0,
+                    src_hash: Some(sf.hash),
+                    bytes_to_transfer: sf.size,
+                    bytes_reusable: 0,
+                });
+            }
+            (None, Some(df)) => {
+                files_deleted += 1;
+                actions.push(FileAction {
+                    rel_path,
+                    action: FileActionType::Delete,
+                    src_size: 0,
+                    dst_size: df.size,
+                    src_hash: None,
+                    bytes_to_transfer: 0,
+                    bytes_reusable: 0,
+                });
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+
+    let total_data = data_present + data_to_transfer;
+    let estimated_reduction = if total_data > 0 {
+        (data_present as f64 / total_data as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let summary = DirectoryDiffSummary {
+        files_unchanged,
+        files_modified,
+        files_added,
+        files_deleted,
+        data_present,
+        data_to_transfer,
+        estimated_reduction,
+    };
+
+    DirectoryPlan { actions, summary }
+}
+
+/// Send a directory inventory as a framed streaming manifest (MANIFEST_BEGIN, MANIFEST_BATCH*, MANIFEST_END).
+pub async fn send_directory_manifest(
+    send: &mut dyn crate::transport::BiSendStream,
+    entries: &BTreeMap<String, ScannedEntry>,
+) -> crate::error::Result<Hash> {
+    use crate::manifest::codec::encode_file_entry;
+    use crate::manifest::entry::FileEntry;
+    use crate::protocol::limits::MANIFEST_BATCH_SIZE;
+    use crate::protocol::message::{ManifestBatch, ManifestBegin, ManifestEnd, Message};
+    use crate::session::write_frame;
+    use crate::storage::VPath;
+
+    let file_count = entries.len() as u64;
+    let total_bytes: u64 = entries.values().map(|e| e.size).sum();
+    let chunker_params = ChunkParams::default();
+
+    // Compute canonical manifest hash across all entries
+    let mut manifest_hasher = blake3::Hasher::new();
+    let mut all_file_entries = Vec::with_capacity(entries.len());
+    for (rel_path, entry) in entries {
+        let vpath = VPath::validate(rel_path).map_err(|e| {
+            crate::error::VelcruxError::Protocol(crate::error::ProtocolError::InvalidManifest(
+                e.to_string(),
+            ))
+        })?;
+        let mut chunks = Vec::new();
+        let mut remaining = entry.size;
+        while remaining > 0 {
+            let chunk_len = remaining.min(crate::protocol::limits::MAX_CHUNK_SIZE);
+            chunks.push(crate::manifest::entry::ChunkDesc::new(
+                chunk_len, entry.hash,
+            ));
+            remaining -= chunk_len;
+        }
+        let fe = FileEntry::regular(vpath, entry.size, 0o644, 0, 0, entry.hash, chunks);
+        let mut buf = Vec::new();
+        encode_file_entry(&fe, &mut buf);
+        manifest_hasher.update(&buf);
+        all_file_entries.push(fe);
+    }
+    let digest = manifest_hasher.finalize();
+    let manifest_hash = Hash::from_bytes(digest.as_bytes()).expect("blake3 length");
+
+    // Send MANIFEST_BEGIN
+    let begin = ManifestBegin {
+        file_count,
+        total_bytes,
+        chunker_params,
+        manifest_hash,
+    };
+    write_frame(send, &Message::ManifestBegin(begin), 0).await?;
+
+    // Send MANIFEST_BATCH frames in chunks of MANIFEST_BATCH_SIZE
+    let mut batch_index = 0u64;
+    for chunk in all_file_entries.chunks(MANIFEST_BATCH_SIZE) {
+        let mut raw_batch = Vec::new();
+        for fe in chunk {
+            encode_file_entry(fe, &mut raw_batch);
+        }
+        let compressed = zstd::encode_all(&raw_batch[..], 3).map_err(|e| {
+            crate::error::VelcruxError::Internal(format!("zstd compress batch: {e}"))
+        })?;
+        let batch = ManifestBatch {
+            batch_index,
+            entry_count: chunk.len() as u32,
+            compressed_payload: bytes::Bytes::from(compressed),
+        };
+        write_frame(send, &Message::ManifestBatch(batch), 0).await?;
+        batch_index += 1;
+    }
+
+    // Send MANIFEST_END
+    let end = ManifestEnd { manifest_hash };
+    write_frame(send, &Message::ManifestEnd(end), 0).await?;
+
+    Ok(manifest_hash)
+}
+
+/// Receive a framed streaming manifest from the wire and return the directory inventory.
+pub async fn recv_directory_manifest(
+    recv: &mut dyn crate::transport::BiRecvStream,
+) -> crate::error::Result<BTreeMap<String, ScannedEntry>> {
+    use crate::manifest::reader::ManifestBatchDecoder;
+    use crate::protocol::message::ManifestBegin;
+    use crate::session::read_frame;
+
+    let frame = read_frame(recv)
+        .await?
+        .ok_or_else(|| crate::error::VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+
+    if frame.type_byte != crate::protocol::message::MANIFEST_BEGIN {
+        return Err(crate::error::VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition("expected MANIFEST_BEGIN"),
+        ));
+    }
+    let begin = ManifestBegin::decode(&frame.payload)?;
+    let mut decoder = ManifestBatchDecoder::new(begin.manifest_hash);
+    let mut entries = BTreeMap::new();
+
+    loop {
+        let frame = read_frame(recv).await?.ok_or_else(|| {
+            crate::error::VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+        })?;
+
+        if frame.type_byte == crate::protocol::message::MANIFEST_BATCH {
+            let batch = crate::protocol::message::ManifestBatch::decode(&frame.payload)?;
+            let file_entries = decoder.decode_batch(&batch)?;
+            for fe in file_entries {
+                entries.insert(
+                    fe.path.as_str().to_string(),
+                    ScannedEntry {
+                        size: fe.size,
+                        hash: fe.file_hash,
+                    },
+                );
+            }
+        } else if frame.type_byte == crate::protocol::message::MANIFEST_END {
+            let end = crate::protocol::message::ManifestEnd::decode(&frame.payload)?;
+            if end.manifest_hash != begin.manifest_hash {
+                return Err(crate::error::VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidManifest(
+                        "manifest hash mismatch at MANIFEST_END".into(),
+                    ),
+                ));
+            }
+            break;
+        } else {
+            return Err(crate::error::VelcruxError::Protocol(
+                crate::error::ProtocolError::InvalidStateTransition(
+                    "expected MANIFEST_BATCH or MANIFEST_END",
+                ),
+            ));
+        }
+    }
+
+    Ok(entries)
 }
 
 /// Compute a directory sync plan by scanning source and destination directories.
@@ -786,5 +1089,73 @@ mod tests {
         assert!(out.contains("Files added:                   31"));
         assert!(out.contains("Files deleted:                  7"));
         assert!(out.contains("96.4%"));
+    }
+
+    #[test]
+    fn test_plan_directory_diff_reconciliation() {
+        let mut src = BTreeMap::new();
+        let mut dst = BTreeMap::new();
+
+        let h1 = Hash::from_bytes(&[1u8; 32]).unwrap();
+        let h2 = Hash::from_bytes(&[2u8; 32]).unwrap();
+        let h3 = Hash::from_bytes(&[3u8; 32]).unwrap();
+
+        // 1. Unchanged
+        src.insert(
+            "unchanged.txt".into(),
+            ScannedEntry {
+                size: 100,
+                hash: h1,
+            },
+        );
+        dst.insert(
+            "unchanged.txt".into(),
+            ScannedEntry {
+                size: 100,
+                hash: h1,
+            },
+        );
+
+        // 2. Modified
+        src.insert(
+            "modified.txt".into(),
+            ScannedEntry {
+                size: 200,
+                hash: h2,
+            },
+        );
+        dst.insert(
+            "modified.txt".into(),
+            ScannedEntry {
+                size: 200,
+                hash: h1,
+            },
+        );
+
+        // 3. Added
+        src.insert(
+            "added.txt".into(),
+            ScannedEntry {
+                size: 300,
+                hash: h3,
+            },
+        );
+
+        // 4. Deleted
+        dst.insert(
+            "deleted.txt".into(),
+            ScannedEntry {
+                size: 400,
+                hash: h2,
+            },
+        );
+
+        let plan = plan_directory_diff(&src, &dst);
+        assert_eq!(plan.summary.files_unchanged, 1);
+        assert_eq!(plan.summary.files_modified, 1);
+        assert_eq!(plan.summary.files_added, 1);
+        assert_eq!(plan.summary.files_deleted, 1);
+        assert_eq!(plan.summary.data_present, 100);
+        assert_eq!(plan.summary.data_to_transfer, 500); // modified (200) + added (300)
     }
 }

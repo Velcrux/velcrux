@@ -54,16 +54,18 @@ pub use storage::{
     VPathError,
 };
 pub use sync::{
-    execute_dedup_sync, execute_delta_sync, execute_directory_sync, plan_directory_sync,
-    resume_interrupted_commit, BloomFilter, ChunkExtent, CostEstimator, DeleteMode, DeltaProgress,
-    DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
-    DirectorySyncResult, FileAction, FileActionType, LocalInventory, RleBitmap, RleRun,
-    SyncDecision, SyncError, SyncPlan,
+    compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
+    plan_directory_diff, plan_directory_sync, recv_directory_manifest, resume_interrupted_commit,
+    scan_dir_entries, send_directory_manifest, BloomFilter, ChunkExtent, CostEstimator, DeleteMode,
+    DeltaProgress, DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan,
+    DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType, LocalInventory,
+    RleBitmap, RleRun, ScannedEntry, SyncDecision, SyncError, SyncPlan,
 };
 pub use transfer::{
-    client_download, client_download_with_progress, client_upload, client_upload_with_state,
-    server_download_session, server_staging_path, server_upload_session,
-    server_upload_session_with_state, PipelineConfig, TransferDir, TransferKind, TransferRequest,
+    client_download, client_download_stream, client_download_with_progress, client_upload,
+    client_upload_stream, client_upload_with_state, server_download_session, server_staging_path,
+    server_upload_session, server_upload_session_with_state, PipelineConfig, TransferDir,
+    TransferKind, TransferRequest,
 };
 pub use transport::{Connection, SharedTransport};
 pub use util::{Hash, HashAlgorithm, HashHasher};

@@ -13,9 +13,10 @@ pub mod rle;
 
 pub use bloom::BloomFilter;
 pub use directory::{
-    execute_directory_sync, plan_directory_sync, resume_interrupted_commit, DeleteMode,
-    DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction,
-    FileActionType,
+    compute_file_hash, execute_directory_sync, plan_directory_diff, plan_directory_sync,
+    recv_directory_manifest, resume_interrupted_commit, scan_dir_entries, send_directory_manifest,
+    DeleteMode, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult,
+    FileAction, FileActionType, ScannedEntry,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use inventory::{ChunkExtent, LocalInventory};

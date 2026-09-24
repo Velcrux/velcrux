@@ -137,6 +137,16 @@ impl VPath {
         Path::new(&self.0)
     }
 
+    /// Return the root virtual path (empty relative path).
+    pub fn root() -> Self {
+        Self(String::new())
+    }
+
+    /// True if this virtual path is the root directory.
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Construct a `VPath` from a string already known to be valid. The
     /// only public caller is the storage backend resolving relative paths.
     pub(crate) fn from_validated(s: String) -> Self {
@@ -500,6 +510,9 @@ impl StorageBackend for LocalFilesystemBackend {
     }
 
     async fn remove(&self, p: &VPath) -> Result<(), VelcruxError> {
+        if p.is_root() {
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidPath));
+        }
         let path = self.resolve(p);
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),

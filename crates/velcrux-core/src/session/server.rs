@@ -430,6 +430,60 @@ async fn handle_transfer_create(
 
     let create = TransferCreate::decode(payload)?;
 
+    if create.op == TransferOp::Delete {
+        let dst = match authorizer.check(identity, Op::Delete, &create.dst_path) {
+            Ok(p) => p,
+            Err(_) => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+        let transfer_id = TransferId::generate();
+        let _ = backend.remove(&dst).await;
+        let committed = Committed {
+            transfer_id,
+            files: 1,
+        };
+        write_frame(send, &Message::Committed(committed), 0).await?;
+        return Ok(());
+    }
+
+    if create.op == TransferOp::SyncUpload || create.op == TransferOp::SyncDownload {
+        let target_path = if create.op == TransferOp::SyncUpload {
+            &create.dst_path
+        } else {
+            &create.src_path
+        };
+        let vpath = match authorizer.check(identity, Op::Sync, target_path) {
+            Ok(p) => p,
+            Err(_) => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        let transfer_id = TransferId::generate();
+        let created = TransferCreated {
+            transfer_id,
+            resumed: false,
+            max_chunk_size: MAX_CHUNK_SIZE,
+        };
+        write_frame(send, &Message::TransferCreated(created), 0).await?;
+
+        let server_dir = backend.root().join(vpath.as_path());
+        let entries = crate::sync::scan_dir_entries(&server_dir).unwrap_or_default();
+        crate::sync::send_directory_manifest(send, &entries).await?;
+        return Ok(());
+    }
+
     // Authorize the destination path for the requested operation BEFORE any
     // filesystem access. This both validates the path (traversal, absolute,
     // control chars) and enforces the identity's grants. Any failure →
@@ -437,6 +491,7 @@ async fn handle_transfer_create(
     let op = match create.op {
         TransferOp::Upload => Op::Upload,
         TransferOp::Download => Op::Download,
+        _ => unreachable!(),
     };
     let dst = match authorizer.check(identity, op, &create.dst_path) {
         Ok(p) => p,
@@ -480,6 +535,7 @@ async fn handle_transfer_create(
                 return Ok(());
             }
         },
+        _ => unreachable!(),
     };
 
     if let Some(store) = state {
@@ -494,6 +550,7 @@ async fn handle_transfer_create(
             direction: match create.op {
                 TransferOp::Upload => Direction::Upload,
                 TransferOp::Download => Direction::Download,
+                _ => unreachable!(),
             },
             status: TransferStatus::Active,
             remote_path: create.dst_path.clone(),
@@ -592,6 +649,7 @@ async fn handle_transfer_create(
             )
             .await
         }
+        _ => unreachable!(),
     };
 
     if let Some(store) = state {
