@@ -858,6 +858,7 @@ async fn handle_transfer_create(
                         ),
                     ));
                 }
+                let begin = TransferBegin::decode(&begin_frame.payload)?;
 
                 if plan.bytes_to_transfer == 0 {
                     let frame = read_frame(recv).await?.ok_or_else(|| {
@@ -931,6 +932,7 @@ async fn handle_transfer_create(
                     create.file_size,
                     create.file_hash,
                     Some(initial_bitmap),
+                    begin.streams as usize,
                 )
                 .await
                 .map(|_| ());
@@ -1074,7 +1076,7 @@ async fn handle_transfer_create(
     }
 
     let res = match create.op {
-        TransferOp::Upload => crate::transfer::server_upload_session_with_state(
+        TransferOp::Upload => crate::transfer::server_upload_session_with_delta(
             conn,
             backend,
             send,
@@ -1085,6 +1087,8 @@ async fn handle_transfer_create(
             &dst,
             create.file_size,
             create.file_hash,
+            None,
+            begin.streams as usize,
         )
         .await
         .map(|_| ()),
@@ -1110,6 +1114,7 @@ async fn handle_transfer_create(
                 bytes_total,
                 file_hash,
                 download_skip_bitmap,
+                begin.streams as usize,
             )
             .await
         }
@@ -1258,7 +1263,7 @@ async fn handle_resume(
 
     let dst = VPath::validate(&record.remote_path)?;
     let res = match record.direction {
-        Direction::Upload => crate::transfer::server_upload_session_with_state(
+        Direction::Upload => crate::transfer::server_upload_session_with_delta(
             conn,
             backend,
             send,
@@ -1269,11 +1274,13 @@ async fn handle_resume(
             &dst,
             record.file_size,
             record.file_hash,
+            None,
+            begin.streams as usize,
         )
         .await
         .map(|_| ()),
         Direction::Download => {
-            crate::transfer::server_download_session(
+            crate::transfer::server_download_session_with_delta(
                 conn,
                 backend,
                 send,
@@ -1282,6 +1289,8 @@ async fn handle_resume(
                 &dst,
                 record.file_size,
                 record.file_hash,
+                None,
+                begin.streams as usize,
             )
             .await
         }

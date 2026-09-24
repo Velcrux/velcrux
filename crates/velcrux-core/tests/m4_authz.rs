@@ -234,9 +234,7 @@ async fn upload_ok(
         frame.type_byte
     );
     let _plan = TransferPlan::decode(&frame.payload).unwrap();
-    let begin = TransferBegin {
-        transfer_id: created.transfer_id,
-    };
+    let begin = TransferBegin::new(created.transfer_id);
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0).unwrap());
     session.send_mut().write_all(buf).await.unwrap();
 

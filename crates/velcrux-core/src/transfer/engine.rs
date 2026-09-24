@@ -91,6 +91,8 @@ pub struct PipelineConfig {
     pub chunk_mode: ChunkMode,
     /// Chunker parameters.
     pub chunk_params: ChunkParams,
+    /// Number of parallel QUIC data streams (default: 1, range 1..=16).
+    pub parallel_streams: usize,
 }
 
 impl Default for PipelineConfig {
@@ -100,6 +102,7 @@ impl Default for PipelineConfig {
             max_inflight: 4,
             chunk_mode: ChunkMode::Cdc,
             chunk_params: ChunkParams::default(),
+            parallel_streams: 1,
         }
     }
 }
@@ -238,20 +241,8 @@ pub async fn client_upload_stream(
         let _ = s.upsert_transfer(&record);
     }
 
-    // Open a unidirectional stream for the data and write the preamble.
-    let mut data_send = conn.open_uni().await?;
-    let preamble = DataPreamble {
-        transfer_id,
-        file_id: 1,
-        stream_seq: 1,
-    };
-    data_send
-        .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
-        .await?;
-
-    if bitmap.len() > 0 || cfg.chunk_mode == ChunkMode::Fixed {
-        // Resumable / Fixed chunking pipeline.
-        use tokio::io::AsyncSeekExt;
+    let parallel = cfg.parallel_streams.clamp(1, 16);
+    if parallel > 1 {
         let chunk_size = if cfg.chunk_mode == ChunkMode::Fixed {
             cfg.chunk_params.target
         } else if bitmap.len() > 0 && (bitmap.len() as u64) > file_size.div_ceil(M3_CHUNK_SIZE) {
@@ -259,10 +250,19 @@ pub async fn client_upload_stream(
         } else {
             M3_CHUNK_SIZE
         };
-        let total_chunks = file_size.div_ceil(chunk_size);
-        let mut file = tokio::fs::File::open(&local_path).await?;
-        let mut next_chunk = bitmap.first_missing_from(0).unwrap_or(total_chunks);
-        let mut last_checkpoint_bytes = bitmap.bytes_completed();
+        let total_chunks = if file_size == 0 {
+            0
+        } else {
+            file_size.div_ceil(chunk_size)
+        };
+        let mut missing_chunks = Vec::new();
+        let mut next_c = bitmap.first_missing_from(0).unwrap_or(total_chunks);
+        while next_c < total_chunks {
+            missing_chunks.push(next_c);
+            next_c = bitmap
+                .first_missing_from(next_c + 1)
+                .unwrap_or(total_chunks);
+        }
 
         if let Some(tx) = &progress_tx {
             let already = bitmap.bytes_completed();
@@ -271,86 +271,196 @@ pub async fn client_upload_stream(
             }
         }
 
-        while next_chunk < total_chunks {
-            let offset = next_chunk * chunk_size;
-            let want = (file_size - offset).min(chunk_size) as usize;
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-            let mut buf = vec![0u8; want];
-            let mut read = 0;
-            while read < want {
-                let n = file.read(&mut buf[read..]).await?;
-                if n == 0 {
-                    return Err(VelcruxError::Internal("file truncated".into()));
-                }
-                read += n;
-            }
-            let hash = Hash::of(&buf);
-            bitmap.mark_complete(next_chunk, read as u64);
-            let bytes = encode_data_frame(offset, read as u32, DataFrameFlags::NONE, &hash, &buf);
-            data_send.write_all(Bytes::from(bytes)).await?;
+        let chunk_indices = Arc::new(missing_chunks);
+        let next_work_idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let local_path = Arc::new(local_path.clone());
+        let shared_bitmap = Arc::new(tokio::sync::Mutex::new(bitmap.clone()));
+        let mut handles = Vec::with_capacity(parallel);
 
-            if let Some(tx) = &progress_tx {
-                let _ = tx.try_send(read as u64);
-            }
+        for worker_idx in 0..parallel {
+            let mut data_send = conn.open_uni().await?;
+            let chunk_indices = Arc::clone(&chunk_indices);
+            let next_work_idx = Arc::clone(&next_work_idx);
+            let local_path = Arc::clone(&local_path);
+            let shared_bitmap = Arc::clone(&shared_bitmap);
+            let progress_clone = progress_tx.clone();
+            let tid = transfer_id;
 
-            if let Some(s) = &store {
-                if bitmap
-                    .bytes_completed()
-                    .saturating_sub(last_checkpoint_bytes)
-                    >= 16 * 1024 * 1024
-                {
-                    let _ = s.write_bitmap(transfer_id, &bitmap);
-                    last_checkpoint_bytes = bitmap.bytes_completed();
-                }
-            }
+            let handle = tokio::spawn(async move {
+                let preamble = DataPreamble {
+                    transfer_id: tid,
+                    file_id: 1,
+                    stream_seq: (worker_idx + 1) as u64,
+                };
+                data_send
+                    .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
+                    .await?;
 
-            next_chunk = bitmap
-                .first_missing_from(next_chunk + 1)
-                .unwrap_or(total_chunks);
-        }
-        let _ = data_send.finish().await;
-    } else {
-        // CDC streaming pipeline.
-        let (tx, mut rx) = mpsc::channel::<DataItem>(cfg.max_inflight);
-        let read_path = local_path.clone();
-        let chunker_task =
-            tokio::spawn(async move { chunker_to_channel(read_path, file_size, cfg, tx).await });
+                if file_size > 0 {
+                    let mut file = tokio::fs::File::open(&*local_path).await?;
+                    use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-        let progress_clone = progress_tx.clone();
-        let writer_task = tokio::spawn(async move {
-            while let Some(item) = rx.recv().await {
-                match item {
-                    DataItem::Frame {
-                        offset,
-                        length,
-                        hash,
-                        payload,
-                    } => {
+                    loop {
+                        let work_idx =
+                            next_work_idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if work_idx >= chunk_indices.len() {
+                            break;
+                        }
+                        let chunk_idx = chunk_indices[work_idx];
+                        let offset = chunk_idx * chunk_size;
+                        let want = (file_size - offset).min(chunk_size) as usize;
+                        file.seek(std::io::SeekFrom::Start(offset)).await?;
+                        let mut buf = vec![0u8; want];
+                        file.read_exact(&mut buf).await?;
+                        let hash = Hash::of(&buf);
                         let bytes = encode_data_frame(
                             offset,
-                            length,
+                            want as u32,
                             DataFrameFlags::NONE,
                             &hash,
-                            &payload,
+                            &buf,
                         );
                         data_send.write_all(Bytes::from(bytes)).await?;
-                        if let Some(tx) = &progress_clone {
-                            let _ = tx.try_send(length as u64);
+                        {
+                            let mut bm = shared_bitmap.lock().await;
+                            bm.mark_complete(chunk_idx, want as u64);
+                        }
+                        if let Some(ref tx) = progress_clone {
+                            let _ = tx.try_send(want as u64);
                         }
                     }
-                    DataItem::Eof => break,
+                }
+                data_send.finish().await?;
+                Result::<()>::Ok(())
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.await
+                .map_err(|e| VelcruxError::Internal(format!("upload worker join: {e}")))??;
+        }
+
+        bitmap = shared_bitmap.lock().await.clone();
+    } else {
+        // Open a unidirectional stream for the data and write the preamble.
+        let mut data_send = conn.open_uni().await?;
+        let preamble = DataPreamble {
+            transfer_id,
+            file_id: 1,
+            stream_seq: 1,
+        };
+        data_send
+            .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
+            .await?;
+
+        if bitmap.len() > 0 || cfg.chunk_mode == ChunkMode::Fixed {
+            // Resumable / Fixed chunking pipeline.
+            use tokio::io::AsyncSeekExt;
+            let chunk_size = if cfg.chunk_mode == ChunkMode::Fixed {
+                cfg.chunk_params.target
+            } else if bitmap.len() > 0 && (bitmap.len() as u64) > file_size.div_ceil(M3_CHUNK_SIZE)
+            {
+                64 * 1024
+            } else {
+                M3_CHUNK_SIZE
+            };
+            let total_chunks = file_size.div_ceil(chunk_size);
+            let mut file = tokio::fs::File::open(&local_path).await?;
+            let mut next_chunk = bitmap.first_missing_from(0).unwrap_or(total_chunks);
+            let mut last_checkpoint_bytes = bitmap.bytes_completed();
+
+            if let Some(tx) = &progress_tx {
+                let already = bitmap.bytes_completed();
+                if already > 0 {
+                    let _ = tx.try_send(already);
                 }
             }
-            data_send.finish().await?;
-            Result::<()>::Ok(())
-        });
 
-        chunker_task
-            .await
-            .map_err(|e| VelcruxError::Internal(format!("chunker task join: {e}")))??;
-        writer_task
-            .await
-            .map_err(|e| VelcruxError::Internal(format!("writer task join: {e}")))??;
+            while next_chunk < total_chunks {
+                let offset = next_chunk * chunk_size;
+                let want = (file_size - offset).min(chunk_size) as usize;
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                let mut buf = vec![0u8; want];
+                let mut read = 0;
+                while read < want {
+                    let n = file.read(&mut buf[read..]).await?;
+                    if n == 0 {
+                        return Err(VelcruxError::Internal("file truncated".into()));
+                    }
+                    read += n;
+                }
+                let hash = Hash::of(&buf);
+                bitmap.mark_complete(next_chunk, read as u64);
+                let bytes =
+                    encode_data_frame(offset, read as u32, DataFrameFlags::NONE, &hash, &buf);
+                data_send.write_all(Bytes::from(bytes)).await?;
+
+                if let Some(tx) = &progress_tx {
+                    let _ = tx.try_send(read as u64);
+                }
+
+                if let Some(s) = &store {
+                    if bitmap
+                        .bytes_completed()
+                        .saturating_sub(last_checkpoint_bytes)
+                        >= 16 * 1024 * 1024
+                    {
+                        let _ = s.write_bitmap(transfer_id, &bitmap);
+                        last_checkpoint_bytes = bitmap.bytes_completed();
+                    }
+                }
+
+                next_chunk = bitmap
+                    .first_missing_from(next_chunk + 1)
+                    .unwrap_or(total_chunks);
+            }
+            let _ = data_send.finish().await;
+        } else {
+            // CDC streaming pipeline.
+            let (tx, mut rx) = mpsc::channel::<DataItem>(cfg.max_inflight);
+            let read_path = local_path.clone();
+            let chunker_task =
+                tokio::spawn(
+                    async move { chunker_to_channel(read_path, file_size, cfg, tx).await },
+                );
+
+            let progress_clone = progress_tx.clone();
+            let writer_task = tokio::spawn(async move {
+                while let Some(item) = rx.recv().await {
+                    match item {
+                        DataItem::Frame {
+                            offset,
+                            length,
+                            hash,
+                            payload,
+                        } => {
+                            let bytes = encode_data_frame(
+                                offset,
+                                length,
+                                DataFrameFlags::NONE,
+                                &hash,
+                                &payload,
+                            );
+                            data_send.write_all(Bytes::from(bytes)).await?;
+                            if let Some(tx) = &progress_clone {
+                                let _ = tx.try_send(length as u64);
+                            }
+                        }
+                        DataItem::Eof => break,
+                    }
+                }
+                data_send.finish().await?;
+                Result::<()>::Ok(())
+            });
+
+            chunker_task
+                .await
+                .map_err(|e| VelcruxError::Internal(format!("chunker task join: {e}")))??;
+            writer_task
+                .await
+                .map_err(|e| VelcruxError::Internal(format!("writer task join: {e}")))??;
+        }
     }
 
     if let Some(s) = &store {
@@ -679,6 +789,7 @@ pub async fn server_upload_session_with_state(
         expected_size,
         expected_hash,
         None,
+        1,
     )
     .await
 }
@@ -697,27 +808,10 @@ pub async fn server_upload_session_with_delta(
     expected_size: u64,
     expected_hash: Hash,
     initial_bitmap: Option<ChunkBitmap>,
+    parallel_streams: usize,
 ) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
-
-    // Receive the data stream.
-    let mut data_recv = conn.accept_uni().await?;
-    let pre = data_recv
-        .read_exact(DATA_PREAMBLE_LEN)
-        .await?
-        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
-    let preamble = decode_data_preamble(&pre)?;
-    if preamble.transfer_id != transfer_id {
-        return Err(protocol_violation(
-            "upload: transfer_id mismatch in preamble",
-        ));
-    }
-
-    // Open staging (preserving existing bytes if resuming).
-    let mut writer = backend
-        .open_staging_resumable(&transfer_id.to_string(), dst, expected_size, resumed)
-        .await?;
 
     let is_delta = initial_bitmap.is_some();
     let mut bitmap = if let Some(bm) = initial_bitmap {
@@ -728,47 +822,138 @@ pub async fn server_upload_session_with_delta(
             _ => ChunkBitmap::new(),
         }
     };
-    let mut bytes_received = bitmap.bytes_completed();
-    let mut last_checkpoint_bytes = bytes_received;
-
     let chunk_size = if is_delta { 64 * 1024 } else { M3_CHUNK_SIZE };
 
-    loop {
-        let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
-            Some(b) => b,
-            None => break,
-        };
-        let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
-        let payload_len = hdr.chunk_len as usize;
-        let payload = match data_recv.read_exact(payload_len).await? {
-            Some(b) => b,
-            None => {
-                return Err(protocol_violation(
-                    "upload: chunk payload shorter than declared (stream EOF)",
-                ));
-            }
-        };
-        let computed = hash_bytes(&payload);
-        if computed != hdr.chunk_hash {
-            return Err(VelcruxError::Protocol(
-                crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
+    let staging_handle = if parallel_streams > 1 {
+        let writer = backend
+            .open_staging_resumable(&transfer_id.to_string(), dst, expected_size, resumed)
+            .await?;
+        let writer = Arc::new(tokio::sync::Mutex::new(writer));
+        let shared_bitmap = Arc::new(tokio::sync::Mutex::new(bitmap.clone()));
+        let mut handles = Vec::with_capacity(parallel_streams);
+
+        for _ in 0..parallel_streams {
+            let mut data_recv = conn.accept_uni().await?;
+            let writer = Arc::clone(&writer);
+            let shared_bitmap = Arc::clone(&shared_bitmap);
+            let tid = transfer_id;
+
+            let handle = tokio::spawn(async move {
+                let pre = data_recv
+                    .read_exact(DATA_PREAMBLE_LEN)
+                    .await?
+                    .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+                let preamble = decode_data_preamble(&pre)?;
+                if preamble.transfer_id != tid {
+                    return Err(protocol_violation(
+                        "upload: transfer_id mismatch in preamble",
+                    ));
+                }
+
+                loop {
+                    let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
+                        Some(b) => b,
+                        None => break,
+                    };
+                    let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
+                    let payload_len = hdr.chunk_len as usize;
+                    let payload = match data_recv.read_exact(payload_len).await? {
+                        Some(b) => b,
+                        None => {
+                            return Err(protocol_violation(
+                                "upload: chunk payload shorter than declared (stream EOF)",
+                            ));
+                        }
+                    };
+                    let computed = hash_bytes(&payload);
+                    if computed != hdr.chunk_hash {
+                        return Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
+                        ));
+                    }
+                    let chunk_index = hdr.chunk_offset / chunk_size;
+                    let mut bm = shared_bitmap.lock().await;
+                    if !bm.contains(chunk_index) {
+                        let mut w = writer.lock().await;
+                        w.write_at(hdr.chunk_offset, &payload).await?;
+                        bm.mark_complete(chunk_index, payload_len as u64);
+                    }
+                }
+                Result::<()>::Ok(())
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.await
+                .map_err(|e| VelcruxError::Internal(format!("server upload worker join: {e}")))??;
+        }
+
+        bitmap = shared_bitmap.lock().await.clone();
+        let mut w = Arc::try_unwrap(writer)
+            .map_err(|_| VelcruxError::Internal("staging writer arc still referenced".into()))?
+            .into_inner();
+        w.fsync().await?;
+        w.into_staging()
+    } else {
+        // Receive the data stream.
+        let mut data_recv = conn.accept_uni().await?;
+        let pre = data_recv
+            .read_exact(DATA_PREAMBLE_LEN)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+        let preamble = decode_data_preamble(&pre)?;
+        if preamble.transfer_id != transfer_id {
+            return Err(protocol_violation(
+                "upload: transfer_id mismatch in preamble",
             ));
         }
-        let chunk_index = hdr.chunk_offset / chunk_size;
-        if !bitmap.contains(chunk_index) {
-            writer.write_at(hdr.chunk_offset, &payload).await?;
-            bitmap.mark_complete(chunk_index, payload_len as u64);
-            bytes_received = bytes_received.saturating_add(payload_len as u64);
-        }
-        if let Some(s) = &store {
-            if bytes_received.saturating_sub(last_checkpoint_bytes) >= 16 * 1024 * 1024 {
-                let _ = s.write_bitmap(transfer_id, &bitmap);
-                last_checkpoint_bytes = bytes_received;
+
+        // Open staging (preserving existing bytes if resuming).
+        let mut writer = backend
+            .open_staging_resumable(&transfer_id.to_string(), dst, expected_size, resumed)
+            .await?;
+
+        let mut bytes_received = bitmap.bytes_completed();
+        let mut last_checkpoint_bytes = bytes_received;
+
+        loop {
+            let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
+                Some(b) => b,
+                None => break,
+            };
+            let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
+            let payload_len = hdr.chunk_len as usize;
+            let payload = match data_recv.read_exact(payload_len).await? {
+                Some(b) => b,
+                None => {
+                    return Err(protocol_violation(
+                        "upload: chunk payload shorter than declared (stream EOF)",
+                    ));
+                }
+            };
+            let computed = hash_bytes(&payload);
+            if computed != hdr.chunk_hash {
+                return Err(VelcruxError::Protocol(
+                    crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
+                ));
+            }
+            let chunk_index = hdr.chunk_offset / chunk_size;
+            if !bitmap.contains(chunk_index) {
+                writer.write_at(hdr.chunk_offset, &payload).await?;
+                bitmap.mark_complete(chunk_index, payload_len as u64);
+                bytes_received = bytes_received.saturating_add(payload_len as u64);
+            }
+            if let Some(s) = &store {
+                if bytes_received.saturating_sub(last_checkpoint_bytes) >= 16 * 1024 * 1024 {
+                    let _ = s.write_bitmap(transfer_id, &bitmap);
+                    last_checkpoint_bytes = bytes_received;
+                }
             }
         }
-    }
-    writer.fsync().await?;
-    let staging_handle = writer.into_staging();
+        writer.fsync().await?;
+        writer.into_staging()
+    };
     if let Some(s) = &store {
         let _ = s.write_bitmap(transfer_id, &bitmap);
     }
@@ -936,6 +1121,7 @@ pub async fn client_download_stream(
         local_path,
         progress_tx,
         false,
+        1,
     )
     .await
 }
@@ -949,6 +1135,7 @@ pub async fn client_download_stream_with_staging(
     local_path: PathBuf,
     progress_tx: Option<mpsc::Sender<u64>>,
     staging_prepopulated: bool,
+    parallel_streams: usize,
 ) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
@@ -971,54 +1158,123 @@ pub async fn client_download_stream_with_staging(
         .open(&staging_path)
         .await?;
 
-    // Receive the data stream (server opens it after TRANSFER_BEGIN).
-    let mut data_recv = conn.accept_uni().await?;
-    let pre = data_recv
-        .read_exact(DATA_PREAMBLE_LEN)
-        .await?
-        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
-    let preamble = decode_data_preamble(&pre)?;
-    if preamble.transfer_id != transfer_id {
-        return Err(protocol_violation(
-            "download: transfer_id mismatch in preamble",
-        ));
-    }
+    if parallel_streams > 1 {
+        let staging_file = Arc::new(tokio::sync::Mutex::new(staging_file));
+        let mut handles = Vec::with_capacity(parallel_streams);
 
-    loop {
-        let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
-            Some(b) => b,
-            None => break,
-        };
-        let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
-        let payload_len = hdr.chunk_len as usize;
-        let payload = match data_recv.read_exact(payload_len).await? {
-            Some(b) => b,
-            None => {
-                return Err(protocol_violation(
-                    "download: chunk payload shorter than declared (stream EOF)",
-                ));
-            }
-        };
-        let computed = hash_bytes(&payload);
-        if computed != hdr.chunk_hash {
-            return Err(VelcruxError::Protocol(
-                crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
+        for _ in 0..parallel_streams {
+            let mut data_recv = conn.accept_uni().await?;
+            let staging_file = Arc::clone(&staging_file);
+            let progress_clone = progress_tx.clone();
+            let tid = transfer_id;
+
+            let handle = tokio::spawn(async move {
+                let pre = data_recv
+                    .read_exact(DATA_PREAMBLE_LEN)
+                    .await?
+                    .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+                let preamble = decode_data_preamble(&pre)?;
+                if preamble.transfer_id != tid {
+                    return Err(protocol_violation(
+                        "download: transfer_id mismatch in preamble",
+                    ));
+                }
+
+                loop {
+                    let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
+                        Some(b) => b,
+                        None => break,
+                    };
+                    let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
+                    let payload_len = hdr.chunk_len as usize;
+                    let payload = match data_recv.read_exact(payload_len).await? {
+                        Some(b) => b,
+                        None => {
+                            return Err(protocol_violation(
+                                "download: chunk payload shorter than declared (stream EOF)",
+                            ));
+                        }
+                    };
+                    let computed = hash_bytes(&payload);
+                    if computed != hdr.chunk_hash {
+                        return Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
+                        ));
+                    }
+                    {
+                        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+                        let mut f = staging_file.lock().await;
+                        f.seek(std::io::SeekFrom::Start(hdr.chunk_offset)).await?;
+                        f.write_all(&payload).await?;
+                    }
+
+                    if let Some(ref tx) = progress_clone {
+                        let _ = tx.try_send(payload_len as u64);
+                    }
+                }
+                Result::<()>::Ok(())
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.await
+                .map_err(|e| VelcruxError::Internal(format!("download worker join: {e}")))??;
+        }
+
+        let f = staging_file.lock().await;
+        f.sync_all().await?;
+        drop(f);
+    } else {
+        // Receive the data stream (server opens it after TRANSFER_BEGIN).
+        let mut data_recv = conn.accept_uni().await?;
+        let pre = data_recv
+            .read_exact(DATA_PREAMBLE_LEN)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+        let preamble = decode_data_preamble(&pre)?;
+        if preamble.transfer_id != transfer_id {
+            return Err(protocol_violation(
+                "download: transfer_id mismatch in preamble",
             ));
         }
-        // pwrite at the declared offset.
-        use tokio::io::AsyncSeekExt;
-        use tokio::io::AsyncWriteExt;
-        staging_file
-            .seek(std::io::SeekFrom::Start(hdr.chunk_offset))
-            .await?;
-        staging_file.write_all(&payload).await?;
 
-        if let Some(tx) = &progress_tx {
-            let _ = tx.try_send(payload_len as u64);
+        loop {
+            let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
+                Some(b) => b,
+                None => break,
+            };
+            let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
+            let payload_len = hdr.chunk_len as usize;
+            let payload = match data_recv.read_exact(payload_len).await? {
+                Some(b) => b,
+                None => {
+                    return Err(protocol_violation(
+                        "download: chunk payload shorter than declared (stream EOF)",
+                    ));
+                }
+            };
+            let computed = hash_bytes(&payload);
+            if computed != hdr.chunk_hash {
+                return Err(VelcruxError::Protocol(
+                    crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
+                ));
+            }
+            // pwrite at the declared offset.
+            use tokio::io::AsyncSeekExt;
+            use tokio::io::AsyncWriteExt;
+            staging_file
+                .seek(std::io::SeekFrom::Start(hdr.chunk_offset))
+                .await?;
+            staging_file.write_all(&payload).await?;
+
+            if let Some(tx) = &progress_tx {
+                let _ = tx.try_send(payload_len as u64);
+            }
         }
+        staging_file.sync_all().await?;
+        drop(staging_file);
     }
-    staging_file.sync_all().await?;
-    drop(staging_file);
 
     // VERIFY → server replies with VERIFY_RESULT{computed_hash}. The
     // receiver sends VERIFY to confirm; for download we send Hash::ZERO
@@ -1103,6 +1359,7 @@ pub async fn server_download_session(
         file_size,
         file_hash,
         None,
+        1,
     )
     .await
 }
@@ -1118,116 +1375,218 @@ pub async fn server_download_session_with_delta(
     file_size: u64,
     file_hash: Hash,
     skip_bitmap: Option<ChunkBitmap>,
+    parallel_streams: usize,
 ) -> Result<()> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
-    // Open a unidirectional data stream and write the preamble.
-    let mut data_send = conn.open_uni().await?;
-    let preamble = DataPreamble {
-        transfer_id,
-        file_id: 1,
-        stream_seq: 1,
-    };
-    data_send
-        .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
-        .await?;
-
-    // Open the source file for reading.
-    let mut reader = backend.open_read(src).await?;
-
-    let computed_hash = if let Some(bm) = skip_bitmap {
-        let chunk_size = 64 * 1024u64;
+    let computed_hash = if parallel_streams > 1 {
+        let chunk_size = if skip_bitmap.is_some() {
+            64 * 1024
+        } else {
+            M3_CHUNK_SIZE
+        };
         let total_chunks = if file_size == 0 {
             0
         } else {
-            (file_size + chunk_size - 1) / chunk_size
+            file_size.div_ceil(chunk_size)
         };
-        let mut next_chunk = bm.first_missing_from(0).unwrap_or(total_chunks);
-        while next_chunk < total_chunks {
-            let offset = next_chunk * chunk_size;
-            let want = ((file_size - offset).min(chunk_size)) as usize;
-            let mut buf = vec![0u8; want];
-            let mut read_bytes = 0;
-            while read_bytes < want {
-                let n = reader
-                    .read_at(offset + read_bytes as u64, &mut buf[read_bytes..])
-                    .await?;
-                if n == 0 {
-                    break;
-                }
-                read_bytes += n;
+        let mut chunks_to_send = Vec::new();
+        let mut next_c = if let Some(ref bm) = skip_bitmap {
+            bm.first_missing_from(0).unwrap_or(total_chunks)
+        } else {
+            0
+        };
+        while next_c < total_chunks {
+            chunks_to_send.push(next_c);
+            if let Some(ref bm) = skip_bitmap {
+                next_c = bm.first_missing_from(next_c + 1).unwrap_or(total_chunks);
+            } else {
+                next_c += 1;
             }
-            let hash = hash_bytes(&buf[..read_bytes]);
-            let bytes = encode_data_frame(
-                offset,
-                read_bytes as u32,
-                DataFrameFlags::NONE,
-                &hash,
-                &buf[..read_bytes],
-            );
-            data_send.write_all(Bytes::from(bytes)).await?;
-            next_chunk = bm
-                .first_missing_from(next_chunk + 1)
-                .unwrap_or(total_chunks);
         }
-        file_hash
-    } else {
-        // Stream from disk → CDC → BLAKE3 → DATA frames. We also compute
-        // the whole-file BLAKE3 inline so the VERIFY_RESULT reply can
-        // report the true hash (the storage backend's stat() does not
-        // compute hashes; it would be too expensive on every stat call).
-        let mut read_buf = vec![0u8; 2 * 1024 * 1024];
-        let mut chunker = RollingChunker::new(ChunkParams::default());
-        let mut pending: Vec<u8> = Vec::with_capacity(ChunkParams::default().max as usize);
-        let mut whole_hasher = HashHasher::new();
-        // `file_offset` tracks the next byte to read from the source file.
-        // `pending_offset` is the file offset of the start of the bytes in
-        // `pending`; it equals the file offset of the first unread byte.
-        let mut file_offset: u64 = 0;
-        let mut pending_offset: u64 = 0;
 
-        loop {
-            let n = reader.read_at(file_offset, &mut read_buf).await?;
-            if n == 0 {
-                // EOF: emit trailing chunk if any.
-                if !pending.is_empty() {
-                    let hash = hash_bytes(&pending);
-                    let bytes = encode_data_frame(
-                        pending_offset,
-                        pending.len() as u32,
-                        DataFrameFlags::NONE,
-                        &hash,
-                        &pending,
-                    );
-                    data_send.write_all(Bytes::from(bytes)).await?;
+        let chunk_indices = Arc::new(chunks_to_send);
+        let next_work_idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let src_path = src.clone();
+        let mut handles = Vec::with_capacity(parallel_streams);
+
+        for worker_idx in 0..parallel_streams {
+            let mut data_send = conn.open_uni().await?;
+            let chunk_indices = Arc::clone(&chunk_indices);
+            let next_work_idx = Arc::clone(&next_work_idx);
+            let mut reader = backend.open_read(&src_path).await?;
+            let tid = transfer_id;
+
+            let handle = tokio::spawn(async move {
+                let preamble = DataPreamble {
+                    transfer_id: tid,
+                    file_id: 1,
+                    stream_seq: (worker_idx + 1) as u64,
+                };
+                data_send
+                    .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
+                    .await?;
+
+                if file_size > 0 {
+                    loop {
+                        let work_idx =
+                            next_work_idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if work_idx >= chunk_indices.len() {
+                            break;
+                        }
+                        let chunk_idx = chunk_indices[work_idx];
+                        let offset = chunk_idx * chunk_size;
+                        let want = (file_size - offset).min(chunk_size) as usize;
+                        let mut buf = vec![0u8; want];
+                        let mut read_bytes = 0;
+                        while read_bytes < want {
+                            let n = reader
+                                .read_at(offset + read_bytes as u64, &mut buf[read_bytes..])
+                                .await?;
+                            if n == 0 {
+                                break;
+                            }
+                            read_bytes += n;
+                        }
+                        let hash = hash_bytes(&buf[..read_bytes]);
+                        let bytes = encode_data_frame(
+                            offset,
+                            read_bytes as u32,
+                            DataFrameFlags::NONE,
+                            &hash,
+                            &buf[..read_bytes],
+                        );
+                        data_send.write_all(Bytes::from(bytes)).await?;
+                    }
                 }
-                break;
-            }
-            pending.extend_from_slice(&read_buf[..n]);
-            whole_hasher.feed(&read_buf[..n]);
-            file_offset += n as u64;
-            let boundaries = chunker.push(&read_buf[..n])?;
-            for b in &boundaries {
-                let target = b.end() as u64;
-                let need = (target - pending_offset) as usize;
-                let hash = hash_bytes(&pending[..need]);
-                let payload = pending.drain(..need).collect::<Vec<u8>>();
+                data_send.finish().await?;
+                Result::<()>::Ok(())
+            });
+            handles.push(handle);
+        }
+
+        for h in handles {
+            h.await.map_err(|e| {
+                VelcruxError::Internal(format!("server download worker join: {e}"))
+            })??;
+        }
+
+        if file_hash != Hash::ZERO {
+            file_hash
+        } else {
+            let abs_path = backend.root().join(src_path.as_path());
+            hash_file(&abs_path).await?
+        }
+    } else {
+        // Open a unidirectional data stream and write the preamble.
+        let mut data_send = conn.open_uni().await?;
+        let preamble = DataPreamble {
+            transfer_id,
+            file_id: 1,
+            stream_seq: 1,
+        };
+        data_send
+            .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
+            .await?;
+
+        // Open the source file for reading.
+        let mut reader = backend.open_read(src).await?;
+
+        let hash_val = if let Some(bm) = skip_bitmap {
+            let chunk_size = 64 * 1024u64;
+            let total_chunks = if file_size == 0 {
+                0
+            } else {
+                (file_size + chunk_size - 1) / chunk_size
+            };
+            let mut next_chunk = bm.first_missing_from(0).unwrap_or(total_chunks);
+            while next_chunk < total_chunks {
+                let offset = next_chunk * chunk_size;
+                let want = ((file_size - offset).min(chunk_size)) as usize;
+                let mut buf = vec![0u8; want];
+                let mut read_bytes = 0;
+                while read_bytes < want {
+                    let n = reader
+                        .read_at(offset + read_bytes as u64, &mut buf[read_bytes..])
+                        .await?;
+                    if n == 0 {
+                        break;
+                    }
+                    read_bytes += n;
+                }
+                let hash = hash_bytes(&buf[..read_bytes]);
                 let bytes = encode_data_frame(
-                    pending_offset,
-                    need as u32,
+                    offset,
+                    read_bytes as u32,
                     DataFrameFlags::NONE,
                     &hash,
-                    &payload,
+                    &buf[..read_bytes],
                 );
                 data_send.write_all(Bytes::from(bytes)).await?;
-                pending_offset = b.end();
+                next_chunk = bm
+                    .first_missing_from(next_chunk + 1)
+                    .unwrap_or(total_chunks);
             }
-        }
-        // Finalize the whole-file hash.
-        whole_hasher.finalize()
+            file_hash
+        } else {
+            // Stream from disk → CDC → BLAKE3 → DATA frames. We also compute
+            // the whole-file BLAKE3 inline so the VERIFY_RESULT reply can
+            // report the true hash (the storage backend's stat() does not
+            // compute hashes; it would be too expensive on every stat call).
+            let mut read_buf = vec![0u8; 2 * 1024 * 1024];
+            let mut chunker = RollingChunker::new(ChunkParams::default());
+            let mut pending: Vec<u8> = Vec::with_capacity(ChunkParams::default().max as usize);
+            let mut whole_hasher = HashHasher::new();
+            // `file_offset` tracks the next byte to read from the source file.
+            // `pending_offset` is the file offset of the start of the bytes in
+            // `pending`; it equals the file offset of the first unread byte.
+            let mut file_offset: u64 = 0;
+            let mut pending_offset: u64 = 0;
+
+            loop {
+                let n = reader.read_at(file_offset, &mut read_buf).await?;
+                if n == 0 {
+                    // EOF: emit trailing chunk if any.
+                    if !pending.is_empty() {
+                        let hash = hash_bytes(&pending);
+                        let bytes = encode_data_frame(
+                            pending_offset,
+                            pending.len() as u32,
+                            DataFrameFlags::NONE,
+                            &hash,
+                            &pending,
+                        );
+                        data_send.write_all(Bytes::from(bytes)).await?;
+                    }
+                    break;
+                }
+                pending.extend_from_slice(&read_buf[..n]);
+                whole_hasher.feed(&read_buf[..n]);
+                file_offset += n as u64;
+                let boundaries = chunker.push(&read_buf[..n])?;
+                for b in &boundaries {
+                    let target = b.end() as u64;
+                    let need = (target - pending_offset) as usize;
+                    let hash = hash_bytes(&pending[..need]);
+                    let payload = pending.drain(..need).collect::<Vec<u8>>();
+                    let bytes = encode_data_frame(
+                        pending_offset,
+                        need as u32,
+                        DataFrameFlags::NONE,
+                        &hash,
+                        &payload,
+                    );
+                    data_send.write_all(Bytes::from(bytes)).await?;
+                    pending_offset = b.end();
+                }
+            }
+            // Finalize the whole-file hash.
+            whole_hasher.finalize()
+        };
+        data_send.finish().await?;
+        hash_val
     };
-    data_send.finish().await?;
 
     // Await VERIFY from client.
     let frame = read_control_frame(control_recv).await?;

@@ -923,21 +923,47 @@ impl TransferPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferBegin {
     pub transfer_id: TransferId,
+    /// Number of concurrent data streams requested (default: 1).
+    pub streams: u8,
 }
 
 impl TransferBegin {
+    /// Create a TransferBegin with default single stream.
+    pub fn new(transfer_id: TransferId) -> Self {
+        Self {
+            transfer_id,
+            streams: 1,
+        }
+    }
+
+    /// Create a TransferBegin with specified stream concurrency.
+    pub fn with_streams(transfer_id: TransferId, streams: u8) -> Self {
+        Self {
+            transfer_id,
+            streams: streams.max(1),
+        }
+    }
+
     pub fn encode(&self) -> Result<Bytes, ProtocolError> {
-        let mut out = Vec::with_capacity(16);
+        let mut out = Vec::with_capacity(17);
         out.extend_from_slice(self.transfer_id.as_bytes());
+        if self.streams > 1 {
+            out.push(self.streams);
+        }
         Ok(Bytes::from(out))
     }
+
     pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
         if buf.len() < 16 {
             return Err(ProtocolError::Malformed("TRANSFER_BEGIN: truncated"));
         }
         let transfer_id = TransferId::from_bytes(&buf[..16])
             .ok_or_else(|| ProtocolError::Malformed("TRANSFER_BEGIN: bad transfer_id"))?;
-        Ok(Self { transfer_id })
+        let streams = if buf.len() > 16 { buf[16].max(1) } else { 1 };
+        Ok(Self {
+            transfer_id,
+            streams,
+        })
     }
 }
 
@@ -1422,7 +1448,7 @@ impl StatResult {
             _ => return Err(ProtocolError::Malformed("STAT_RESULT: bad found flag")),
         };
         let mut i = 18;
-        let mut read_str = |buf: &[u8], i: &mut usize| -> Result<String, ProtocolError> {
+        let read_str = |buf: &[u8], i: &mut usize| -> Result<String, ProtocolError> {
             let (n, c) = varint::decode_varint(&buf[*i..])?;
             *i += c;
             let n_us: usize = n
@@ -1488,7 +1514,7 @@ impl ListQuery {
     }
     pub fn decode(buf: &[u8]) -> Result<Self, ProtocolError> {
         let (n, c) = varint::decode_varint(buf)?;
-        let mut i = c;
+        let i = c;
         let n_us: usize = n
             .try_into()
             .map_err(|_| ProtocolError::Malformed("LIST: prefix too long"))?;
@@ -2356,10 +2382,17 @@ mod tests {
     #[test]
     fn transfer_begin_roundtrip() {
         let tid = crate::util::TransferId::generate();
-        let m = TransferBegin { transfer_id: tid };
+        let m = TransferBegin::new(tid);
         let buf = m.encode().unwrap();
         let m2 = TransferBegin::decode(&buf).unwrap();
         assert_eq!(m, m2);
+        assert_eq!(m2.streams, 1);
+
+        let m_parallel = TransferBegin::with_streams(tid, 4);
+        let buf_p = m_parallel.encode().unwrap();
+        let m2_p = TransferBegin::decode(&buf_p).unwrap();
+        assert_eq!(m_parallel, m2_p);
+        assert_eq!(m2_p.streams, 4);
     }
 
     #[test]
@@ -2431,7 +2464,7 @@ mod tests {
                 bytes_to_transfer: 1,
                 bytes_reusable: 0,
             }),
-            Message::TransferBegin(TransferBegin { transfer_id: tid }),
+            Message::TransferBegin(TransferBegin::new(tid)),
             Message::Verify(Verify {
                 transfer_id: tid,
                 expected_hash: Hash::ZERO,

@@ -492,9 +492,7 @@ async fn m3_sigkill_resume_at_50_percent() {
         let plan = TransferPlan::decode(&frame.payload).unwrap();
         assert_eq!(plan.bytes_total, FILE_LEN);
 
-        let begin = TransferBegin {
-            transfer_id: server_tid,
-        };
+        let begin = TransferBegin::new(server_tid);
         let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0).unwrap());
         session.send_mut().write_all(buf).await.unwrap();
 
@@ -576,7 +574,7 @@ async fn m3_sigkill_resume_at_50_percent() {
             frame.type_byte,
             velcrux_core::protocol::message::TRANSFER_PLAN
         );
-        let begin = TransferBegin { transfer_id };
+        let begin = TransferBegin::new(transfer_id);
         let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0).unwrap());
         session.send_mut().write_all(buf).await.unwrap();
 

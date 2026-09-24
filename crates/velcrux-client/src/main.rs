@@ -59,6 +59,16 @@ struct Cli {
     #[arg(long, env = "VELCRUX_CHUNK_STORE", global = true)]
     chunk_store: Option<PathBuf>,
 
+    /// Number of concurrent QUIC data streams (Option E, range 1..=16, default: 1).
+    #[arg(
+        long,
+        short = 'P',
+        env = "VELCRUX_PARALLEL",
+        default_value_t = 1,
+        global = true
+    )]
+    parallel: usize,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -350,6 +360,7 @@ struct FileClientConfig {
     state_db: Option<PathBuf>,
     dedup: Option<bool>,
     chunk_store: Option<PathBuf>,
+    parallel: Option<usize>,
 }
 
 fn load_client_config(cli: &mut Cli) {
@@ -382,6 +393,11 @@ fn load_client_config(cli: &mut Cli) {
                     if !cli.dedup {
                         if let Some(d) = file_cfg.dedup {
                             cli.dedup = d;
+                        }
+                    }
+                    if cli.parallel == 1 {
+                        if let Some(p) = file_cfg.parallel {
+                            cli.parallel = p;
                         }
                     }
                     if cli.log_format == "text" {
@@ -628,9 +644,7 @@ async fn upload_file_stream(
 
     if plan.bytes_to_transfer == 0 {
         use velcrux_core::protocol::message::{Commit, Verify, VerifyResult};
-        let begin = TransferBegin {
-            transfer_id: created.transfer_id,
-        };
+        let begin = TransferBegin::new(created.transfer_id);
         session
             .send_mut()
             .write_all(bytes::Bytes::from(encode_message(
@@ -685,9 +699,7 @@ async fn upload_file_stream(
         return Ok((created.transfer_id, expected_hash, 0));
     }
 
-    let begin = TransferBegin {
-        transfer_id: created.transfer_id,
-    };
+    let begin = TransferBegin::with_streams(created.transfer_id, cli.parallel.clamp(1, 16) as u8);
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
@@ -736,7 +748,10 @@ async fn upload_file_stream(
         (None, None)
     };
 
-    let mut cfg = velcrux_core::PipelineConfig::default();
+    let mut cfg = velcrux_core::PipelineConfig {
+        parallel_streams: cli.parallel.clamp(1, 16),
+        ..Default::default()
+    };
     if !initial_bitmap.is_empty() {
         cfg.chunk_mode = velcrux_core::chunking::ChunkMode::Fixed;
         cfg.chunk_params =
@@ -902,7 +917,7 @@ async fn run_resume(
         anyhow::bail!("local file hash does not match transfer file hash");
     }
 
-    let begin = TransferBegin { transfer_id };
+    let begin = TransferBegin::with_streams(transfer_id, cli.parallel.clamp(1, 16) as u8);
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
@@ -951,7 +966,10 @@ async fn run_resume(
         }
     });
 
-    let cfg = velcrux_core::PipelineConfig::default();
+    let cfg = velcrux_core::PipelineConfig {
+        parallel_streams: cli.parallel.clamp(1, 16),
+        ..Default::default()
+    };
     let (send_half, recv_half) = session.stream_halves_mut();
     let computed = velcrux_core::client_upload_stream(
         conn,
@@ -1304,9 +1322,7 @@ async fn download_file_stream(
         }
     }
 
-    let begin = TransferBegin {
-        transfer_id: created.transfer_id,
-    };
+    let begin = TransferBegin::with_streams(created.transfer_id, cli.parallel.clamp(1, 16) as u8);
     let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
     session.send_mut().write_all(buf).await?;
 
@@ -1364,6 +1380,7 @@ async fn download_file_stream(
         local.clone(),
         progress_tx,
         staging_prepopulated,
+        cli.parallel.clamp(1, 16),
     )
     .await?;
 
