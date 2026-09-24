@@ -9,6 +9,8 @@
 #![forbid(unsafe_code)]
 
 mod dev_pki;
+pub mod config;
+pub mod metrics;
 mod server;
 
 use anyhow::Context;

@@ -47,6 +47,10 @@ struct Cli {
     #[arg(long, env = "VELCRUX_STATE_DB", global = true)]
     state_db: Option<PathBuf>,
 
+    /// Path to a TOML configuration file (defaults to ~/.velcrux/config.toml if present).
+    #[arg(long, short, env = "VELCRUX_CONFIG", global = true)]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -287,9 +291,61 @@ fn get_sni(cli: &Cli, url: &str) -> String {
     })
 }
 
+#[derive(Debug, serde::Deserialize, Default)]
+struct FileClientConfig {
+    ca: Option<PathBuf>,
+    cert: Option<PathBuf>,
+    key: Option<PathBuf>,
+    sni: Option<String>,
+    log_format: Option<String>,
+    json: Option<bool>,
+    state_db: Option<PathBuf>,
+}
+
+fn load_client_config(cli: &mut Cli) {
+    let config_path = cli.config.clone().or_else(|| {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".velcrux").join("config.toml"))
+    });
+
+    if let Some(path) = config_path {
+        if path.is_file() {
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(file_cfg) = toml::from_str::<FileClientConfig>(&raw) {
+                    if cli.ca.is_none() {
+                        cli.ca = file_cfg.ca;
+                    }
+                    if cli.cert.is_none() {
+                        cli.cert = file_cfg.cert;
+                    }
+                    if cli.key.is_none() {
+                        cli.key = file_cfg.key;
+                    }
+                    if cli.sni.is_none() {
+                        cli.sni = file_cfg.sni;
+                    }
+                    if cli.state_db.is_none() {
+                        cli.state_db = file_cfg.state_db;
+                    }
+                    if cli.log_format == "text" {
+                        if let Some(fmt) = file_cfg.log_format {
+                            cli.log_format = fmt;
+                        }
+                    }
+                    if !cli.json {
+                        if let Some(j) = file_cfg.json {
+                            cli.json = j;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    load_client_config(&mut cli);
     init_tracing(&cli.log_format);
 
     match &cli.cmd {
@@ -459,7 +515,7 @@ async fn upload_file_stream(
         use velcrux_core::sync::{BloomFilter, RleBitmap};
 
         let hint = InventoryHint::decode(&frame.payload)?;
-        let bloom = BloomFilter::from_bytes(&hint.bitset, hint.filter_bits, hint.num_hashes)
+        let _bloom = BloomFilter::from_bytes(&hint.bitset, hint.filter_bits, hint.num_hashes)
             .map_err(|e| anyhow::anyhow!("invalid bloom filter: {e}"))?;
 
         let mut file = std::fs::File::open(local)?;

@@ -1,0 +1,52 @@
+# ==============================================================================
+# Velcrux Server Configuration (docs/OPERATIONS.md §4)
+# ==============================================================================
+
+[network]
+listen           = "0.0.0.0:7443"
+max_bandwidth    = "10Gbps"
+max_connections  = 100
+max_connections_per_ip = 10
+idle_timeout     = "60s"
+keepalive        = "15s"
+
+[quic]
+receive_window        = "384MiB"
+stream_receive_window = "384MiB"
+max_concurrent_streams = 32
+initial_rtt           = "150ms"
+gso                   = true
+
+[transfer]
+chunking          = "cdc"
+chunk_min         = "256KiB"
+chunk_target      = "1MiB"
+chunk_max         = "4MiB"
+parallelism       = 8
+resume            = true
+compression       = "none"
+checkpoint_bytes  = "1GiB"
+checkpoint_secs   = 10
+read_buffer       = "2MiB"
+max_file_size     = "64TiB"
+
+[hash]
+algorithm = "blake3"
+workers   = 0
+
+[security]
+certificate = "/etc/velcrux/server.crt"
+private_key = "/etc/velcrux/server.key"
+client_ca   = "/etc/velcrux/clients-ca.crt"
+grants      = "/etc/velcrux/grants.toml"
+
+[storage]
+root        = "/data/velcrux/files"
+staging     = "/data/velcrux/files/.velcrux-staging"
+state_db    = "/var/lib/velcrux/state.db"
+chunk_store = "/data/velcrux/chunks"
+
+[telemetry]
+metrics_listen = "127.0.0.1:9443"
+log_format     = "json"
+log_level      = "info"

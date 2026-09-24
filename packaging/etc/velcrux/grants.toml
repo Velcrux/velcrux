@@ -1,0 +1,18 @@
+# ==============================================================================
+# Velcrux Authorization Grants Policy (docs/SECURITY.md §4)
+# ==============================================================================
+
+[[grant]]
+identity    = "admin"
+path        = "/"
+permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"]
+
+[[grant]]
+identity    = "backup-agent"
+path        = "/backup"
+permissions = ["upload", "download", "list", "sync", "resume"]
+
+[[grant]]
+identity    = "client"
+path        = "/data"
+permissions = ["upload", "download", "list", "sync", "resume"]

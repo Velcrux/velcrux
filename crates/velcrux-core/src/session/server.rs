@@ -62,8 +62,7 @@ impl ServerState {
     }
 }
 
-/// Server-wide counters, exported in `ServerStats` for tests and (later)
-/// `/metrics`.
+/// Server-wide counters, exported in `ServerStats` for tests and `/metrics`.
 #[derive(Debug, Default)]
 pub struct ServerStats {
     /// Total connections accepted.
@@ -72,6 +71,22 @@ pub struct ServerStats {
     pub handshakes: AtomicU64,
     /// PINGs handled.
     pub pings: AtomicU64,
+    /// Active transfers currently running.
+    pub transfers_active: AtomicU64,
+    /// Total completed uploads.
+    pub transfers_total_upload: AtomicU64,
+    /// Total completed downloads.
+    pub transfers_total_download: AtomicU64,
+    /// Bytes transferred on wire for uploads.
+    pub bytes_transferred_upload: AtomicU64,
+    /// Bytes transferred on wire for downloads.
+    pub bytes_transferred_download: AtomicU64,
+    /// Bytes reused locally via delta/inventory.
+    pub bytes_reused: AtomicU64,
+    /// Total authorization denials.
+    pub authz_denials: AtomicU64,
+    /// Total checksum verification mismatches.
+    pub checksum_mismatches: AtomicU64,
 }
 
 /// A per-connection actor. Constructed by `run`; runs to completion.
@@ -319,6 +334,7 @@ impl ServerConn {
                                 send.as_mut(),
                                 recv.as_mut(),
                                 &frame.payload,
+                                &self.stats,
                             )
                             .await
                             {
@@ -410,6 +426,13 @@ impl ServerConn {
 /// failure the reply is a uniform `FILE_NOT_FOUND` / "not found", so a
 /// caller cannot distinguish "denied", "malformed path", and "does not
 /// exist" (`PROTOCOL.md` §10).
+struct ActiveTransferGuard<'a>(&'a std::sync::atomic::AtomicU64);
+impl<'a> Drop for ActiveTransferGuard<'a> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 async fn handle_transfer_create(
     conn: &dyn Connection,
     backend: &LocalFilesystemBackend,
@@ -419,6 +442,7 @@ async fn handle_transfer_create(
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
     payload: &[u8],
+    stats: &ServerStats,
 ) -> Result<()> {
     use crate::protocol::limits::MAX_CHUNK_SIZE;
     use crate::protocol::message::{
@@ -434,6 +458,7 @@ async fn handle_transfer_create(
         let dst = match authorizer.check(identity, Op::Delete, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
+                stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let err = crate::protocol::message::ErrorMsg::new(
                     crate::protocol::error::ErrorCode::FileNotFound,
                     "not found",
@@ -461,6 +486,7 @@ async fn handle_transfer_create(
         let vpath = match authorizer.check(identity, Op::Sync, target_path) {
             Ok(p) => p,
             Err(_) => {
+                stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let err = crate::protocol::message::ErrorMsg::new(
                     crate::protocol::error::ErrorCode::FileNotFound,
                     "not found",
@@ -496,6 +522,7 @@ async fn handle_transfer_create(
     let dst = match authorizer.check(identity, op, &create.dst_path) {
         Ok(p) => p,
         Err(_) => {
+            stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let err = crate::protocol::message::ErrorMsg::new(
                 crate::protocol::error::ErrorCode::FileNotFound,
                 "not found",
@@ -504,6 +531,10 @@ async fn handle_transfer_create(
             return Ok(());
         }
     };
+
+    stats.transfers_active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _active_guard = ActiveTransferGuard(&stats.transfers_active);
+
     let (transfer_id, resumed, bytes_reusable) = match state {
         Some(store) => {
             match store
@@ -628,6 +659,8 @@ async fn handle_transfer_create(
                         files: 1,
                     };
                     write_frame(send, &Message::Committed(committed), 0).await?;
+                    stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats.bytes_reused.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             return Ok(());
@@ -749,6 +782,13 @@ async fn handle_transfer_create(
                 )
                 .await
                 .map(|_| ());
+                if res.is_ok() {
+                    stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats.bytes_transferred_upload.fetch_add(plan.bytes_to_transfer, std::sync::atomic::Ordering::Relaxed);
+                    stats.bytes_reused.fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    stats.checksum_mismatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 return res;
             }
         }
@@ -926,6 +966,22 @@ async fn handle_transfer_create(
         files: 1,
     };
     let _ = Commit { transfer_id };
+
+    if res.is_ok() {
+        match create.op {
+            TransferOp::Upload => {
+                stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats.bytes_transferred_upload.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+            }
+            TransferOp::Download => {
+                stats.transfers_total_download.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats.bytes_transferred_download.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    } else {
+        stats.checksum_mismatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 
     res
 }

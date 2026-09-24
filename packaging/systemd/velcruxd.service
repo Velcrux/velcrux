@@ -1,0 +1,32 @@
+[Unit]
+Description=velcrux transfer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=velcrux
+Group=velcrux
+ExecStart=/usr/local/bin/velcruxd run --config /etc/velcrux/server.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=120
+
+# graceful drain: stop accepting, checkpoint, persist, close
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/velcrux /data/velcrux
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=8G
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

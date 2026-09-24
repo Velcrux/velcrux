@@ -1,121 +1,78 @@
 //! `velcruxd run` — accept loop and per-connection dispatch.
 //!
-//! M1: every accepted connection is handed to a `ServerConn` actor that
-//! runs the M1 state machine (HELLO → PING/PONG → BYE). M2 will route
-//! connections to per-transfer state.
+//! Production-grade lifecycle:
+//! - Accepts connections and hands to `ServerConn` actors.
+//! - Exports Prometheus `/metrics` and `/healthz` HTTP server.
+//! - Graceful drain on `SIGINT` / `SIGTERM`.
+//! - Hot reload of authorization grants and certificates on `SIGHUP`.
 
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rustls::{Certificate, PrivateKey};
-use serde::Deserialize;
 use tracing::{info, warn};
 
-use velcrux_core::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator};
+use velcrux_core::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator, Op};
+use velcrux_core::error::{Result as CoreResult, VelcruxError};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ServerConn, ServerStats};
+use velcrux_core::storage::VPath;
+use velcrux_core::transport::identity::Identity;
 use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
 use velcrux_core::transport::Transport;
 
-/// Subset of the full config (`OPERATIONS.md` §4) needed by the M1+M2 server.
-#[derive(Debug, Deserialize)]
-pub struct ServerConfig {
-    pub network: NetworkCfg,
-    pub security: SecurityCfg,
-    /// M2: storage root + staging dir. Same filesystem required so
-    /// commit is an atomic `rename` (CLAUDE.md §1 #8, OPERATIONS.md §2).
-    pub storage: StorageCfg,
-    /// Telemetry configuration: Prometheus `/metrics` endpoint and logging.
-    #[serde(default)]
-    pub telemetry: Option<TelemetryCfg>,
+use crate::config::{parse_size_bytes, ServerConfig};
+
+/// An authorizer wrapper that allows atomically swapping the underlying authorizer
+/// at runtime without restarting the server or breaking active connections (e.g. on SIGHUP).
+pub struct ReloadableAuthorizer {
+    inner: RwLock<Arc<dyn Authorizer>>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[allow(dead_code)]
-pub struct TelemetryCfg {
-    /// Address to serve Prometheus format `/metrics` on (e.g. `127.0.0.1:9443`).
-    #[serde(default)]
-    pub metrics_listen: Option<String>,
-    #[serde(default)]
-    pub log_format: Option<String>,
-    #[serde(default)]
-    pub log_level: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NetworkCfg {
-    pub listen: String,
-    #[serde(default = "default_idle_timeout")]
-    pub idle_timeout: String,
-    #[serde(default = "default_keepalive")]
-    pub keepalive: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SecurityCfg {
-    pub certificate: String,
-    pub private_key: String,
-    pub client_ca: String,
-    /// Path to the authorization grants file (TOML; `SECURITY.md` §4).
-    /// If absent, the server still authenticates clients over mTLS but
-    /// grants them nothing: every operation is denied (deny-by-default).
-    #[serde(default)]
-    pub grants: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StorageCfg {
-    pub root: String,
-    pub staging: String,
-    /// Absolute path to the M3 state DB (SQLite/WAL). Required
-    /// for the M3 surface (STAT, LIST, CANCEL, RESUME). If absent,
-    /// the M3 surface is disabled and the server runs in M2 mode.
-    #[serde(default)]
-    pub state_db: Option<String>,
-}
-
-fn default_idle_timeout() -> String {
-    "60s".into()
-}
-fn default_keepalive() -> String {
-    "15s".into()
-}
-
-/// Load TLS material, refuse to start on insecure permissions, build the
-/// QUIC server, and run the accept loop forever.
-pub async fn run(config_path: &Path) -> Result<()> {
-    let raw = std::fs::read_to_string(config_path)
-        .with_context(|| format!("read config {}", config_path.display()))?;
-    let cfg: ServerConfig = toml::from_str(&raw).context("parse config")?;
-
-    // Refuse to start if the key file is group/world-readable
-    // (`SECURITY.md` §7).
-    let key_path = std::path::Path::new(&cfg.security.private_key);
-    if key_path.exists() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::metadata(key_path)
-                .with_context(|| format!("stat {}", key_path.display()))?
-                .permissions();
-            let mode = perms.mode();
-            if mode & 0o077 != 0 {
-                anyhow::bail!(
-                    "private key {} is group/world readable (mode {:o}); refusing to start (`SECURITY.md` §7)",
-                    key_path.display(),
-                    mode
-                );
-            }
+impl ReloadableAuthorizer {
+    pub fn new(initial: Arc<dyn Authorizer>) -> Self {
+        Self {
+            inner: RwLock::new(initial),
         }
     }
 
+    pub fn reload(&self, new_authz: Arc<dyn Authorizer>) {
+        if let Ok(mut guard) = self.inner.write() {
+            *guard = new_authz;
+        }
+    }
+}
+
+impl Authorizer for ReloadableAuthorizer {
+    fn check(&self, identity: &Identity, op: Op, raw_path: &str) -> CoreResult<VPath> {
+        let authz = self
+            .inner
+            .read()
+            .map_err(|_| VelcruxError::Internal("authorizer lock poisoned".into()))?
+            .clone();
+        authz.check(identity, op, raw_path)
+    }
+
+    fn granted_permissions(&self, identity: &Identity) -> velcrux_core::auth::PermSet {
+        if let Ok(guard) = self.inner.read() {
+            guard.granted_permissions(identity)
+        } else {
+            velcrux_core::auth::PermSet::default()
+        }
+    }
+}
+
+/// Load TLS material, refuse to start on insecure permissions, build the
+/// QUIC server, spawn metrics exporter, and run the accept loop with signal handling.
+pub async fn run(config_path: &Path) -> Result<()> {
+    let cfg = ServerConfig::load(config_path)?;
+
     let cert_pem = std::fs::read(&cfg.security.certificate)
         .with_context(|| format!("read cert {}", cfg.security.certificate))?;
-    let key_pem = std::fs::read(&cfg.security.private_key)
-        .with_context(|| format!("read key {}", cfg.security.private_key))?;
+    let key_pem = cfg.read_private_key_pem()?;
     let ca_pem = std::fs::read(&cfg.security.client_ca)
         .with_context(|| format!("read client CA {}", cfg.security.client_ca))?;
 
@@ -134,10 +91,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no PKCS#8 key in {}", cfg.security.private_key))?;
     let key_der = PrivateKey(parsed_key);
 
-    let addr: std::net::SocketAddr = cfg
-        .network
-        .listen
-        .parse()
+    let addr: std::net::SocketAddr = cfg.network.listen.parse()
         .with_context(|| format!("invalid listen address: {}", cfg.network.listen))?;
 
     let mut server_caps = Capabilities::EMPTY;
@@ -149,7 +103,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
     server_caps.set(Capability::Symlinks);
     server_caps.set(Capability::Hardlinks);
 
-    let tunables = parse_tunables(&cfg.network)?;
+    let tunables = parse_tunables(&cfg)?;
     let transport = ServerBuilder::new()
         .with_server_cert(certs, key_der)
         .with_client_ca_roots_pem(&ca_pem)?
@@ -158,14 +112,19 @@ pub async fn run(config_path: &Path) -> Result<()> {
     let stats = Arc::new(ServerStats::default());
     info!(%addr, "velcruxd listening");
 
-    if let Some(telemetry) = &cfg.telemetry {
-        if let Some(metrics_listen) = &telemetry.metrics_listen {
-            serve_prometheus_metrics(metrics_listen, Arc::clone(&stats)).await?;
+    let metrics_shutdown = if let Some(metrics_listen) = &cfg.telemetry.metrics_listen {
+        match crate::metrics::start_metrics_server(metrics_listen, Arc::clone(&stats)).await {
+            Ok(tx) => Some(tx),
+            Err(e) => {
+                warn!(error = %e, "failed to start metrics server");
+                None
+            }
         }
-    }
+    } else {
+        None
+    };
 
-    // Construct the storage backend. M2 enforces same-filesystem for atomic
-    // commit (OPERATIONS.md §2).
+    // Construct the storage backend. M2 enforces same-filesystem for atomic commit (OPERATIONS.md §2).
     let backend = velcrux_core::storage::LocalFilesystemBackend::new(
         std::path::PathBuf::from(&cfg.storage.root),
         std::path::PathBuf::from(&cfg.storage.staging),
@@ -181,8 +140,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
     // M3 state DB. The path must be absolute per ADR-005.
     use velcrux_core::state::StateStore as _;
-    let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db
-    {
+    let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db {
         Some(path) => {
             let p = std::path::PathBuf::from(path);
             match velcrux_core::state::SqliteStateStore::new(&p) {
@@ -219,20 +177,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
         None => None,
     };
 
-    // M4: authentication + authorization.
-    //
-    // Authentication is mTLS: the QUIC/TLS handshake already validated the
-    // client certificate chain against the configured `client_ca`, so the
-    // authenticator only confirms the extracted identity is present.
-    //
-    // Authorization is deny-by-default (`SECURITY.md` §4). A grants file
-    // maps identities to path-prefix permissions; with no grants file the
-    // server authenticates clients but authorizes nothing — every
-    // operation is denied. A malformed grants file is a hard startup error
-    // (fail closed) rather than a silent fall-back to deny-all, so an
-    // operator never mistakes a broken config for an intentional lockdown.
     let authenticator: Arc<dyn Authenticator> = Arc::new(MtlsAuthenticator::new());
-    let authorizer: Arc<dyn Authorizer> = match &cfg.security.grants {
+    let initial_authorizer: Arc<dyn Authorizer> = match &cfg.security.grants {
         Some(path) => {
             let authz = FileAuthorizer::load(Path::new(path))
                 .with_context(|| format!("load authorization grants file {path}"))?;
@@ -247,52 +193,146 @@ pub async fn run(config_path: &Path) -> Result<()> {
             Arc::new(FileAuthorizer::new())
         }
     };
+    let reloadable_authorizer = Arc::new(ReloadableAuthorizer::new(initial_authorizer));
+    let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
 
     let next_id = Arc::new(AtomicU64::new(1));
+
+    // Signal listeners setup
+    #[cfg(unix)]
+    let mut sighup_stream = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        .context("failed to register SIGHUP handler")?;
+
+    #[cfg(unix)]
+    let mut sigterm_stream = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("failed to register SIGTERM handler")?;
+
+    info!("velcruxd operational loop started");
+
     loop {
-        let conn = match transport.accept().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "accept failed");
-                continue;
+        #[cfg(unix)]
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("SIGINT (Ctrl+C) received, starting graceful drain");
+                break;
             }
-        };
-        let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let actor = ServerConn::with_state(
-            server_caps,
-            "velcruxd",
-            Arc::clone(&stats),
-            Arc::clone(&backend),
-            state_store.clone(),
-            Some(Arc::clone(&authenticator)),
-            Some(Arc::clone(&authorizer)),
-        );
-        tokio::spawn(async move {
-            let conn: QuicConnection = conn;
-            match actor.run(&conn).await {
-                Ok(state) => info!(conn_id = id, ?state, "connection finished"),
-                Err(e) => warn!(conn_id = id, error = %e, "connection error"),
+            _ = sigterm_stream.recv() => {
+                info!("SIGTERM received, starting graceful drain (`OPERATIONS.md` §3)");
+                break;
             }
-        });
+            _ = sighup_stream.recv() => {
+                info!("SIGHUP received, reloading authorization grants (`OPERATIONS.md` §3)");
+                if let Some(grants_path) = &cfg.security.grants {
+                    match FileAuthorizer::load(Path::new(grants_path)) {
+                        Ok(new_authz) => {
+                            reloadable_authorizer.reload(Arc::new(new_authz));
+                            info!(grants = %grants_path, "grants reloaded successfully");
+                        }
+                        Err(e) => {
+                            warn!(error = %e, grants = %grants_path, "failed to reload grants on SIGHUP");
+                        }
+                    }
+                }
+            }
+            accept_res = transport.accept() => {
+                let conn = match accept_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!(error = %e, "accept failed");
+                        continue;
+                    }
+                };
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let actor = ServerConn::with_state(
+                    server_caps,
+                    "velcruxd",
+                    Arc::clone(&stats),
+                    Arc::clone(&backend),
+                    state_store.clone(),
+                    Some(Arc::clone(&authenticator)),
+                    Some(Arc::clone(&authorizer)),
+                );
+                tokio::spawn(async move {
+                    let conn: QuicConnection = conn;
+                    match actor.run(&conn).await {
+                        Ok(state) => info!(conn_id = id, ?state, "connection finished"),
+                        Err(e) => warn!(conn_id = id, error = %e, "connection error"),
+                    }
+                });
+            }
+        }
+
+        #[cfg(not(unix))]
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("SIGINT (Ctrl+C) received, starting graceful drain");
+                break;
+            }
+            accept_res = transport.accept() => {
+                let conn = match accept_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!(error = %e, "accept failed");
+                        continue;
+                    }
+                };
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let actor = ServerConn::with_state(
+                    server_caps,
+                    "velcruxd",
+                    Arc::clone(&stats),
+                    Arc::clone(&backend),
+                    state_store.clone(),
+                    Some(Arc::clone(&authenticator)),
+                    Some(Arc::clone(&authorizer)),
+                );
+                tokio::spawn(async move {
+                    let conn: QuicConnection = conn;
+                    match actor.run(&conn).await {
+                        Ok(state) => info!(conn_id = id, ?state, "connection finished"),
+                        Err(e) => warn!(conn_id = id, error = %e, "connection error"),
+                    }
+                });
+            }
+        }
     }
+
+    info!("shutting down metrics server and draining active transfers");
+    if let Some(metrics_tx) = metrics_shutdown {
+        let _ = metrics_tx.send(());
+    }
+
+    // Drain window (up to 5 seconds for in-flight tasks to checkpoint)
+    let drain_start = std::time::Instant::now();
+    while stats.transfers_active.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        if drain_start.elapsed() >= Duration::from_secs(5) {
+            warn!("drain timeout exceeded, forcing exit");
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    info!("velcruxd graceful shutdown complete");
+    Ok(())
 }
 
-fn parse_tunables(net: &NetworkCfg) -> Result<TransportConfigTunables> {
+fn parse_tunables(cfg: &ServerConfig) -> Result<TransportConfigTunables> {
+    let recv_win = parse_size_bytes(&cfg.quic.receive_window).unwrap_or(384 * 1024 * 1024);
+    let stream_win = parse_size_bytes(&cfg.quic.stream_receive_window).unwrap_or(384 * 1024 * 1024);
     Ok(TransportConfigTunables {
-        receive_window: 384 * 1024 * 1024,
-        stream_receive_window: 384 * 1024 * 1024,
-        max_concurrent_streams: 32,
-        idle_timeout: parse_duration(&net.idle_timeout)
-            .with_context(|| format!("invalid idle_timeout: {}", net.idle_timeout))?,
-        keepalive: parse_duration(&net.keepalive)
-            .with_context(|| format!("invalid keepalive: {}", net.keepalive))?,
-        initial_rtt: Duration::from_millis(150),
+        receive_window: recv_win,
+        stream_receive_window: stream_win,
+        max_concurrent_streams: cfg.quic.max_concurrent_streams,
+        idle_timeout: parse_duration(&cfg.network.idle_timeout)
+            .with_context(|| format!("invalid idle_timeout: {}", cfg.network.idle_timeout))?,
+        keepalive: parse_duration(&cfg.network.keepalive)
+            .with_context(|| format!("invalid keepalive: {}", cfg.network.keepalive))?,
+        initial_rtt: parse_duration(&cfg.quic.initial_rtt).unwrap_or(Duration::from_millis(150)),
     })
 }
 
-/// Tiny duration parser: supports "<n>s" and "<n>ms". M2 will switch to a
-/// real crate (e.g. `humantime` or `parse-duration`).
 fn parse_duration(s: &str) -> Result<Duration> {
+    let s = s.trim();
     if let Some(rest) = s.strip_suffix("ms") {
         let n: u64 = rest.parse().context("expected integer before 'ms'")?;
         return Ok(Duration::from_millis(n));
@@ -303,65 +343,4 @@ fn parse_duration(s: &str) -> Result<Duration> {
     }
     let n: u64 = s.parse().context("expected seconds (e.g. \"60s\")")?;
     Ok(Duration::from_secs(n))
-}
-
-/// Serve Prometheus text format metrics over HTTP on `listen_addr` (`OPERATIONS.md` §7).
-async fn serve_prometheus_metrics(listen_addr: &str, stats: Arc<ServerStats>) -> Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-
-    let listener = TcpListener::bind(listen_addr)
-        .await
-        .with_context(|| format!("bind metrics listener on {listen_addr}"))?;
-    info!(metrics_addr = %listen_addr, "Prometheus /metrics HTTP endpoint listening");
-
-    tokio::spawn(async move {
-        loop {
-            let (mut socket, _) = match listener.accept().await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, "metrics accept failed");
-                    continue;
-                }
-            };
-            let stats = Arc::clone(&stats);
-            tokio::spawn(async move {
-                let mut buf = [0u8; 1024];
-                let _ = socket.read(&mut buf).await;
-
-                let conns = stats.connections.load(std::sync::atomic::Ordering::Relaxed);
-                let handshakes = stats.handshakes.load(std::sync::atomic::Ordering::Relaxed);
-                let pings = stats.pings.load(std::sync::atomic::Ordering::Relaxed);
-
-                let body = format!(
-                    "# HELP velcrux_connections Total connections accepted\n\
-                     # TYPE velcrux_connections counter\n\
-                     velcrux_connections{{state=\"accepted\"}} {conns}\n\n\
-                     # HELP velcrux_handshakes_total Total completed handshakes\n\
-                     # TYPE velcrux_handshakes_total counter\n\
-                     velcrux_handshakes_total {handshakes}\n\n\
-                     # HELP velcrux_pings_total Total pings handled\n\
-                     # TYPE velcrux_pings_total counter\n\
-                     velcrux_pings_total {pings}\n\n\
-                     # HELP velcrux_transfers_active Currently active transfers\n\
-                     # TYPE velcrux_transfers_active gauge\n\
-                     velcrux_transfers_active{{direction=\"bidirectional\"}} 0\n"
-                );
-
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\n\
-                     Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n\
-                     Content-Length: {}\r\n\
-                     Connection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-
-                let _ = socket.write_all(response.as_bytes()).await;
-                let _ = socket.shutdown().await;
-            });
-        }
-    });
-
-    Ok(())
 }

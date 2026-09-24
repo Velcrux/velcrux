@@ -17,7 +17,7 @@ repository  = "https://github.com/Velcrux/velcrux"
 # Quinn 0.10 was built against the rustls 0.22 (rustls::Certificate /
 # rustls::PrivateKey) API; we keep that pairing for the MVP.
 [workspace.dependencies]
-tokio            = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "fs"] }
+tokio            = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "fs", "signal"] }
 quinn            = { version = "0.10", features = ["rustls", "log", "runtime-tokio"] }
 rustls           = { version = "0.21", default-features = false, features = ["quic"] }
 rustls-pemfile   = "1"
