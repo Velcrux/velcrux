@@ -632,3 +632,31 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
     assert_eq!(server_resumed_content.len(), resume_size as usize);
     assert_eq!(Hash::of(&server_resumed_content), resume_hash);
 }
+
+#[test]
+fn test_client_config_file_cli() {
+    let temp = tempdir().unwrap();
+    let config_path = temp.path().join("client-config.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+sni = "custom.domain.internal"
+log_format = "json"
+json = true
+"#,
+    )
+    .unwrap();
+
+    let bin = velcrux_bin();
+    let out = Command::new(&bin)
+        .arg("--config")
+        .arg(&config_path)
+        .arg("completions")
+        .arg("zsh")
+        .output()
+        .expect("run client with config");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("velcrux"));
+}

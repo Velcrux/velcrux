@@ -22,13 +22,8 @@ use velcrux_server::config::{parse_size_bytes, ServerConfig};
 use velcrux_server::metrics::{format_prometheus_metrics, start_metrics_server};
 use velcrux_server::server::ReloadableAuthorizer;
 
-fn velcrux_bin() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop();
-    if path.ends_with("deps") {
-        path.pop();
-    }
-    path.join("velcrux")
+fn velcruxd_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_velcruxd"))
 }
 
 #[test]
@@ -251,29 +246,15 @@ permissions = ["upload", "download"]
 }
 
 #[test]
-fn test_client_config_file_cli() {
-    let temp = tempdir().unwrap();
-    let config_path = temp.path().join("client-config.toml");
-    std::fs::write(
-        &config_path,
-        r#"
-sni = "custom.domain.internal"
-log_format = "json"
-json = true
-"#,
-    )
-    .unwrap();
-
-    let bin = velcrux_bin();
+fn test_server_completions_cli() {
+    let bin = velcruxd_bin();
     let out = Command::new(&bin)
-        .arg("--config")
-        .arg(&config_path)
         .arg("completions")
         .arg("zsh")
         .output()
-        .expect("run client with config");
+        .expect("run server completions");
 
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("velcrux"));
+    assert!(stdout.contains("velcruxd"));
 }
