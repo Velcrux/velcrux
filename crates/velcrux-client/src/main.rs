@@ -514,7 +514,7 @@ async fn upload_file_stream(
         use velcrux_core::protocol::message::{ChunkQuery, ChunkResponse, InventoryHint};
         use velcrux_core::sync::{BloomFilter, RleBitmap};
 
-        let hint = InventoryHint::decode(&frame.payload)?;
+        let hint = InventoryHint::decode(frame.payload)?;
         let _bloom = BloomFilter::from_bytes(&hint.bitset, hint.filter_bits, hint.num_hashes)
             .map_err(|e| anyhow::anyhow!("invalid bloom filter: {e}"))?;
 
@@ -545,9 +545,12 @@ async fn upload_file_stream(
 
         let resp_frame = session.recv_frame().await?;
         if resp_frame.type_byte != velcrux_core::protocol::message::CHUNK_RESPONSE {
-            anyhow::bail!("expected CHUNK_RESPONSE, got 0x{:02x}", resp_frame.type_byte);
+            anyhow::bail!(
+                "expected CHUNK_RESPONSE, got 0x{:02x}",
+                resp_frame.type_byte
+            );
         }
-        let resp = ChunkResponse::decode(&resp_frame.payload)?;
+        let resp = ChunkResponse::decode(resp_frame.payload)?;
         let rle = RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)
             .map_err(|e| anyhow::anyhow!("invalid rle bitmap: {e}"))?;
 
@@ -565,7 +568,10 @@ async fn upload_file_stream(
     } else if frame.type_byte == velcrux_core::protocol::message::TRANSFER_PLAN {
         TransferPlan::decode(frame.payload)?
     } else {
-        anyhow::bail!("expected TRANSFER_PLAN or INVENTORY_HINT, got 0x{:02x}", frame.type_byte);
+        anyhow::bail!(
+            "expected TRANSFER_PLAN or INVENTORY_HINT, got 0x{:02x}",
+            frame.type_byte
+        );
     };
 
     if plan.bytes_to_transfer == 0 {
@@ -573,13 +579,25 @@ async fn upload_file_stream(
         let begin = TransferBegin {
             transfer_id: created.transfer_id,
         };
-        session.send_mut().write_all(bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?)).await?;
+        session
+            .send_mut()
+            .write_all(bytes::Bytes::from(encode_message(
+                &Message::TransferBegin(begin),
+                0,
+            )?))
+            .await?;
 
         let verify = Verify {
             transfer_id: created.transfer_id,
             expected_hash,
         };
-        session.send_mut().write_all(bytes::Bytes::from(encode_message(&Message::Verify(verify), 0)?)).await?;
+        session
+            .send_mut()
+            .write_all(bytes::Bytes::from(encode_message(
+                &Message::Verify(verify),
+                0,
+            )?))
+            .await?;
 
         let frame = session.recv_frame().await?;
         if frame.type_byte != velcrux_core::protocol::message::VERIFY_RESULT {
@@ -593,7 +611,13 @@ async fn upload_file_stream(
         let commit = Commit {
             transfer_id: created.transfer_id,
         };
-        session.send_mut().write_all(bytes::Bytes::from(encode_message(&Message::Commit(commit), 0)?)).await?;
+        session
+            .send_mut()
+            .write_all(bytes::Bytes::from(encode_message(
+                &Message::Commit(commit),
+                0,
+            )?))
+            .await?;
 
         let frame = session.recv_frame().await?;
         if frame.type_byte != velcrux_core::protocol::message::COMMITTED {
@@ -655,7 +679,7 @@ async fn upload_file_stream(
     };
 
     let mut cfg = velcrux_core::PipelineConfig::default();
-    if initial_bitmap.len() > 0 {
+    if !initial_bitmap.is_empty() {
         cfg.chunk_mode = velcrux_core::chunking::ChunkMode::Fixed;
         cfg.chunk_params =
             velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap();
@@ -696,7 +720,9 @@ async fn run_upload(
     let is_json = cli_log_json(cli);
     let (tid, computed, bytes_transferred) =
         upload_file_stream(conn, session, store, local, url_path, true, cli).await?;
-    let file_size = std::fs::metadata(local).map(|m| m.len()).unwrap_or(bytes_transferred);
+    let file_size = std::fs::metadata(local)
+        .map(|m| m.len())
+        .unwrap_or(bytes_transferred);
 
     if is_json {
         let out = serde_json::json!({
@@ -715,8 +741,7 @@ async fn run_upload(
         println!("transfer_id: {tid}");
         println!(
             "upload: committed {} bytes (transferred {} bytes); server hash matches: true",
-            file_size,
-            bytes_transferred
+            file_size, bytes_transferred
         );
     }
     session.bye().await.ok();
@@ -1096,7 +1121,7 @@ async fn download_file_stream(
 
             let q_frame = session.recv_frame().await?;
             if q_frame.type_byte == velcrux_core::protocol::message::CHUNK_QUERY {
-                let query = ChunkQuery::decode(&q_frame.payload)?;
+                let query = ChunkQuery::decode(q_frame.payload)?;
                 let mut have_bits = Vec::with_capacity(query.chunk_hashes.len());
                 let mut matching_chunks = Vec::new();
                 for (idx, h) in query.chunk_hashes.iter().enumerate() {

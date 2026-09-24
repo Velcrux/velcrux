@@ -3,9 +3,9 @@
 //! Supports TOML configuration, environment variable overrides with prefix
 //! `VELCRUX_`, and strict startup validation.
 
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
@@ -173,8 +173,8 @@ impl ServerConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("read config {}", path.display()))?;
-        let mut cfg: Self = toml::from_str(&raw)
-            .with_context(|| format!("parse TOML from {}", path.display()))?;
+        let mut cfg: Self =
+            toml::from_str(&raw).with_context(|| format!("parse TOML from {}", path.display()))?;
         cfg.apply_env_overrides();
         cfg.validate()?;
         Ok(cfg)
@@ -246,14 +246,19 @@ impl ServerConfig {
     /// Validate the configuration.
     pub fn validate(&self) -> Result<()> {
         // Validate listen address
-        let _: std::net::SocketAddr = self.network.listen.parse()
-            .with_context(|| format!("invalid network.listen address: {}", self.network.listen))?;
+        let _: std::net::SocketAddr =
+            self.network.listen.parse().with_context(|| {
+                format!("invalid network.listen address: {}", self.network.listen)
+            })?;
 
         // Validate state_db path (must be absolute per ADR-005)
         if let Some(state_db) = &self.storage.state_db {
             let p = PathBuf::from(state_db);
             if !p.is_absolute() {
-                anyhow::bail!("storage.state_db path must be absolute (got {}) per ADR-005", state_db);
+                anyhow::bail!(
+                    "storage.state_db path must be absolute (got {}) per ADR-005",
+                    state_db
+                );
             }
         }
 

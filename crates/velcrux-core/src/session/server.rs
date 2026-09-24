@@ -458,7 +458,9 @@ async fn handle_transfer_create(
         let dst = match authorizer.check(identity, Op::Delete, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
-                stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let err = crate::protocol::message::ErrorMsg::new(
                     crate::protocol::error::ErrorCode::FileNotFound,
                     "not found",
@@ -486,7 +488,9 @@ async fn handle_transfer_create(
         let vpath = match authorizer.check(identity, Op::Sync, target_path) {
             Ok(p) => p,
             Err(_) => {
-                stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let err = crate::protocol::message::ErrorMsg::new(
                     crate::protocol::error::ErrorCode::FileNotFound,
                     "not found",
@@ -522,7 +526,9 @@ async fn handle_transfer_create(
     let dst = match authorizer.check(identity, op, &create.dst_path) {
         Ok(p) => p,
         Err(_) => {
-            stats.authz_denials.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            stats
+                .authz_denials
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let err = crate::protocol::message::ErrorMsg::new(
                 crate::protocol::error::ErrorCode::FileNotFound,
                 "not found",
@@ -532,7 +538,9 @@ async fn handle_transfer_create(
         }
     };
 
-    stats.transfers_active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    stats
+        .transfers_active
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let _active_guard = ActiveTransferGuard(&stats.transfers_active);
 
     let (transfer_id, resumed, bytes_reusable) = match state {
@@ -611,7 +619,9 @@ async fn handle_transfer_create(
 
     let existing_path = backend.root().join(dst.as_path());
     if create.op == TransferOp::Upload && existing_path.is_file() {
-        let meta_len = std::fs::metadata(&existing_path).map(|m| m.len()).unwrap_or(0);
+        let meta_len = std::fs::metadata(&existing_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let existing_hash = crate::sync::compute_file_hash(&existing_path).ok();
 
         // Fast-path: Identical file already exists on server
@@ -659,8 +669,12 @@ async fn handle_transfer_create(
                         files: 1,
                     };
                     write_frame(send, &Message::Committed(committed), 0).await?;
-                    stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    stats.bytes_reused.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .transfers_total_upload
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .bytes_reused
+                        .fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             return Ok(());
@@ -763,7 +777,9 @@ async fn handle_transfer_create(
                     .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
                 if begin_frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
                     return Err(VelcruxError::Protocol(
-                        crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
+                        crate::error::ProtocolError::InvalidStateTransition(
+                            "expected TRANSFER_BEGIN",
+                        ),
                     ));
                 }
 
@@ -783,11 +799,19 @@ async fn handle_transfer_create(
                 .await
                 .map(|_| ());
                 if res.is_ok() {
-                    stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    stats.bytes_transferred_upload.fetch_add(plan.bytes_to_transfer, std::sync::atomic::Ordering::Relaxed);
-                    stats.bytes_reused.fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .transfers_total_upload
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .bytes_transferred_upload
+                        .fetch_add(plan.bytes_to_transfer, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .bytes_reused
+                        .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
                 } else {
-                    stats.checksum_mismatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .checksum_mismatches
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 return res;
             }
@@ -818,12 +842,11 @@ async fn handle_transfer_create(
         && frame.type_byte == crate::protocol::message::INVENTORY_HINT
     {
         let hint = crate::protocol::message::InventoryHint::decode(&frame.payload)?;
-        let _bloom = crate::sync::BloomFilter::from_bytes(
-            &hint.bitset,
-            hint.filter_bits,
-            hint.num_hashes,
-        )
-        .map_err(|_| VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid bloom")))?;
+        let _bloom =
+            crate::sync::BloomFilter::from_bytes(&hint.bitset, hint.filter_bits, hint.num_hashes)
+                .map_err(|_| {
+                VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid bloom"))
+            })?;
 
         let server_file_path = backend.root().join(dst.as_path());
         let mut sf = std::fs::File::open(&server_file_path)?;
@@ -859,8 +882,10 @@ async fn handle_transfer_create(
             ));
         }
         let resp = crate::protocol::message::ChunkResponse::decode(&resp_frame.payload)?;
-        let rle = crate::sync::RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)
-            .map_err(|_| VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid rle")))?;
+        let rle =
+            crate::sync::RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks).map_err(|_| {
+                VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid rle"))
+            })?;
         let mut bm = crate::state::ChunkBitmap::new();
         for (i, &(idx, len)) in chunk_indices.iter().enumerate() {
             if rle.get(i) == Some(true) {
@@ -970,17 +995,27 @@ async fn handle_transfer_create(
     if res.is_ok() {
         match create.op {
             TransferOp::Upload => {
-                stats.transfers_total_upload.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                stats.bytes_transferred_upload.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .transfers_total_upload
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .bytes_transferred_upload
+                    .fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
             }
             TransferOp::Download => {
-                stats.transfers_total_download.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                stats.bytes_transferred_download.fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .transfers_total_download
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .bytes_transferred_download
+                    .fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
             }
             _ => {}
         }
     } else {
-        stats.checksum_mismatches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .checksum_mismatches
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     res

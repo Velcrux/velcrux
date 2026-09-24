@@ -35,8 +35,11 @@ fn velcrux_bin() -> PathBuf {
 fn test_parse_size_bytes() {
     assert_eq!(parse_size_bytes("256KiB").unwrap(), 256 * 1024);
     assert_eq!(parse_size_bytes("384MiB").unwrap(), 384 * 1024 * 1024);
-    assert_eq!(parse_size_bytes("1GiB").unwrap(), 1 * 1024 * 1024 * 1024);
-    assert_eq!(parse_size_bytes("2TiB").unwrap(), 2 * 1024 * 1024 * 1024 * 1024);
+    assert_eq!(parse_size_bytes("1GiB").unwrap(), 1024 * 1024 * 1024);
+    assert_eq!(
+        parse_size_bytes("2TiB").unwrap(),
+        2 * 1024 * 1024 * 1024 * 1024
+    );
     assert_eq!(parse_size_bytes("1024").unwrap(), 1024);
 }
 
@@ -72,7 +75,10 @@ state_db = "{}"
     assert_eq!(cfg.network.listen, "127.0.0.1:7443");
     assert_eq!(cfg.network.idle_timeout, "45s");
     assert_eq!(cfg.network.keepalive, "10s");
-    assert_eq!(cfg.storage.state_db, Some(state_db.to_str().unwrap().to_string()));
+    assert_eq!(
+        cfg.storage.state_db,
+        Some(state_db.to_str().unwrap().to_string())
+    );
 
     // 2. Environment variable overrides
     std::env::set_var("VELCRUX_NETWORK_LISTEN", "127.0.0.1:18443");
@@ -121,8 +127,12 @@ fn test_prometheus_metrics_formatting() {
     stats.transfers_active.store(2, Ordering::Relaxed);
     stats.transfers_total_upload.store(5, Ordering::Relaxed);
     stats.transfers_total_download.store(3, Ordering::Relaxed);
-    stats.bytes_transferred_upload.store(1048576, Ordering::Relaxed);
-    stats.bytes_transferred_download.store(524288, Ordering::Relaxed);
+    stats
+        .bytes_transferred_upload
+        .store(1048576, Ordering::Relaxed);
+    stats
+        .bytes_transferred_download
+        .store(524288, Ordering::Relaxed);
     stats.bytes_reused.store(2097152, Ordering::Relaxed);
     stats.authz_denials.store(1, Ordering::Relaxed);
     stats.checksum_mismatches.store(0, Ordering::Relaxed);
@@ -133,7 +143,9 @@ fn test_prometheus_metrics_formatting() {
     assert!(output.contains("velcrux_pings_total 8"));
     assert!(output.contains("velcrux_transfers_active{direction=\"bidirectional\"} 2"));
     assert!(output.contains("velcrux_transfers_total{direction=\"upload\",status=\"committed\"} 5"));
-    assert!(output.contains("velcrux_transfers_total{direction=\"download\",status=\"committed\"} 3"));
+    assert!(
+        output.contains("velcrux_transfers_total{direction=\"download\",status=\"committed\"} 3")
+    );
     assert!(output.contains("velcrux_bytes_transferred_total{direction=\"upload\"} 1048576"));
     assert!(output.contains("velcrux_bytes_transferred_total{direction=\"download\"} 524288"));
     assert!(output.contains("velcrux_bytes_reused_total 2097152"));
@@ -204,8 +216,12 @@ permissions = ["upload", "download"]
     let alice = Identity::new("alice", "", "");
     let bob = Identity::new("bob", "", "");
 
-    assert!(reloadable.check(&alice, Op::Upload, "/data/test.bin").is_ok());
-    assert!(reloadable.check(&bob, Op::Upload, "/data/test.bin").is_err());
+    assert!(reloadable
+        .check(&alice, Op::Upload, "/data/test.bin")
+        .is_ok());
+    assert!(reloadable
+        .check(&bob, Op::Upload, "/data/test.bin")
+        .is_err());
 
     // Update grants file on disk (simulate SIGHUP reload)
     std::fs::write(
@@ -228,7 +244,9 @@ permissions = ["upload", "download"]
     reloadable.reload(reloaded);
 
     // Now bob has access immediately without restarting or dropping sessions!
-    assert!(reloadable.check(&alice, Op::Upload, "/data/test.bin").is_ok());
+    assert!(reloadable
+        .check(&alice, Op::Upload, "/data/test.bin")
+        .is_ok());
     assert!(reloadable.check(&bob, Op::Upload, "/data/test.bin").is_ok());
 }
 

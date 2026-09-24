@@ -267,7 +267,11 @@ async fn test_delta_upload_transfers_only_delta() {
         .output()
         .expect("initial upload");
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8(out.stdout).unwrap();
     let val: serde_json::Value = serde_json::from_str(&s).unwrap();
     assert_eq!(val["status"], "committed");
@@ -302,7 +306,11 @@ async fn test_delta_upload_transfers_only_delta() {
         .output()
         .expect("delta upload");
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8(out.stdout).unwrap();
     let val: serde_json::Value = serde_json::from_str(&s).unwrap();
     assert_eq!(val["status"], "committed");
@@ -404,7 +412,11 @@ async fn test_delta_download_transfers_only_delta() {
         .output()
         .expect("delta download");
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8(out.stdout).unwrap();
     let val: serde_json::Value = serde_json::from_str(&s).unwrap();
     assert_eq!(val["status"], "committed");
@@ -436,7 +448,11 @@ async fn test_delta_download_transfers_only_delta() {
         .output()
         .expect("skip download");
 
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8(out.stdout).unwrap();
     let val: serde_json::Value = serde_json::from_str(&s).unwrap();
     assert_eq!(val["status"], "committed");

@@ -91,7 +91,10 @@ pub async fn run(config_path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no PKCS#8 key in {}", cfg.security.private_key))?;
     let key_der = PrivateKey(parsed_key);
 
-    let addr: std::net::SocketAddr = cfg.network.listen.parse()
+    let addr: std::net::SocketAddr = cfg
+        .network
+        .listen
+        .parse()
         .with_context(|| format!("invalid listen address: {}", cfg.network.listen))?;
 
     let mut server_caps = Capabilities::EMPTY;
@@ -140,7 +143,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
     // M3 state DB. The path must be absolute per ADR-005.
     use velcrux_core::state::StateStore as _;
-    let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db {
+    let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db
+    {
         Some(path) => {
             let p = std::path::PathBuf::from(path);
             match velcrux_core::state::SqliteStateStore::new(&p) {
@@ -204,8 +208,9 @@ pub async fn run(config_path: &Path) -> Result<()> {
         .context("failed to register SIGHUP handler")?;
 
     #[cfg(unix)]
-    let mut sigterm_stream = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("failed to register SIGTERM handler")?;
+    let mut sigterm_stream =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("failed to register SIGTERM handler")?;
 
     info!("velcruxd operational loop started");
 
@@ -304,7 +309,11 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
     // Drain window (up to 5 seconds for in-flight tasks to checkpoint)
     let drain_start = std::time::Instant::now();
-    while stats.transfers_active.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+    while stats
+        .transfers_active
+        .load(std::sync::atomic::Ordering::Relaxed)
+        > 0
+    {
         if drain_start.elapsed() >= Duration::from_secs(5) {
             warn!("drain timeout exceeded, forcing exit");
             break;

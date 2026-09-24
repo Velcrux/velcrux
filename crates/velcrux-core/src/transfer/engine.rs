@@ -731,11 +731,7 @@ pub async fn server_upload_session_with_delta(
     let mut bytes_received = bitmap.bytes_completed();
     let mut last_checkpoint_bytes = bytes_received;
 
-    let chunk_size = if is_delta {
-        64 * 1024
-    } else {
-        M3_CHUNK_SIZE
-    };
+    let chunk_size = if is_delta { 64 * 1024 } else { M3_CHUNK_SIZE };
 
     loop {
         let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
@@ -1142,7 +1138,11 @@ pub async fn server_download_session_with_delta(
 
     let computed_hash = if let Some(bm) = skip_bitmap {
         let chunk_size = 64 * 1024u64;
-        let total_chunks = if file_size == 0 { 0 } else { (file_size + chunk_size - 1) / chunk_size };
+        let total_chunks = if file_size == 0 {
+            0
+        } else {
+            (file_size + chunk_size - 1) / chunk_size
+        };
         let mut next_chunk = bm.first_missing_from(0).unwrap_or(total_chunks);
         while next_chunk < total_chunks {
             let offset = next_chunk * chunk_size;
@@ -1150,16 +1150,26 @@ pub async fn server_download_session_with_delta(
             let mut buf = vec![0u8; want];
             let mut read_bytes = 0;
             while read_bytes < want {
-                let n = reader.read_at(offset + read_bytes as u64, &mut buf[read_bytes..]).await?;
+                let n = reader
+                    .read_at(offset + read_bytes as u64, &mut buf[read_bytes..])
+                    .await?;
                 if n == 0 {
                     break;
                 }
                 read_bytes += n;
             }
             let hash = hash_bytes(&buf[..read_bytes]);
-            let bytes = encode_data_frame(offset, read_bytes as u32, DataFrameFlags::NONE, &hash, &buf[..read_bytes]);
+            let bytes = encode_data_frame(
+                offset,
+                read_bytes as u32,
+                DataFrameFlags::NONE,
+                &hash,
+                &buf[..read_bytes],
+            );
             data_send.write_all(Bytes::from(bytes)).await?;
-            next_chunk = bm.first_missing_from(next_chunk + 1).unwrap_or(total_chunks);
+            next_chunk = bm
+                .first_missing_from(next_chunk + 1)
+                .unwrap_or(total_chunks);
         }
         file_hash
     } else {

@@ -8,8 +8,8 @@
 
 #![forbid(unsafe_code)]
 
-mod dev_pki;
 pub mod config;
+mod dev_pki;
 pub mod metrics;
 mod server;
 
