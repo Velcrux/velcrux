@@ -252,7 +252,13 @@ pub async fn client_upload_stream(
     if bitmap.len() > 0 || cfg.chunk_mode == ChunkMode::Fixed {
         // Resumable / Fixed chunking pipeline.
         use tokio::io::AsyncSeekExt;
-        let chunk_size = M3_CHUNK_SIZE;
+        let chunk_size = if cfg.chunk_mode == ChunkMode::Fixed {
+            cfg.chunk_params.target
+        } else if bitmap.len() > 0 && (bitmap.len() as u64) > file_size.div_ceil(M3_CHUNK_SIZE) {
+            64 * 1024
+        } else {
+            M3_CHUNK_SIZE
+        };
         let total_chunks = file_size.div_ceil(chunk_size);
         let mut file = tokio::fs::File::open(&local_path).await?;
         let mut next_chunk = bitmap.first_missing_from(0).unwrap_or(total_chunks);
@@ -661,6 +667,37 @@ pub async fn server_upload_session_with_state(
     expected_size: u64,
     expected_hash: Hash,
 ) -> Result<Hash> {
+    server_upload_session_with_delta(
+        conn,
+        backend,
+        control_send,
+        control_recv,
+        store,
+        resumed,
+        transfer_id,
+        dst,
+        expected_size,
+        expected_hash,
+        None,
+    )
+    .await
+}
+
+/// Server-side upload session with optional initial bitmap (e.g. for delta transfer)
+/// and resume support.
+pub async fn server_upload_session_with_delta(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    store: Option<Arc<dyn StateStore>>,
+    resumed: bool,
+    transfer_id: TransferId,
+    dst: &VPath,
+    expected_size: u64,
+    expected_hash: Hash,
+    initial_bitmap: Option<ChunkBitmap>,
+) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
@@ -682,12 +719,23 @@ pub async fn server_upload_session_with_state(
         .open_staging_resumable(&transfer_id.to_string(), dst, expected_size, resumed)
         .await?;
 
-    let mut bitmap = match &store {
-        Some(s) if resumed => s.read_bitmap(transfer_id).unwrap_or_default(),
-        _ => ChunkBitmap::new(),
+    let is_delta = initial_bitmap.is_some();
+    let mut bitmap = if let Some(bm) = initial_bitmap {
+        bm
+    } else {
+        match &store {
+            Some(s) if resumed => s.read_bitmap(transfer_id).unwrap_or_default(),
+            _ => ChunkBitmap::new(),
+        }
     };
     let mut bytes_received = bitmap.bytes_completed();
     let mut last_checkpoint_bytes = bytes_received;
+
+    let chunk_size = if is_delta {
+        64 * 1024
+    } else {
+        M3_CHUNK_SIZE
+    };
 
     loop {
         let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
@@ -710,7 +758,7 @@ pub async fn server_upload_session_with_state(
                 crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
             ));
         }
-        let chunk_index = hdr.chunk_offset / M3_CHUNK_SIZE;
+        let chunk_index = hdr.chunk_offset / chunk_size;
         if !bitmap.contains(chunk_index) {
             writer.write_at(hdr.chunk_offset, &payload).await?;
             bitmap.mark_complete(chunk_index, payload_len as u64);
@@ -884,6 +932,28 @@ pub async fn client_download_stream(
     local_path: PathBuf,
     progress_tx: Option<mpsc::Sender<u64>>,
 ) -> Result<Hash> {
+    client_download_stream_with_staging(
+        conn,
+        control_send,
+        control_recv,
+        transfer_id,
+        local_path,
+        progress_tx,
+        false,
+    )
+    .await
+}
+
+/// Client-side download over borrowed control streams with optional pre-populated staging.
+pub async fn client_download_stream_with_staging(
+    conn: &dyn Connection,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    local_path: PathBuf,
+    progress_tx: Option<mpsc::Sender<u64>>,
+    staging_prepopulated: bool,
+) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
@@ -897,10 +967,11 @@ pub async fn client_download_stream(
     if let Some(parent) = staging_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
+    let truncate = !staging_prepopulated;
     let mut staging_file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
+        .truncate(truncate)
         .open(&staging_path)
         .await?;
 
@@ -1023,8 +1094,34 @@ pub async fn server_download_session(
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
     src: &VPath,
-    _file_size: u64,
-    _file_hash: Hash,
+    file_size: u64,
+    file_hash: Hash,
+) -> Result<()> {
+    server_download_session_with_delta(
+        conn,
+        backend,
+        control_send,
+        control_recv,
+        transfer_id,
+        src,
+        file_size,
+        file_hash,
+        None,
+    )
+    .await
+}
+
+/// Server-side download session with optional skip bitmap for delta transfer.
+pub async fn server_download_session_with_delta(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    src: &VPath,
+    file_size: u64,
+    file_hash: Hash,
+    skip_bitmap: Option<ChunkBitmap>,
 ) -> Result<()> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
@@ -1043,59 +1140,83 @@ pub async fn server_download_session(
     // Open the source file for reading.
     let mut reader = backend.open_read(src).await?;
 
-    // Stream from disk → CDC → BLAKE3 → DATA frames. We also compute
-    // the whole-file BLAKE3 inline so the VERIFY_RESULT reply can
-    // report the true hash (the storage backend's stat() does not
-    // compute hashes; it would be too expensive on every stat call).
-    let mut read_buf = vec![0u8; 2 * 1024 * 1024];
-    let mut chunker = RollingChunker::new(ChunkParams::default());
-    let mut pending: Vec<u8> = Vec::with_capacity(ChunkParams::default().max as usize);
-    let mut whole_hasher = HashHasher::new();
-    // `file_offset` tracks the next byte to read from the source file.
-    // `pending_offset` is the file offset of the start of the bytes in
-    // `pending`; it equals the file offset of the first unread byte.
-    let mut file_offset: u64 = 0;
-    let mut pending_offset: u64 = 0;
+    let computed_hash = if let Some(bm) = skip_bitmap {
+        let chunk_size = 64 * 1024u64;
+        let total_chunks = if file_size == 0 { 0 } else { (file_size + chunk_size - 1) / chunk_size };
+        let mut next_chunk = bm.first_missing_from(0).unwrap_or(total_chunks);
+        while next_chunk < total_chunks {
+            let offset = next_chunk * chunk_size;
+            let want = ((file_size - offset).min(chunk_size)) as usize;
+            let mut buf = vec![0u8; want];
+            let mut read_bytes = 0;
+            while read_bytes < want {
+                let n = reader.read_at(offset + read_bytes as u64, &mut buf[read_bytes..]).await?;
+                if n == 0 {
+                    break;
+                }
+                read_bytes += n;
+            }
+            let hash = hash_bytes(&buf[..read_bytes]);
+            let bytes = encode_data_frame(offset, read_bytes as u32, DataFrameFlags::NONE, &hash, &buf[..read_bytes]);
+            data_send.write_all(Bytes::from(bytes)).await?;
+            next_chunk = bm.first_missing_from(next_chunk + 1).unwrap_or(total_chunks);
+        }
+        file_hash
+    } else {
+        // Stream from disk → CDC → BLAKE3 → DATA frames. We also compute
+        // the whole-file BLAKE3 inline so the VERIFY_RESULT reply can
+        // report the true hash (the storage backend's stat() does not
+        // compute hashes; it would be too expensive on every stat call).
+        let mut read_buf = vec![0u8; 2 * 1024 * 1024];
+        let mut chunker = RollingChunker::new(ChunkParams::default());
+        let mut pending: Vec<u8> = Vec::with_capacity(ChunkParams::default().max as usize);
+        let mut whole_hasher = HashHasher::new();
+        // `file_offset` tracks the next byte to read from the source file.
+        // `pending_offset` is the file offset of the start of the bytes in
+        // `pending`; it equals the file offset of the first unread byte.
+        let mut file_offset: u64 = 0;
+        let mut pending_offset: u64 = 0;
 
-    loop {
-        let n = reader.read_at(file_offset, &mut read_buf).await?;
-        if n == 0 {
-            // EOF: emit trailing chunk if any.
-            if !pending.is_empty() {
-                let hash = hash_bytes(&pending);
+        loop {
+            let n = reader.read_at(file_offset, &mut read_buf).await?;
+            if n == 0 {
+                // EOF: emit trailing chunk if any.
+                if !pending.is_empty() {
+                    let hash = hash_bytes(&pending);
+                    let bytes = encode_data_frame(
+                        pending_offset,
+                        pending.len() as u32,
+                        DataFrameFlags::NONE,
+                        &hash,
+                        &pending,
+                    );
+                    data_send.write_all(Bytes::from(bytes)).await?;
+                }
+                break;
+            }
+            pending.extend_from_slice(&read_buf[..n]);
+            whole_hasher.feed(&read_buf[..n]);
+            file_offset += n as u64;
+            let boundaries = chunker.push(&read_buf[..n])?;
+            for b in &boundaries {
+                let target = b.end() as u64;
+                let need = (target - pending_offset) as usize;
+                let hash = hash_bytes(&pending[..need]);
+                let payload = pending.drain(..need).collect::<Vec<u8>>();
                 let bytes = encode_data_frame(
                     pending_offset,
-                    pending.len() as u32,
+                    need as u32,
                     DataFrameFlags::NONE,
                     &hash,
-                    &pending,
+                    &payload,
                 );
                 data_send.write_all(Bytes::from(bytes)).await?;
+                pending_offset = b.end();
             }
-            break;
         }
-        pending.extend_from_slice(&read_buf[..n]);
-        whole_hasher.feed(&read_buf[..n]);
-        file_offset += n as u64;
-        let boundaries = chunker.push(&read_buf[..n])?;
-        for b in &boundaries {
-            let target = b.end() as u64;
-            let need = (target - pending_offset) as usize;
-            let hash = hash_bytes(&pending[..need]);
-            let payload = pending.drain(..need).collect::<Vec<u8>>();
-            let bytes = encode_data_frame(
-                pending_offset,
-                need as u32,
-                DataFrameFlags::NONE,
-                &hash,
-                &payload,
-            );
-            data_send.write_all(Bytes::from(bytes)).await?;
-            pending_offset = b.end();
-        }
-    }
-    // Finalize the whole-file hash.
-    let computed_hash = whole_hasher.finalize();
+        // Finalize the whole-file hash.
+        whole_hasher.finalize()
+    };
     data_send.finish().await?;
 
     // Await VERIFY from client.

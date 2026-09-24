@@ -578,6 +578,182 @@ async fn handle_transfer_create(
         }
     }
 
+    let existing_path = backend.root().join(dst.as_path());
+    if create.op == TransferOp::Upload && existing_path.is_file() {
+        let meta_len = std::fs::metadata(&existing_path).map(|m| m.len()).unwrap_or(0);
+        let existing_hash = crate::sync::compute_file_hash(&existing_path).ok();
+
+        // Fast-path: Identical file already exists on server
+        if existing_hash == Some(create.file_hash) && meta_len == create.file_size {
+            let created = TransferCreated {
+                transfer_id,
+                resumed: false,
+                max_chunk_size: MAX_CHUNK_SIZE,
+            };
+            let plan = TransferPlan {
+                transfer_id,
+                bytes_total,
+                bytes_to_transfer: 0,
+                bytes_reusable: bytes_total,
+            };
+            write_frame(send, &Message::TransferCreated(created), 0).await?;
+            write_frame(send, &Message::TransferPlan(plan), 0).await?;
+
+            let frame = read_frame(recv)
+                .await?
+                .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+            if frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
+                return Err(VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
+                ));
+            }
+
+            let frame = read_frame(recv)
+                .await?
+                .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+            if frame.type_byte == crate::protocol::message::VERIFY {
+                let vr = crate::protocol::message::VerifyResult {
+                    transfer_id,
+                    ok: true,
+                    computed_hash: create.file_hash,
+                };
+                write_frame(send, &Message::VerifyResult(vr), 0).await?;
+
+                let frame = read_frame(recv)
+                    .await?
+                    .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+                if frame.type_byte == crate::protocol::message::COMMIT {
+                    let committed = crate::protocol::message::Committed {
+                        transfer_id,
+                        files: 1,
+                    };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                }
+            }
+            return Ok(());
+        }
+
+        // Delta path: Destination file exists with different content.
+        if let Ok(inv) = crate::sync::LocalInventory::from_file(
+            &existing_path,
+            crate::chunking::ChunkMode::Fixed,
+            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap(),
+            64 * 1024,
+        ) {
+            let created = TransferCreated {
+                transfer_id,
+                resumed: false,
+                max_chunk_size: MAX_CHUNK_SIZE,
+            };
+            write_frame(send, &Message::TransferCreated(created), 0).await?;
+
+            let bloom = inv.create_bloom_filter(0.01);
+            let hint = crate::protocol::message::InventoryHint {
+                transfer_id,
+                filter_bits: bloom.num_bits(),
+                num_hashes: bloom.num_hashes(),
+                bitset: bytes::Bytes::copy_from_slice(bloom.bitset_bytes()),
+            };
+            write_frame(send, &Message::InventoryHint(hint), 0).await?;
+
+            let frame = read_frame(recv)
+                .await?
+                .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+            if frame.type_byte == crate::protocol::message::CHUNK_QUERY {
+                let query = crate::protocol::message::ChunkQuery::decode(&frame.payload)?;
+                let mut have_bits = Vec::with_capacity(query.chunk_hashes.len());
+                let mut matching_chunks = Vec::new();
+                for (idx, h) in query.chunk_hashes.iter().enumerate() {
+                    if let Some(extent) = inv.lookup(h) {
+                        have_bits.push(true);
+                        let dst_off = idx as u64 * (64 * 1024);
+                        matching_chunks.push((dst_off, extent.offset, extent.length));
+                    } else {
+                        have_bits.push(false);
+                    }
+                }
+                let rle = crate::sync::RleBitmap::from_bits(&have_bits);
+                let resp = crate::protocol::message::ChunkResponse {
+                    transfer_id,
+                    query_seq: query.query_seq,
+                    total_chunks: rle.total_chunks(),
+                    have_count: rle.have_count(),
+                    rle_bitmap: rle.encode(),
+                };
+                write_frame(send, &Message::ChunkResponse(resp), 0).await?;
+
+                // Pre-stage matching chunks into staging file on server
+                let staging_path = backend.staging_path(&transfer_id.to_string(), &dst);
+                if let Some(parent) = staging_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                let mut staging_f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&staging_path)?;
+                staging_f.set_len(create.file_size)?;
+
+                let mut src_f = std::fs::File::open(&existing_path)?;
+                let mut copy_buf = [0u8; 64 * 1024];
+                let mut initial_bitmap = crate::state::ChunkBitmap::new();
+                for (dst_offset, src_offset, len) in matching_chunks {
+                    use std::io::{Read, Seek, SeekFrom, Write};
+                    src_f.seek(SeekFrom::Start(src_offset))?;
+                    staging_f.seek(SeekFrom::Start(dst_offset))?;
+                    let mut rem = len;
+                    while rem > 0 {
+                        let to_read = (rem as usize).min(copy_buf.len());
+                        src_f.read_exact(&mut copy_buf[..to_read])?;
+                        staging_f.write_all(&copy_buf[..to_read])?;
+                        rem -= to_read as u64;
+                    }
+                    let chunk_idx = dst_offset / (64 * 1024);
+                    initial_bitmap.mark_complete(chunk_idx, len);
+                }
+                staging_f.sync_all()?;
+                drop(staging_f);
+                drop(src_f);
+
+                let bytes_reusable = initial_bitmap.bytes_completed();
+                let plan = TransferPlan {
+                    transfer_id,
+                    bytes_total,
+                    bytes_to_transfer: bytes_total.saturating_sub(bytes_reusable),
+                    bytes_reusable,
+                };
+                write_frame(send, &Message::TransferPlan(plan), 0).await?;
+
+                let begin_frame = read_frame(recv)
+                    .await?
+                    .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+                if begin_frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
+                    return Err(VelcruxError::Protocol(
+                        crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
+                    ));
+                }
+
+                let res = crate::transfer::server_upload_session_with_delta(
+                    conn,
+                    backend,
+                    send,
+                    recv,
+                    state.clone(),
+                    true,
+                    transfer_id,
+                    &dst,
+                    create.file_size,
+                    create.file_hash,
+                    Some(initial_bitmap),
+                )
+                .await
+                .map(|_| ());
+                return res;
+            }
+        }
+    }
+
     let created = TransferCreated {
         transfer_id,
         resumed,
@@ -592,16 +768,89 @@ async fn handle_transfer_create(
     write_frame(send, &Message::TransferCreated(created), 0).await?;
     write_frame(send, &Message::TransferPlan(plan), 0).await?;
 
-    // Await TRANSFER_BEGIN.
+    // Await TRANSFER_BEGIN (or INVENTORY_HINT for download).
     let frame = read_frame(recv)
         .await?
         .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
-    if frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
+
+    let mut download_skip_bitmap = None;
+    let begin_frame = if create.op == TransferOp::Download
+        && frame.type_byte == crate::protocol::message::INVENTORY_HINT
+    {
+        let hint = crate::protocol::message::InventoryHint::decode(&frame.payload)?;
+        let _bloom = crate::sync::BloomFilter::from_bytes(
+            &hint.bitset,
+            hint.filter_bits,
+            hint.num_hashes,
+        )
+        .map_err(|_| VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid bloom")))?;
+
+        let server_file_path = backend.root().join(dst.as_path());
+        let mut sf = std::fs::File::open(&server_file_path)?;
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut chunk_hashes = Vec::new();
+        let mut chunk_indices = Vec::new();
+        let mut offset = 0u64;
+        let mut c_idx = 0u64;
+        use std::io::Read;
+        while offset < bytes_total {
+            let to_read = ((bytes_total - offset).min(64 * 1024)) as usize;
+            sf.read_exact(&mut buf[..to_read])?;
+            let h = crate::util::Hash::of(&buf[..to_read]);
+            chunk_hashes.push(h);
+            chunk_indices.push((c_idx, to_read as u64));
+            offset += to_read as u64;
+            c_idx += 1;
+        }
+
+        let query = crate::protocol::message::ChunkQuery {
+            transfer_id,
+            query_seq: 1,
+            chunk_hashes,
+        };
+        write_frame(send, &Message::ChunkQuery(query), 0).await?;
+
+        let resp_frame = read_frame(recv)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+        if resp_frame.type_byte != crate::protocol::message::CHUNK_RESPONSE {
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::InvalidStateTransition("expected CHUNK_RESPONSE"),
+            ));
+        }
+        let resp = crate::protocol::message::ChunkResponse::decode(&resp_frame.payload)?;
+        let rle = crate::sync::RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)
+            .map_err(|_| VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid rle")))?;
+        let mut bm = crate::state::ChunkBitmap::new();
+        for (i, &(idx, len)) in chunk_indices.iter().enumerate() {
+            if rle.get(i) == Some(true) {
+                bm.mark_complete(idx, len);
+            }
+        }
+        let bytes_reusable = bm.bytes_completed();
+        download_skip_bitmap = Some(bm);
+
+        let plan = TransferPlan {
+            transfer_id,
+            bytes_total,
+            bytes_to_transfer: bytes_total.saturating_sub(bytes_reusable),
+            bytes_reusable,
+        };
+        write_frame(send, &Message::TransferPlan(plan), 0).await?;
+
+        read_frame(recv)
+            .await?
+            .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?
+    } else {
+        frame
+    };
+
+    if begin_frame.type_byte != crate::protocol::message::TRANSFER_BEGIN {
         return Err(VelcruxError::Protocol(
             crate::error::ProtocolError::InvalidStateTransition("expected TRANSFER_BEGIN"),
         ));
     }
-    let begin = TransferBegin::decode(&frame.payload)?;
+    let begin = TransferBegin::decode(&begin_frame.payload)?;
     if begin.transfer_id != transfer_id {
         return Err(VelcruxError::Protocol(
             crate::error::ProtocolError::InvalidStateTransition(
@@ -637,7 +886,7 @@ async fn handle_transfer_create(
                     return Ok(());
                 }
             };
-            crate::transfer::server_download_session(
+            crate::transfer::server_download_session_with_delta(
                 conn,
                 backend,
                 send,
@@ -646,6 +895,7 @@ async fn handle_transfer_create(
                 &dst,
                 bytes_total,
                 file_hash,
+                download_skip_bitmap,
             )
             .await
         }

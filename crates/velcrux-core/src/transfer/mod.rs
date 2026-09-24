@@ -18,9 +18,11 @@ pub mod engine;
 pub mod engine_m3;
 
 pub use engine::{
-    client_download, client_download_stream, client_download_with_progress, client_upload,
-    client_upload_stream, client_upload_with_state, server_download_session, server_staging_path,
-    server_upload_session, server_upload_session_with_state, PipelineConfig,
+    client_download, client_download_stream, client_download_stream_with_staging,
+    client_download_with_progress, client_upload, client_upload_stream, client_upload_with_state,
+    server_download_session, server_download_session_with_delta, server_staging_path,
+    server_upload_session, server_upload_session_with_delta, server_upload_session_with_state,
+    PipelineConfig,
 };
 pub use engine_m3::{
     build_resume_state, cancel_transfer as cancel_transfer_m3, client_upload as client_upload_m3,
