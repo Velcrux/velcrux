@@ -109,7 +109,7 @@ SRC_DIR="${TMP_DIR}/source_dataset"
 DST_DIR="${TMP_DIR}/destination_dataset"
 mkdir -p "${SRC_DIR}" "${DST_DIR}"
 
-echo "Velcrux bulk transfer protocol document" > "${SRC_DIR}/README.txt"
+echo "Raven bulk transfer protocol document" > "${SRC_DIR}/README.txt"
 # Create a 4 MiB synthetic binary asset
 python3 -c "import os; open('${SRC_DIR}/asset_data.bin', 'wb').write(os.urandom(4 * 1024 * 1024))"
 echo '{"status": "initialized", "version": 1}' > "${SRC_DIR}/metadata.json"

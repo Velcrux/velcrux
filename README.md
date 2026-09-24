@@ -16,7 +16,7 @@
 
 ## Executive Summary
 
-**Velcrux** is an open-source transport system engineered for high Bandwidth-Delay Product (BDP) environments: 1–10 Gbps network topologies spanning 50–300 ms Round-Trip Times (RTT) with non-trivial packet loss. It provides reliable, high-speed transfer of datasets ranging from hundreds of megabytes to tens of terabytes.
+**Velcrux** is an open-source transport system engineered for high Bandwidth-Delay Product (BDP) environments: 1–10 Gbps network topologies spanning 50–300 ms Round-Trip Times (RTT) with non-trivial packet loss. It provides reliable, high-speed transfer of datasets ranging from hundreds of megabytes to tens of terabytes. Velcrux uses the Raven Protocol over QUIC.
 
 Traditional bulk transfer utilities (`scp`, `sftp`, `rsync`) bottleneck on TCP head-of-line blocking, single-stream congestion window collapse, and whole-file retransmissions. Velcrux solves these physical transport constraints through:
 
@@ -47,10 +47,10 @@ Traditional bulk transfer utilities (`scp`, `sftp`, `rsync`) bottleneck on TCP h
 
 ### Stream Multiplexing Architecture
 
-Every transfer session executes over a single QUIC connection with isolated unidirectional and bidirectional streams:
+Every transfer session executes over a single QUIC connection with isolated unidirectional and bidirectional streams implementing the Raven Protocol (`RAVEN/1`):
 
 ```
-                          QUIC Connection (TLS 1.3 / mTLS)
+                          QUIC Connection (TLS 1.3 / mTLS - RAVEN/1)
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ Control Stream (Bidirectional #0)  : HELLO, AUTH, TRANSFER_CREATE, COMMIT   │
  │ Metadata Stream (Bidirectional #1) : MANIFEST_*, INVENTORY_*, CHUNK_QUERY   │
@@ -273,7 +273,7 @@ Measured on reference enterprise hardware under synthetic high-BDP and microbenc
 | **Manifest Codec** | Throughput ≥ 1,000,000 entries/s | **2,330,000 entries/s** (Encode) / **2,950,000 entries/s** (Decode) | 2.3× over target |
 | **Frame Codec** | Latency ≤ 50 ns | **9.1 ns** (Header) / **< 1.0 ns** (Data frame) | 5.5× faster |
 | **Bitmap Compression** | 100k chunks RLE compression | **106 µs** (Encode) / **1.3 µs** (Decode) | 78× size reduction |
-| **Protocol Overhead** | Wire protocol efficiency | **≤ 0.05%** | 40× below 2% ceiling |
+| **Protocol Overhead** | Wire protocol efficiency (Raven) | **≤ 0.05%** | 40× below 2% ceiling |
 
 ---
 

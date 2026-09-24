@@ -245,6 +245,7 @@ async fn hello_and_ping_round_trip() {
 
     let negotiated = session.negotiated();
     assert_eq!(negotiated.version, 1);
+    assert_eq!(velcrux_core::protocol::limits::ALPN, b"RAVEN/1");
     assert!(negotiated.capabilities.has(Capability::Blake3));
     assert!(negotiated.capabilities.has(Capability::FixedChunking));
 
@@ -260,6 +261,11 @@ async fn hello_and_ping_round_trip() {
     let _ = timeout(Duration::from_secs(3), server_task)
         .await
         .expect("server did not finish in time");
+}
+
+#[test]
+fn test_raven_protocol_alpn() {
+    assert_eq!(velcrux_core::protocol::limits::ALPN, b"RAVEN/1");
 }
 
 #[allow(dead_code)]

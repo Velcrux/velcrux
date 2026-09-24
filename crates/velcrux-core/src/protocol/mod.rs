@@ -1,4 +1,4 @@
-//! Wire protocol: encoding, decoding, message catalog.
+//! Raven wire protocol: encoding, decoding, message catalog.
 //!
 //! No I/O. No filesystem. No allocation driven by attacker-supplied lengths.
 //! Every decoder is a pure function over `&[u8]` so it can be fuzzed in

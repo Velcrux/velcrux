@@ -63,9 +63,9 @@ pub const MAX_ERROR_DETAIL: usize = 256;
 /// Default agent string advertised in HELLO. Format: `name/version (target)`.
 pub const AGENT_STRING: &str = concat!("velcrux/", env!("CARGO_PKG_VERSION"));
 
-/// ALPN protocol identifier (`PROTOCOL.md` header). Negotiated during the
+/// Raven Protocol ALPN identifier (`PROTOCOL.md` header). Negotiated during the
 /// QUIC/TLS handshake.
-pub const ALPN: &[u8] = b"VELCRUX/1";
+pub const ALPN: &[u8] = b"RAVEN/1";
 
 /// M3 checkpoint cadence: 1 GiB (sender side; receiver persists every
 /// chunk on receive, so the sender drives the wire-side CHECKPOINT
@@ -84,3 +84,15 @@ pub const MAX_AUTH_TOKEN: usize = 4096;
 /// Maximum length of an identity name (`SECURITY.md` §2: SAN URI or CN).
 /// Bounded in the `AUTH_OK` decoder before allocation.
 pub const MAX_IDENTITY_LEN: usize = 255;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raven_protocol_constants() {
+        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(ALPN, b"RAVEN/1");
+    }
+}
+

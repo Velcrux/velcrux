@@ -13,7 +13,7 @@ have not read.
 |-----------------------------------------------------------------|--------------------------|
 | what the project is, CLI surface, quickstart                    | `README.md`              |
 | module layout, data flow, pipelines, concurrency, backpressure  | `docs/ARCHITECTURE.md`   |
-| wire format, message types, framing, state machines, versioning | `docs/PROTOCOL.md`       |
+| wire format, message types, framing, state machines, versioning | `docs/PROTOCOL.md` (Raven Protocol) |
 | auth, authz, TLS, path validation, threat model, limits         | `docs/SECURITY.md`       |
 | benchmarks, tuning, chunk sizing, stream counts, targets        | `docs/PERFORMANCE.md`    |
 | build, test, fuzz, netem harness, local dev certs               | `docs/DEVELOPMENT.md`    |
@@ -72,7 +72,7 @@ If a change contradicts this file, stop and ask.
 - Chunk store: content-addressed, optional, behind `ChunkStore` trait. — ADR-006
 - Streams: **one QUIC stream per file** for MVP; multi-stream-per-file is a
   benchmark-gated follow-up, not an MVP feature. — ADR-007
-- Protocol version starts at **1**; capability negotiation from day one. — ADR-008
+- Raven Protocol version starts at **1** (ALPN `RAVEN/1`); capability negotiation from day one. — ADR-008
 
 ## 3. Repo layout
 
@@ -83,7 +83,7 @@ velcrux/
 ├── docs/{ARCHITECTURE,PROTOCOL,SECURITY,PERFORMANCE,DEVELOPMENT,OPERATIONS}.md
 ├── docs/adr/ADR-0NN-*.md
 ├── crates/
-│   ├── velcrux-core/    protocol, transfer, sync, chunking, hashing,
+│   ├── velcrux-core/    protocol (Raven), transfer, sync, chunking, hashing,
 │   │                    storage, auth, scheduler, telemetry
 │   ├── velcrux-client/  CLI + client engine
 │   └── velcrux-server/  daemon + authz + storage root

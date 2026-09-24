@@ -1,6 +1,6 @@
 //! velcrux-core
 //!
-//! Core types and behaviour for the `velcrux` bulk transfer protocol.
+//! Core types and behaviour for the Raven bulk transfer protocol implemented by Velcrux.
 //!
 //! Layering follows `docs/ARCHITECTURE.md` §1:
 //!

@@ -5,7 +5,7 @@
 //! (`CLAUDE.md` §1 invariant #1). The rustls/QUIC-TLS configuration is built
 //! here; the QUIC driver is `quinn`.
 //!
-//! ALPN is `VELCRUX/1` (`PROTOCOL.md` header). mTLS is required: a connection
+//! ALPN is `RAVEN/1` (`PROTOCOL.md` header). mTLS is required: a connection
 //! without a client certificate is rejected on the server, and the client
 //! always verifies the server certificate against a configured trust root
 //! and checks the SNI hostname (`SECURITY.md` §2, §3).
