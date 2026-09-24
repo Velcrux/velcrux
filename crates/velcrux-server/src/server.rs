@@ -141,6 +141,26 @@ pub async fn run(config_path: &Path) -> Result<()> {
     })?;
     let backend = Arc::new(backend);
 
+    // Optional LocalChunkStore for deduplication (Option D)
+    let chunk_store: Option<Arc<velcrux_core::storage::LocalChunkStore>> =
+        match &cfg.storage.chunk_store {
+            Some(path) => {
+                let p = std::path::PathBuf::from(path);
+                match velcrux_core::storage::LocalChunkStore::new(&p).await {
+                    Ok(cs) => {
+                        info!(chunk_store = %p.display(), "LocalChunkStore initialized");
+                        server_caps.set(Capability::DedupChunkStore);
+                        Some(Arc::new(cs))
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to initialize chunk store");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
     // M3 state DB. The path must be absolute per ADR-005.
     use velcrux_core::state::StateStore as _;
     let state_store: Option<Arc<dyn velcrux_core::state::StateStore>> = match &cfg.storage.state_db
@@ -256,7 +276,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
                     state_store.clone(),
                     Some(Arc::clone(&authenticator)),
                     Some(Arc::clone(&authorizer)),
-                );
+                )
+                .with_chunk_store(chunk_store.clone());
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
@@ -290,7 +311,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
                     state_store.clone(),
                     Some(Arc::clone(&authenticator)),
                     Some(Arc::clone(&authorizer)),
-                );
+                )
+                .with_chunk_store(chunk_store.clone());
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {

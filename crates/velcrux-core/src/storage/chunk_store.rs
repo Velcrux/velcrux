@@ -98,6 +98,11 @@ impl LocalChunkStore {
         &self.root
     }
 
+    /// Export a clone of the internal BloomFilter for network negotiation.
+    pub fn bloom_filter(&self) -> BloomFilter {
+        self.bloom.read().unwrap().clone()
+    }
+
     /// Synchronous membership check.
     pub fn contains_sync(&self, h: &Hash) -> bool {
         {

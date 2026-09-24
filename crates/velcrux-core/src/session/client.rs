@@ -66,13 +66,26 @@ impl ClientSession {
     /// `Connection` for opening data streams alongside the control
     /// stream.
     pub async fn from_handshake_parts(
+        send: Box<dyn BiSendStream>,
+        recv: Box<dyn BiRecvStream>,
+    ) -> Result<Self> {
+        Self::from_handshake_parts_with_capabilities(send, recv, None).await
+    }
+
+    /// Variant of [`from_handshake_parts`](Self::from_handshake_parts) that sends
+    /// custom client capabilities in the HELLO message.
+    pub async fn from_handshake_parts_with_capabilities(
         mut send: Box<dyn BiSendStream>,
         mut recv: Box<dyn BiRecvStream>,
+        client_caps: Option<Capabilities>,
     ) -> Result<Self> {
         tracing::debug!("client: control stream opened");
 
         // 1. Send HELLO.
-        let hello = Hello::default_client();
+        let mut hello = Hello::default_client();
+        if let Some(caps) = client_caps {
+            hello.capabilities = caps;
+        }
         write_frame(send.as_mut(), &Message::Hello(hello), 0).await?;
         tracing::debug!("client: HELLO sent");
 

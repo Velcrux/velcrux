@@ -95,6 +95,12 @@ impl LocalInventory {
         self.chunks.get(hash).copied()
     }
 
+    /// Iterator over all indexed chunk hashes.
+    #[inline]
+    pub fn chunk_hashes(&self) -> impl Iterator<Item = &Hash> {
+        self.chunks.keys()
+    }
+
     /// Total number of chunks scanned in the file.
     #[inline]
     pub fn total_chunks(&self) -> usize {

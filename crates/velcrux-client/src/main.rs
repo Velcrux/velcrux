@@ -11,7 +11,7 @@ use tracing::info;
 
 use velcrux_core::session::ClientSession;
 use velcrux_core::transport::quic::{ClientBuilder, ClientIdentity, QuicConnection};
-use velcrux_core::transport::{Connection, SharedTransport};
+use velcrux_core::transport::SharedTransport;
 
 mod ping;
 
@@ -50,6 +50,14 @@ struct Cli {
     /// Path to a TOML configuration file (defaults to ~/.velcrux/config.toml if present).
     #[arg(long, short, env = "VELCRUX_CONFIG", global = true)]
     config: Option<PathBuf>,
+
+    /// Enable content-addressed chunk store deduplication (Option D).
+    #[arg(long, global = true)]
+    dedup: bool,
+
+    /// Path to local chunk store directory for deduplication.
+    #[arg(long, env = "VELCRUX_CHUNK_STORE", global = true)]
+    chunk_store: Option<PathBuf>,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -275,6 +283,46 @@ fn open_client_state_store(cli: &Cli) -> Option<Arc<dyn velcrux_core::state::Sta
     None
 }
 
+async fn open_client_session(
+    conn: &dyn velcrux_core::transport::Connection,
+    cli: &Cli,
+) -> anyhow::Result<ClientSession> {
+    let (send, recv) = conn.open_bi().await?;
+    let mut caps = velcrux_core::protocol::message::Hello::default_client().capabilities;
+    if cli.dedup || cli.chunk_store.is_some() {
+        caps.set(velcrux_core::protocol::capabilities::Capability::DedupChunkStore);
+    }
+    let session =
+        ClientSession::from_handshake_parts_with_capabilities(send, recv, Some(caps)).await?;
+    Ok(session)
+}
+
+async fn open_client_chunk_store(cli: &Cli) -> Option<Arc<velcrux_core::storage::LocalChunkStore>> {
+    let path = if let Some(ref p) = cli.chunk_store {
+        Some(p.clone())
+    } else if cli.dedup {
+        if let Some(home) = std::env::var_os("HOME") {
+            Some(PathBuf::from(home).join(".velcrux").join("chunks"))
+        } else {
+            Some(PathBuf::from(".velcrux-chunks"))
+        }
+    } else {
+        None
+    };
+
+    if let Some(p) = path {
+        match velcrux_core::storage::LocalChunkStore::new(&p).await {
+            Ok(cs) => Some(Arc::new(cs)),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %p.display(), "failed to initialize client chunk store");
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
 fn cli_log_json(cli: &Cli) -> bool {
     cli.json || cli.log_format == "json" || std::env::var("VELCRUX_OUTPUT_JSON").is_ok()
 }
@@ -300,6 +348,8 @@ struct FileClientConfig {
     log_format: Option<String>,
     json: Option<bool>,
     state_db: Option<PathBuf>,
+    dedup: Option<bool>,
+    chunk_store: Option<PathBuf>,
 }
 
 fn load_client_config(cli: &mut Cli) {
@@ -325,6 +375,14 @@ fn load_client_config(cli: &mut Cli) {
                     }
                     if cli.state_db.is_none() {
                         cli.state_db = file_cfg.state_db;
+                    }
+                    if cli.chunk_store.is_none() {
+                        cli.chunk_store = file_cfg.chunk_store;
+                    }
+                    if !cli.dedup {
+                        if let Some(d) = file_cfg.dedup {
+                            cli.dedup = d;
+                        }
                     }
                     if cli.log_format == "text" {
                         if let Some(fmt) = file_cfg.log_format {
@@ -372,8 +430,7 @@ async fn main() -> anyhow::Result<()> {
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
             let store = open_client_state_store(&cli);
             run_upload(&cli, &conn, &mut session, local, &path, &store).await?;
@@ -384,8 +441,7 @@ async fn main() -> anyhow::Result<()> {
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
             run_download(&cli, &conn, &mut session, local, &path).await?;
         }
@@ -399,8 +455,7 @@ async fn main() -> anyhow::Result<()> {
             let transport = build_transport(&cli)?;
             info!(%addr, %sni, "connecting for resume");
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
             let store = open_client_state_store(&cli);
             run_resume(&cli, &conn, &mut session, transfer_id, local, &store).await?;
@@ -413,8 +468,7 @@ async fn main() -> anyhow::Result<()> {
             let sni = get_sni(&cli, server);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             run_cancel(&cli, &mut session, transfer_id).await?;
         }
         Cmd::Stat {
@@ -425,8 +479,7 @@ async fn main() -> anyhow::Result<()> {
             let sni = get_sni(&cli, server);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             run_stat(&cli, &mut session, transfer_id).await?;
         }
         Cmd::List { url_prefix } => {
@@ -434,8 +487,7 @@ async fn main() -> anyhow::Result<()> {
             let sni = get_sni(&cli, url_prefix);
             let transport = build_transport(&cli)?;
             let conn = transport.connect(addr, &sni).await?;
-            let (send, recv) = conn.open_bi().await?;
-            let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+            let mut session = open_client_session(&conn, &cli).await?;
             let clean_prefix = path.trim_start_matches('/').to_string();
             run_list(&cli, &mut session, &clean_prefix).await?;
         }
@@ -624,6 +676,12 @@ async fn upload_file_stream(
             anyhow::bail!("expected COMMITTED, got 0x{:02x}", frame.type_byte);
         }
 
+        if let Some(cs) = open_client_chunk_store(cli).await {
+            let params =
+                velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap();
+            let _ = cs.ingest_file_sync(local, velcrux_core::chunking::ChunkMode::Fixed, params);
+        }
+
         return Ok((created.transfer_id, expected_hash, 0));
     }
 
@@ -704,6 +762,12 @@ async fn upload_file_stream(
 
     if let Some(h) = progress_handle {
         let _ = h.await;
+    }
+
+    if let Some(cs) = open_client_chunk_store(cli).await {
+        let params =
+            velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap();
+        let _ = cs.ingest_file_sync(local, velcrux_core::chunking::ChunkMode::Fixed, params);
     }
 
     Ok((created.transfer_id, computed, plan.bytes_to_transfer))
@@ -1092,19 +1156,40 @@ async fn download_file_stream(
     let mut plan = TransferPlan::decode(frame.payload)?;
 
     let mut staging_prepopulated = false;
+    let client_cs = open_client_chunk_store(cli).await;
+    let local_exists = local.is_file();
 
-    // Check if local file exists and can participate in delta download
-    if local.is_file() {
+    // Check if local file or client chunk store can participate in deduplication/delta download
+    if local_exists || client_cs.is_some() {
         use velcrux_core::protocol::message::{ChunkQuery, ChunkResponse, InventoryHint};
         use velcrux_core::sync::RleBitmap;
 
-        if let Ok(inv) = velcrux_core::sync::LocalInventory::from_file(
-            local,
-            velcrux_core::chunking::ChunkMode::Fixed,
-            velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap(),
-            64 * 1024,
-        ) {
-            let bloom = inv.create_bloom_filter(0.01);
+        let inv_opt = if local_exists {
+            velcrux_core::sync::LocalInventory::from_file(
+                local,
+                velcrux_core::chunking::ChunkMode::Fixed,
+                velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap(),
+                64 * 1024,
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        if inv_opt.is_some() || client_cs.is_some() {
+            let bloom = match (&inv_opt, &client_cs) {
+                (Some(inv), Some(cs)) => {
+                    let mut b = cs.bloom_filter();
+                    for h in inv.chunk_hashes() {
+                        b.insert(h);
+                    }
+                    b
+                }
+                (Some(inv), None) => inv.create_bloom_filter(0.01),
+                (None, Some(cs)) => cs.bloom_filter(),
+                (None, None) => unreachable!(),
+            };
+
             let hint = InventoryHint {
                 transfer_id: created.transfer_id,
                 filter_bits: bloom.num_bits(),
@@ -1124,11 +1209,20 @@ async fn download_file_stream(
                 let query = ChunkQuery::decode(q_frame.payload)?;
                 let mut have_bits = Vec::with_capacity(query.chunk_hashes.len());
                 let mut matching_chunks = Vec::new();
+                let mut matching_store_chunks = Vec::new();
                 for (idx, h) in query.chunk_hashes.iter().enumerate() {
-                    if let Some(extent) = inv.lookup(h) {
+                    let dst_off = idx as u64 * (64 * 1024);
+                    let chunk_len = (plan.bytes_total - dst_off).min(64 * 1024);
+                    if let Some(extent) = inv_opt.as_ref().and_then(|inv| inv.lookup(h)) {
                         have_bits.push(true);
-                        let dst_off = idx as u64 * (64 * 1024);
                         matching_chunks.push((dst_off, extent.offset, extent.length));
+                    } else if client_cs
+                        .as_ref()
+                        .map(|cs| cs.contains_sync(h))
+                        .unwrap_or(false)
+                    {
+                        have_bits.push(true);
+                        matching_store_chunks.push((dst_off, *h, chunk_len));
                     } else {
                         have_bits.push(false);
                     }
@@ -1166,23 +1260,34 @@ async fn download_file_stream(
                     .open(&staging_path)?;
                 staging_f.set_len(plan.bytes_total)?;
 
-                let mut src_f = std::fs::File::open(local)?;
-                let mut copy_buf = [0u8; 64 * 1024];
-                for (dst_offset, src_offset, len) in matching_chunks {
-                    use std::io::{Read, Seek, SeekFrom, Write};
-                    src_f.seek(SeekFrom::Start(src_offset))?;
-                    staging_f.seek(SeekFrom::Start(dst_offset))?;
-                    let mut rem = len;
-                    while rem > 0 {
-                        let to_read = (rem as usize).min(copy_buf.len());
-                        src_f.read_exact(&mut copy_buf[..to_read])?;
-                        staging_f.write_all(&copy_buf[..to_read])?;
-                        rem -= to_read as u64;
+                // 1. Copy from existing local file
+                if local_exists && !matching_chunks.is_empty() {
+                    if let Ok(mut src_f) = std::fs::File::open(local) {
+                        use std::io::{Read, Seek, SeekFrom, Write};
+                        let mut copy_buf = [0u8; 64 * 1024];
+                        for (dst_offset, src_offset, len) in matching_chunks {
+                            src_f.seek(SeekFrom::Start(src_offset))?;
+                            staging_f.seek(SeekFrom::Start(dst_offset))?;
+                            let mut rem = len;
+                            while rem > 0 {
+                                let to_read = (rem as usize).min(copy_buf.len());
+                                src_f.read_exact(&mut copy_buf[..to_read])?;
+                                staging_f.write_all(&copy_buf[..to_read])?;
+                                rem -= to_read as u64;
+                            }
+                        }
                     }
                 }
+
+                // 2. Copy from local chunk store
+                if let Some(ref cs) = client_cs {
+                    for (dst_offset, hash, _len) in matching_store_chunks {
+                        let _ = cs.copy_to_std_file(&hash, &mut staging_f, dst_offset);
+                    }
+                }
+
                 staging_f.sync_all()?;
                 drop(staging_f);
-                drop(src_f);
 
                 staging_prepopulated = true;
 
@@ -1264,6 +1369,12 @@ async fn download_file_stream(
 
     if let Some(h) = progress_handle {
         let _ = h.await;
+    }
+
+    if let Some(ref cs) = client_cs {
+        let params =
+            velcrux_core::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap();
+        let _ = cs.ingest_file_sync(local, velcrux_core::chunking::ChunkMode::Fixed, params);
     }
 
     Ok((created.transfer_id, computed, plan.bytes_to_transfer))
@@ -1356,8 +1467,7 @@ async fn run_remote_upload_sync(
     let sni = get_sni(cli, destination);
     let transport = build_transport(cli)?;
     let conn = transport.connect(addr, &sni).await?;
-    let (send, recv) = conn.open_bi().await?;
-    let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+    let mut session = open_client_session(&conn, cli).await?;
     let store = open_client_state_store(cli);
 
     let src_files = velcrux_core::sync::scan_dir_entries(&src_dir)?;
@@ -1527,8 +1637,7 @@ async fn run_remote_download_sync(
     let sni = get_sni(cli, source);
     let transport = build_transport(cli)?;
     let conn = transport.connect(addr, &sni).await?;
-    let (send, recv) = conn.open_bi().await?;
-    let mut session = ClientSession::from_handshake_parts(send, recv).await?;
+    let mut session = open_client_session(&conn, cli).await?;
 
     let dst_files = velcrux_core::sync::scan_dir_entries(&dst_dir)?;
     let vpath = path.trim_start_matches('/').to_string();

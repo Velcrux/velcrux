@@ -19,7 +19,7 @@ use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
 use crate::state::{Direction, StateStore, TransferStatus};
-use crate::storage::{LocalFilesystemBackend, VPath};
+use crate::storage::{LocalChunkStore, LocalFilesystemBackend, VPath};
 use crate::transport::identity::Identity;
 use crate::transport::Connection;
 use std::sync::Arc;
@@ -108,6 +108,8 @@ pub struct ServerConn {
     authenticator: Arc<dyn Authenticator>,
     /// Authorizer for path-based access control.
     authorizer: Arc<dyn Authorizer>,
+    /// Optional content-addressed chunk store for cross-file deduplication.
+    chunk_store: Option<Arc<LocalChunkStore>>,
 }
 
 impl ServerConn {
@@ -142,7 +144,14 @@ impl ServerConn {
             state,
             authenticator,
             authorizer,
+            chunk_store: None,
         }
+    }
+
+    /// Attach an optional content-addressed LocalChunkStore for deduplication.
+    pub fn with_chunk_store(mut self, chunk_store: Option<Arc<LocalChunkStore>>) -> Self {
+        self.chunk_store = chunk_store;
+        self
     }
 
     /// Drive the connection from `Accepted` through `Closed`. Returns the
@@ -330,6 +339,7 @@ impl ServerConn {
                                 &self.backend,
                                 self.authorizer.as_ref(),
                                 &self.state,
+                                &self.chunk_store,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -438,6 +448,7 @@ async fn handle_transfer_create(
     backend: &LocalFilesystemBackend,
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
+    chunk_store: &Option<Arc<LocalChunkStore>>,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -618,14 +629,25 @@ async fn handle_transfer_create(
     }
 
     let existing_path = backend.root().join(dst.as_path());
-    if create.op == TransferOp::Upload && existing_path.is_file() {
-        let meta_len = std::fs::metadata(&existing_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let existing_hash = crate::sync::compute_file_hash(&existing_path).ok();
+    let has_existing = existing_path.is_file();
+    let has_chunk_store = chunk_store.is_some();
+
+    if create.op == TransferOp::Upload && (has_existing || has_chunk_store) {
+        let meta_len = if has_existing {
+            std::fs::metadata(&existing_path)
+                .map(|m| m.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let existing_hash = if has_existing {
+            crate::sync::compute_file_hash(&existing_path).ok()
+        } else {
+            None
+        };
 
         // Fast-path: Identical file already exists on server
-        if existing_hash == Some(create.file_hash) && meta_len == create.file_size {
+        if has_existing && existing_hash == Some(create.file_hash) && meta_len == create.file_size {
             let created = TransferCreated {
                 transfer_id,
                 resumed: false,
@@ -675,18 +697,37 @@ async fn handle_transfer_create(
                     stats
                         .bytes_reused
                         .fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
+
+                    // If chunk store is enabled, ensure this file is indexed
+                    if let Some(cs) = chunk_store {
+                        let params =
+                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                .unwrap();
+                        let _ = cs.ingest_file_sync(
+                            &existing_path,
+                            crate::chunking::ChunkMode::Fixed,
+                            params,
+                        );
+                    }
                 }
             }
             return Ok(());
         }
 
-        // Delta path: Destination file exists with different content.
-        if let Ok(inv) = crate::sync::LocalInventory::from_file(
-            &existing_path,
-            crate::chunking::ChunkMode::Fixed,
-            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap(),
-            64 * 1024,
-        ) {
+        // Delta / Deduplication path: Destination file exists OR chunk store is available.
+        let inv_opt = if has_existing {
+            crate::sync::LocalInventory::from_file(
+                &existing_path,
+                crate::chunking::ChunkMode::Fixed,
+                crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024).unwrap(),
+                64 * 1024,
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        if inv_opt.is_some() || has_chunk_store {
             let created = TransferCreated {
                 transfer_id,
                 resumed: false,
@@ -694,7 +735,19 @@ async fn handle_transfer_create(
             };
             write_frame(send, &Message::TransferCreated(created), 0).await?;
 
-            let bloom = inv.create_bloom_filter(0.01);
+            let bloom = match (&inv_opt, chunk_store) {
+                (Some(inv), Some(cs)) => {
+                    let mut b = cs.bloom_filter();
+                    for h in inv.chunk_hashes() {
+                        b.insert(h);
+                    }
+                    b
+                }
+                (Some(inv), None) => inv.create_bloom_filter(0.01),
+                (None, Some(cs)) => cs.bloom_filter(),
+                (None, None) => unreachable!(),
+            };
+
             let hint = crate::protocol::message::InventoryHint {
                 transfer_id,
                 filter_bits: bloom.num_bits(),
@@ -710,11 +763,20 @@ async fn handle_transfer_create(
                 let query = crate::protocol::message::ChunkQuery::decode(&frame.payload)?;
                 let mut have_bits = Vec::with_capacity(query.chunk_hashes.len());
                 let mut matching_chunks = Vec::new();
+                let mut matching_store_chunks = Vec::new();
                 for (idx, h) in query.chunk_hashes.iter().enumerate() {
-                    if let Some(extent) = inv.lookup(h) {
+                    let dst_off = idx as u64 * (64 * 1024);
+                    let chunk_len = (create.file_size - dst_off).min(64 * 1024);
+                    if let Some(extent) = inv_opt.as_ref().and_then(|inv| inv.lookup(h)) {
                         have_bits.push(true);
-                        let dst_off = idx as u64 * (64 * 1024);
                         matching_chunks.push((dst_off, extent.offset, extent.length));
+                    } else if chunk_store
+                        .as_ref()
+                        .map(|cs| cs.contains_sync(h))
+                        .unwrap_or(false)
+                    {
+                        have_bits.push(true);
+                        matching_store_chunks.push((dst_off, *h, chunk_len));
                     } else {
                         have_bits.push(false);
                     }
@@ -742,26 +804,40 @@ async fn handle_transfer_create(
                     .open(&staging_path)?;
                 staging_f.set_len(create.file_size)?;
 
-                let mut src_f = std::fs::File::open(&existing_path)?;
-                let mut copy_buf = [0u8; 64 * 1024];
                 let mut initial_bitmap = crate::state::ChunkBitmap::new();
-                for (dst_offset, src_offset, len) in matching_chunks {
-                    use std::io::{Read, Seek, SeekFrom, Write};
-                    src_f.seek(SeekFrom::Start(src_offset))?;
-                    staging_f.seek(SeekFrom::Start(dst_offset))?;
-                    let mut rem = len;
-                    while rem > 0 {
-                        let to_read = (rem as usize).min(copy_buf.len());
-                        src_f.read_exact(&mut copy_buf[..to_read])?;
-                        staging_f.write_all(&copy_buf[..to_read])?;
-                        rem -= to_read as u64;
+
+                // 1. Copy from existing destination file
+                if has_existing && !matching_chunks.is_empty() {
+                    if let Ok(mut src_f) = std::fs::File::open(&existing_path) {
+                        use std::io::{Read, Seek, SeekFrom, Write};
+                        let mut copy_buf = [0u8; 64 * 1024];
+                        for (dst_offset, src_offset, len) in matching_chunks {
+                            src_f.seek(SeekFrom::Start(src_offset))?;
+                            staging_f.seek(SeekFrom::Start(dst_offset))?;
+                            let mut rem = len;
+                            while rem > 0 {
+                                let to_read = (rem as usize).min(copy_buf.len());
+                                src_f.read_exact(&mut copy_buf[..to_read])?;
+                                staging_f.write_all(&copy_buf[..to_read])?;
+                                rem -= to_read as u64;
+                            }
+                            let chunk_idx = dst_offset / (64 * 1024);
+                            initial_bitmap.mark_complete(chunk_idx, len);
+                        }
                     }
-                    let chunk_idx = dst_offset / (64 * 1024);
-                    initial_bitmap.mark_complete(chunk_idx, len);
                 }
+
+                // 2. Copy from content-addressed chunk store
+                if let Some(cs) = chunk_store {
+                    for (dst_offset, hash, len) in matching_store_chunks {
+                        let _ = cs.copy_to_std_file(&hash, &mut staging_f, dst_offset);
+                        let chunk_idx = dst_offset / (64 * 1024);
+                        initial_bitmap.mark_complete(chunk_idx, len);
+                    }
+                }
+
                 staging_f.sync_all()?;
                 drop(staging_f);
-                drop(src_f);
 
                 let bytes_reusable = initial_bitmap.bytes_completed();
                 let plan = TransferPlan {
@@ -781,6 +857,66 @@ async fn handle_transfer_create(
                             "expected TRANSFER_BEGIN",
                         ),
                     ));
+                }
+
+                if plan.bytes_to_transfer == 0 {
+                    let frame = read_frame(recv).await?.ok_or_else(|| {
+                        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+                    })?;
+                    if frame.type_byte != crate::protocol::message::VERIFY {
+                        return Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::InvalidStateTransition("expected VERIFY"),
+                        ));
+                    }
+                    let hash = crate::sync::compute_file_hash(&staging_path)?;
+                    let ok = hash == create.file_hash;
+                    let vr = crate::protocol::message::VerifyResult {
+                        transfer_id,
+                        ok,
+                        computed_hash: hash,
+                    };
+                    write_frame(send, &Message::VerifyResult(vr), 0).await?;
+                    if !ok {
+                        return Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::Malformed("checksum mismatch"),
+                        ));
+                    }
+                    let frame = read_frame(recv).await?.ok_or_else(|| {
+                        VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+                    })?;
+                    if frame.type_byte != crate::protocol::message::COMMIT {
+                        return Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::InvalidStateTransition("expected COMMIT"),
+                        ));
+                    }
+                    let final_path = backend.root().join(dst.as_path());
+                    if let Some(parent) = final_path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    tokio::fs::rename(&staging_path, &final_path).await?;
+                    let committed = crate::protocol::message::Committed {
+                        transfer_id,
+                        files: 1,
+                    };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    stats
+                        .transfers_total_upload
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .bytes_reused
+                        .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(cs) = chunk_store {
+                        let final_path = backend.root().join(dst.as_path());
+                        let params =
+                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                .unwrap();
+                        let _ = cs.ingest_file_sync(
+                            &final_path,
+                            crate::chunking::ChunkMode::Fixed,
+                            params,
+                        );
+                    }
+                    return Ok(());
                 }
 
                 let res = crate::transfer::server_upload_session_with_delta(
@@ -808,6 +944,19 @@ async fn handle_transfer_create(
                     stats
                         .bytes_reused
                         .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
+
+                    // Ingest newly committed file into chunk store for future cross-file deduplication
+                    if let Some(cs) = chunk_store {
+                        let final_path = backend.root().join(dst.as_path());
+                        let params =
+                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                .unwrap();
+                        let _ = cs.ingest_file_sync(
+                            &final_path,
+                            crate::chunking::ChunkMode::Fixed,
+                            params,
+                        );
+                    }
                 } else {
                     stats
                         .checksum_mismatches
