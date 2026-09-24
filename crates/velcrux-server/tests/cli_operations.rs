@@ -153,17 +153,20 @@ async fn test_prometheus_http_server_endpoints() {
     let stats = Arc::new(ServerStats::default());
     stats.connections.store(42, Ordering::Relaxed);
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-
-    let listen_str = addr.to_string();
-    let shutdown_tx = start_metrics_server(&listen_str, Arc::clone(&stats))
+    let (addr, shutdown_tx) = start_metrics_server("127.0.0.1:0", Arc::clone(&stats))
         .await
         .expect("start metrics server");
 
-    // 1. Query /healthz
-    let mut stream = TcpStream::connect(addr).await.expect("connect to healthz");
+    // 1. Query /healthz (with brief connection retry)
+    let mut stream = None;
+    for _ in 0..50 {
+        if let Ok(s) = TcpStream::connect(addr).await {
+            stream = Some(s);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let mut stream = stream.expect("connect to healthz");
     stream
         .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
         .await

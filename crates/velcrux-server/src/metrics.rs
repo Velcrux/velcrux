@@ -59,15 +59,16 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
 }
 
 /// Spawns the Prometheus HTTP server task.
-/// Returns a shutdown sender to stop the metrics server gracefully.
+/// Returns the bound local address and a shutdown sender to stop the metrics server gracefully.
 pub async fn start_metrics_server(
     listen_addr: &str,
     stats: Arc<ServerStats>,
-) -> anyhow::Result<oneshot::Sender<()>> {
+) -> anyhow::Result<(std::net::SocketAddr, oneshot::Sender<()>)> {
     let listener = TcpListener::bind(listen_addr)
         .await
         .map_err(|e| anyhow::anyhow!("bind metrics listener on {listen_addr}: {e}"))?;
-    info!(metrics_addr = %listen_addr, "Prometheus /metrics HTTP endpoint listening");
+    let local_addr = listener.local_addr()?;
+    info!(metrics_addr = %local_addr, "Prometheus /metrics HTTP endpoint listening");
 
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
@@ -137,5 +138,5 @@ pub async fn start_metrics_server(
         }
     });
 
-    Ok(shutdown_tx)
+    Ok((local_addr, shutdown_tx))
 }

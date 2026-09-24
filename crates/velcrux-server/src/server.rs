@@ -117,7 +117,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
     let metrics_shutdown = if let Some(metrics_listen) = &cfg.telemetry.metrics_listen {
         match crate::metrics::start_metrics_server(metrics_listen, Arc::clone(&stats)).await {
-            Ok(tx) => Some(tx),
+            Ok((_addr, tx)) => Some(tx),
             Err(e) => {
                 warn!(error = %e, "failed to start metrics server");
                 None
