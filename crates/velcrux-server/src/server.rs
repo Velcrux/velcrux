@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use rustls::{Certificate, PrivateKey};
 use tracing::{info, warn};
 
-use velcrux_core::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator, Op};
+use velcrux_core::auth::{Authenticator, Authorizer, MtlsAuthenticator, Op};
 use velcrux_core::error::{Result as CoreResult, VelcruxError};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ServerConn, ServerStats};
@@ -202,21 +202,9 @@ pub async fn run(config_path: &Path) -> Result<()> {
     };
 
     let authenticator: Arc<dyn Authenticator> = Arc::new(MtlsAuthenticator::new());
-    let initial_authorizer: Arc<dyn Authorizer> = match &cfg.security.grants {
-        Some(path) => {
-            let authz = FileAuthorizer::load(Path::new(path))
-                .with_context(|| format!("load authorization grants file {path}"))?;
-            info!(grants = %path, "authorization grants loaded");
-            Arc::new(authz)
-        }
-        None => {
-            warn!(
-                "no authorization grants file configured (security.grants); \
-                 all operations will be denied (deny-by-default, `SECURITY.md` §4)"
-            );
-            Arc::new(FileAuthorizer::new())
-        }
-    };
+    let initial_authorizer: Arc<dyn Authorizer> = cfg
+        .build_authorizer()
+        .with_context(|| "failed to build authorizer from configuration")?;
     let reloadable_authorizer = Arc::new(ReloadableAuthorizer::new(initial_authorizer));
     let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
 
@@ -246,16 +234,21 @@ pub async fn run(config_path: &Path) -> Result<()> {
                 break;
             }
             _ = sighup_stream.recv() => {
-                info!("SIGHUP received, reloading authorization grants (`OPERATIONS.md` §3)");
-                if let Some(grants_path) = &cfg.security.grants {
-                    match FileAuthorizer::load(Path::new(grants_path)) {
-                        Ok(new_authz) => {
-                            reloadable_authorizer.reload(Arc::new(new_authz));
-                            info!(grants = %grants_path, "grants reloaded successfully");
+                info!("SIGHUP received, reloading configuration and authorization grants (`OPERATIONS.md` §3)");
+                match ServerConfig::load(config_path) {
+                    Ok(new_cfg) => {
+                        match new_cfg.build_authorizer() {
+                            Ok(new_authz) => {
+                                reloadable_authorizer.reload(new_authz);
+                                info!("configuration and grants reloaded successfully on SIGHUP");
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "failed to build authorizer during SIGHUP reload");
+                            }
                         }
-                        Err(e) => {
-                            warn!(error = %e, grants = %grants_path, "failed to reload grants on SIGHUP");
-                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to reload configuration on SIGHUP");
                     }
                 }
             }

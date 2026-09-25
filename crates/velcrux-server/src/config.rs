@@ -1,11 +1,16 @@
+#![forbid(unsafe_code)]
+
 //! Production configuration engine (`docs/OPERATIONS.md` §4).
 //!
 //! Supports TOML configuration, environment variable overrides with prefix
-//! `VELCRUX_`, and strict startup validation.
+//! `VELCRUX_`, and strict fail-closed startup validation.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use velcrux_core::auth::{Authorizer, FileAuthorizer, Grant, PermSet};
+use velcrux_core::storage::VPath;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
@@ -21,6 +26,10 @@ pub struct ServerConfig {
     pub storage: StorageCfg,
     #[serde(default)]
     pub telemetry: TelemetryCfg,
+    #[serde(default, rename = "grant")]
+    pub grants: Vec<GrantCfg>,
+    #[serde(default, rename = "limits")]
+    pub limits: Vec<LimitsCfg>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -33,6 +42,8 @@ pub struct NetworkCfg {
     pub max_connections: Option<u32>,
     #[serde(default)]
     pub max_connections_per_ip: Option<u32>,
+    #[serde(default)]
+    pub max_connections_unauth: Option<u32>,
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: String,
     #[serde(default = "default_keepalive")]
@@ -46,6 +57,7 @@ impl Default for NetworkCfg {
             max_bandwidth: None,
             max_connections: None,
             max_connections_per_ip: None,
+            max_connections_unauth: None,
             idle_timeout: default_idle_timeout(),
             keepalive: default_keepalive(),
         }
@@ -125,6 +137,8 @@ pub struct TransferCfg {
     pub read_buffer: Option<String>,
     #[serde(default)]
     pub max_file_size: Option<String>,
+    #[serde(default)]
+    pub max_manifest_entries: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -168,6 +182,23 @@ pub struct TelemetryCfg {
     pub log_level: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct GrantCfg {
+    pub identity: String,
+    pub path: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct LimitsCfg {
+    pub identity: String,
+    #[serde(default)]
+    pub max_bandwidth: Option<String>,
+    #[serde(default)]
+    pub quota_bytes: Option<String>,
+}
+
 impl ServerConfig {
     /// Load server configuration from TOML file, then apply environment variable overrides.
     pub fn load(path: &Path) -> Result<Self> {
@@ -182,6 +213,7 @@ impl ServerConfig {
 
     /// Apply environment variable overrides (prefixed with `VELCRUX_`).
     pub fn apply_env_overrides(&mut self) {
+        // Network
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_LISTEN") {
             self.network.listen = val;
         }
@@ -193,18 +225,101 @@ impl ServerConfig {
                 self.network.max_connections = Some(n);
             }
         }
+        if let Ok(val) = std::env::var("VELCRUX_NETWORK_MAX_CONNECTIONS_PER_IP") {
+            if let Ok(n) = val.parse() {
+                self.network.max_connections_per_ip = Some(n);
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_NETWORK_MAX_CONNECTIONS_UNAUTH") {
+            if let Ok(n) = val.parse() {
+                self.network.max_connections_unauth = Some(n);
+            }
+        }
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_IDLE_TIMEOUT") {
             self.network.idle_timeout = val;
         }
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_KEEPALIVE") {
             self.network.keepalive = val;
         }
+
+        // QUIC
         if let Ok(val) = std::env::var("VELCRUX_QUIC_RECEIVE_WINDOW") {
             self.quic.receive_window = val;
         }
         if let Ok(val) = std::env::var("VELCRUX_QUIC_STREAM_RECEIVE_WINDOW") {
             self.quic.stream_receive_window = val;
         }
+        if let Ok(val) = std::env::var("VELCRUX_QUIC_MAX_CONCURRENT_STREAMS") {
+            if let Ok(n) = val.parse() {
+                self.quic.max_concurrent_streams = n;
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_QUIC_INITIAL_RTT") {
+            self.quic.initial_rtt = val;
+        }
+        if let Ok(val) = std::env::var("VELCRUX_QUIC_GSO") {
+            if let Ok(b) = val.parse() {
+                self.quic.gso = b;
+            }
+        }
+
+        // Transfer
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHUNKING") {
+            self.transfer.chunking = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHUNK_MIN") {
+            self.transfer.chunk_min = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHUNK_TARGET") {
+            self.transfer.chunk_target = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHUNK_MAX") {
+            self.transfer.chunk_max = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_PARALLELISM") {
+            if let Ok(n) = val.parse() {
+                self.transfer.parallelism = Some(n);
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_RESUME") {
+            if let Ok(b) = val.parse() {
+                self.transfer.resume = Some(b);
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_COMPRESSION") {
+            self.transfer.compression = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHECKPOINT_BYTES") {
+            self.transfer.checkpoint_bytes = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_CHECKPOINT_SECS") {
+            if let Ok(n) = val.parse() {
+                self.transfer.checkpoint_secs = Some(n);
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_READ_BUFFER") {
+            self.transfer.read_buffer = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_MAX_FILE_SIZE") {
+            self.transfer.max_file_size = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_MAX_MANIFEST_ENTRIES") {
+            if let Ok(n) = val.parse() {
+                self.transfer.max_manifest_entries = Some(n);
+            }
+        }
+
+        // Hash
+        if let Ok(val) = std::env::var("VELCRUX_HASH_ALGORITHM") {
+            self.hash.algorithm = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_HASH_WORKERS") {
+            if let Ok(n) = val.parse() {
+                self.hash.workers = Some(n);
+            }
+        }
+
+        // Security
         if let Ok(val) = std::env::var("VELCRUX_SECURITY_CERTIFICATE") {
             self.security.certificate = val;
         }
@@ -217,9 +332,16 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_SECURITY_CRL") {
             self.security.crl = Some(val);
         }
+        if let Ok(val) = std::env::var("VELCRUX_SECURITY_MAX_AUTH_ATTEMPTS") {
+            if let Ok(n) = val.parse() {
+                self.security.max_auth_attempts = Some(n);
+            }
+        }
         if let Ok(val) = std::env::var("VELCRUX_SECURITY_GRANTS") {
             self.security.grants = Some(val);
         }
+
+        // Storage
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_ROOT") {
             self.storage.root = val;
         }
@@ -232,6 +354,8 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_CHUNK_STORE") {
             self.storage.chunk_store = Some(val);
         }
+
+        // Telemetry
         if let Ok(val) = std::env::var("VELCRUX_TELEMETRY_METRICS_LISTEN") {
             self.telemetry.metrics_listen = Some(val);
         }
@@ -243,15 +367,15 @@ impl ServerConfig {
         }
     }
 
-    /// Validate the configuration.
+    /// Validate the configuration according to operations and security invariants.
     pub fn validate(&self) -> Result<()> {
-        // Validate listen address
+        // 1. Validate listen address
         let _: std::net::SocketAddr =
             self.network.listen.parse().with_context(|| {
                 format!("invalid network.listen address: {}", self.network.listen)
             })?;
 
-        // Validate state_db path (must be absolute per ADR-005)
+        // 2. Validate state_db path (must be absolute per ADR-005)
         if let Some(state_db) = &self.storage.state_db {
             let p = PathBuf::from(state_db);
             if !p.is_absolute() {
@@ -262,7 +386,7 @@ impl ServerConfig {
             }
         }
 
-        // Validate private key permissions if it is a file on disk
+        // 3. Validate private key permissions if it is a file on disk
         if !self.security.private_key.starts_with("env:") {
             let key_path = Path::new(&self.security.private_key);
             if key_path.exists() {
@@ -284,6 +408,90 @@ impl ServerConfig {
             }
         }
 
+        // 4. Validate same-filesystem invariant between storage.root and storage.staging (OPERATIONS.md §2)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let root_path = Path::new(&self.storage.root);
+            let staging_path = Path::new(&self.storage.staging);
+
+            let root_meta = if root_path.exists() {
+                std::fs::metadata(root_path).ok()
+            } else if let Some(parent) = root_path.parent() {
+                std::fs::metadata(parent).ok()
+            } else {
+                None
+            };
+
+            let staging_meta = if staging_path.exists() {
+                std::fs::metadata(staging_path).ok()
+            } else if let Some(parent) = staging_path.parent() {
+                std::fs::metadata(parent).ok()
+            } else {
+                None
+            };
+
+            if let (Some(r), Some(s)) = (root_meta, staging_meta) {
+                if r.dev() != s.dev() {
+                    anyhow::bail!(
+                        "storage.root ({}) and storage.staging ({}) must be on the same filesystem (dev {} != dev {}) per OPERATIONS.md §2",
+                        self.storage.root,
+                        self.storage.staging,
+                        r.dev(),
+                        s.dev()
+                    );
+                }
+            }
+        }
+
+        // 5. Validate hash algorithm if specified
+        if let Some(ref algo) = self.hash.algorithm {
+            if algo != "blake3" && algo != "sha256" {
+                anyhow::bail!("invalid hash.algorithm: {algo} (must be 'blake3' or 'sha256')");
+            }
+        }
+
+        // 6. Validate chunking mode if specified
+        if let Some(ref chunking) = self.transfer.chunking {
+            if chunking != "cdc" && chunking != "fixed" {
+                anyhow::bail!("invalid transfer.chunking: {chunking} (must be 'cdc' or 'fixed')");
+            }
+        }
+
+        // 7. Validate compression mode if specified
+        if let Some(ref comp) = self.transfer.compression {
+            if comp != "none" && comp != "zstd" {
+                anyhow::bail!("invalid transfer.compression: {comp} (must be 'none' or 'zstd')");
+            }
+        }
+
+        // 8. Validate grants (fail closed on malformed path or unknown permission string)
+        for g in &self.grants {
+            if g.identity.trim().is_empty() {
+                anyhow::bail!("grant identity cannot be empty");
+            }
+            // Validate permissions
+            for p in &g.permissions {
+                match p.as_str() {
+                    "upload" | "download" | "list" | "delete" | "sync" | "resume" | "admin" => {}
+                    other => {
+                        anyhow::bail!(
+                            "unknown permission {:?} for grant identity {:?}",
+                            other,
+                            g.identity
+                        );
+                    }
+                }
+            }
+            // Validate path
+            let norm = g.path.trim().trim_matches('/');
+            if !norm.is_empty() {
+                VPath::validate(norm).with_context(|| {
+                    format!("invalid path {:?} in grant for {:?}", g.path, g.identity)
+                })?;
+            }
+        }
+
         Ok(())
     }
 
@@ -297,6 +505,50 @@ impl ServerConfig {
             std::fs::read(&self.security.private_key)
                 .with_context(|| format!("read key {}", self.security.private_key))
         }
+    }
+
+    /// Construct a cohesive `Authorizer` from configured `[[grant]]` entries and optional `security.grants` file.
+    pub fn build_authorizer(&self) -> Result<Arc<dyn Authorizer>> {
+        let mut grants = Vec::new();
+
+        // 1. Load grants from inline [[grant]] table
+        for g in &self.grants {
+            let mut perms = PermSet::default();
+            for p in &g.permissions {
+                let bit = match p.as_str() {
+                    "upload" => PermSet::UPLOAD,
+                    "download" => PermSet::DOWNLOAD,
+                    "list" => PermSet::LIST,
+                    "delete" => PermSet::DELETE,
+                    "sync" => PermSet::SYNC,
+                    "resume" => PermSet::RESUME,
+                    "admin" => PermSet::ADMIN,
+                    other => {
+                        anyhow::bail!("unknown permission: {other}");
+                    }
+                };
+                perms = perms.union(bit);
+            }
+
+            let norm = g.path.trim().trim_matches('/').to_string();
+            grants.push(Grant {
+                identity: g.identity.clone(),
+                path_prefix: norm,
+                permissions: perms,
+            });
+        }
+
+        // 2. Load grants from security.grants file if specified
+        if let Some(ref path) = self.security.grants {
+            let file_auth = FileAuthorizer::load(Path::new(path))
+                .with_context(|| format!("load authorization grants file {path}"))?;
+            // We can combine grants or use file_auth directly if no inline grants
+            if grants.is_empty() {
+                return Ok(Arc::new(file_auth));
+            }
+        }
+
+        Ok(Arc::new(FileAuthorizer::from_grants(grants)))
     }
 }
 
