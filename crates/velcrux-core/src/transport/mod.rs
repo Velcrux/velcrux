@@ -72,6 +72,12 @@ pub trait Connection: Send + Sync {
     /// Close the connection with a wire error code and a non-sensitive
     /// reason. The connection is gracefully drained.
     fn close(&self, code: u32, reason: &[u8]);
+
+    /// Export keying material from the underlying TLS connection per RFC 8446 §7.5.
+    ///
+    /// Used for channel-bound authentication (`SECURITY.md` §2).
+    fn export_keying_material(&self, output: &mut [u8], label: &[u8], context: &[u8])
+        -> Result<()>;
 }
 
 /// The transport factory. One for clients, one for servers.

@@ -17,6 +17,7 @@ quinn.workspace      = true
 rustls.workspace     = true
 rustls-pemfile.workspace = true
 sha2                 = "0.10"
+ring                 = "0.17"
 async-trait          = "0.1"
 # mTLS identity extraction (SAN URI / CN) from the verified peer certificate
 # chain — SECURITY.md §2. Version pinned to the already-locked 0.16.0, which

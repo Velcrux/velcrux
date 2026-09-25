@@ -399,6 +399,20 @@ impl Connection for QuicConnection {
     fn close(&self, code: u32, reason: &[u8]) {
         self.inner.close(VarInt::from_u32(code), reason);
     }
+
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: &[u8],
+    ) -> Result<()> {
+        self.inner
+            .export_keying_material(output, label, context)
+            .map_err(|e| {
+                crate::error::TransportError::Endpoint(format!("export_keying_material: {e:?}"))
+            })?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

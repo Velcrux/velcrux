@@ -230,20 +230,91 @@ impl ServerConn {
                     match frame.type_byte {
                         x if x == crate::protocol::message::AUTH => {
                             let auth = Auth::decode(&frame.payload)?;
-                            // Verify the peer identity is available.
-                            let identity = peer_identity.clone().ok_or_else(|| {
-                                VelcruxError::Protocol(
-                                    crate::error::ProtocolError::InvalidIdentity(
-                                        "no peer identity",
-                                    ),
-                                )
-                            })?;
 
-                            // Authenticate using the authenticator.
-                            let verified_identity = self.authenticator.authenticate(&identity)?;
+                            let verified_identity = if auth.mechanism
+                                == crate::protocol::message::AUTH_MECHANISM_MTLS
+                            {
+                                let identity = peer_identity.clone().ok_or_else(|| {
+                                    VelcruxError::Protocol(
+                                        crate::error::ProtocolError::InvalidIdentity(
+                                            "no peer identity",
+                                        ),
+                                    )
+                                })?;
+                                match self.authenticator.authenticate(&identity) {
+                                    Ok(id) => id,
+                                    Err(e) => {
+                                        let err = crate::protocol::message::ErrorMsg::new(
+                                            crate::protocol::error::ErrorCode::AuthFailed,
+                                            format!("mTLS authentication failed: {e}"),
+                                        );
+                                        let _ = write_frame(
+                                            send.as_mut(),
+                                            &Message::Error(err),
+                                            frame.request_id,
+                                        )
+                                        .await;
+                                        conn.close(
+                                            crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
+                                            b"auth failed",
+                                        );
+                                        state = ServerState::Closed;
+                                        break;
+                                    }
+                                }
+                            } else if auth.mechanism
+                                == crate::protocol::message::AUTH_MECHANISM_SSH_PUBKEY
+                            {
+                                let mut exporter_secret = [0u8; crate::auth::EXPORTER_SECRET_LEN];
+                                if let Err(e) = conn.export_keying_material(
+                                    &mut exporter_secret,
+                                    crate::auth::AUTH_EXPORTER_LABEL,
+                                    b"",
+                                ) {
+                                    let err = crate::protocol::message::ErrorMsg::new(
+                                        crate::protocol::error::ErrorCode::AuthFailed,
+                                        format!("TLS exporter secret error: {e}"),
+                                    );
+                                    let _ = write_frame(
+                                        send.as_mut(),
+                                        &Message::Error(err),
+                                        frame.request_id,
+                                    )
+                                    .await;
+                                    conn.close(
+                                        crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
+                                        b"exporter error",
+                                    );
+                                    state = ServerState::Closed;
+                                    break;
+                                }
 
-                            // For mTLS, the mechanism should be MTLS (0).
-                            if auth.mechanism != crate::protocol::message::AUTH_MECHANISM_MTLS {
+                                match self.authenticator.authenticate_token(
+                                    auth.mechanism,
+                                    &auth.token,
+                                    &exporter_secret,
+                                ) {
+                                    Ok(id) => id,
+                                    Err(e) => {
+                                        let err = crate::protocol::message::ErrorMsg::new(
+                                            crate::protocol::error::ErrorCode::AuthFailed,
+                                            format!("pubkey auth failed: {e}"),
+                                        );
+                                        let _ = write_frame(
+                                            send.as_mut(),
+                                            &Message::Error(err),
+                                            frame.request_id,
+                                        )
+                                        .await;
+                                        conn.close(
+                                            crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
+                                            b"auth failed",
+                                        );
+                                        state = ServerState::Closed;
+                                        break;
+                                    }
+                                }
+                            } else {
                                 let err = crate::protocol::message::ErrorMsg::new(
                                     crate::protocol::error::ErrorCode::AuthFailed,
                                     "unsupported auth mechanism",
@@ -260,7 +331,7 @@ impl ServerConn {
                                 );
                                 state = ServerState::Closed;
                                 break;
-                            }
+                            };
 
                             // Permissions reported in AUTH_OK are the union of
                             // all grants for this identity (`SECURITY.md` §4).

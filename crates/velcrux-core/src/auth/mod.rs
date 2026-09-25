@@ -11,6 +11,12 @@ use crate::error::{ProtocolError, Result, VelcruxError};
 use crate::storage::{VPath, VPathError};
 use crate::transport::identity::Identity;
 
+pub mod pubkey;
+pub use pubkey::{
+    compute_signed_payload, create_pubkey_auth_token, verify_pubkey_auth_token, AuthorizedKeys,
+    AUTH_EXPORTER_LABEL, AUTH_SIGNATURE_PREFIX, EXPORTER_SECRET_LEN, SSH_PUBKEY_TOKEN_LEN,
+};
+
 /// Permissions bitset (wire-compatible u64).
 ///
 /// Matches `SECURITY.md` §4: upload, download, list, delete, sync, resume, admin.
@@ -96,7 +102,7 @@ pub struct Grant {
     pub permissions: PermSet,
 }
 
-/// Trait for authenticating a peer from the TLS handshake.
+/// Trait for authenticating a peer from the TLS handshake or via channel-bound token.
 ///
 /// The `Connection` provides the peer's `Identity` (derived from the
 /// certificate chain). The authenticator verifies it against its trust store
@@ -104,6 +110,19 @@ pub struct Grant {
 pub trait Authenticator: Send + Sync {
     /// Verify the peer identity. Returns the verified identity on success.
     fn authenticate(&self, identity: &Identity) -> Result<Identity>;
+
+    /// Authenticate a peer using an opaque token and the connection's exporter secret.
+    /// Default implementation fails closed.
+    fn authenticate_token(
+        &self,
+        _mechanism: u16,
+        _token: &[u8],
+        _exporter_secret: &[u8; pubkey::EXPORTER_SECRET_LEN],
+    ) -> Result<Identity> {
+        Err(VelcruxError::Protocol(ProtocolError::InvalidIdentity(
+            "token authentication not supported by this authenticator",
+        )))
+    }
 }
 
 /// Trait for authorizing an operation.
@@ -327,9 +346,7 @@ fn prefix_match_len(grant_prefix: &str, path: &str) -> Option<usize> {
 
 /// The mTLS authenticator for the MVP.
 ///
-/// Verifies that the peer's certificate chain is trusted by the configured
-/// CA roots. The identity is already extracted by the transport layer;
-/// we just need to ensure the chain was validated by rustls.
+#[derive(Debug, Clone, Default)]
 pub struct MtlsAuthenticator {
     // In the MVP, the TLS handshake already validates the chain.
     // This struct exists for the trait shape and future extensibility.
@@ -341,17 +358,83 @@ impl MtlsAuthenticator {
     }
 }
 
-impl Default for MtlsAuthenticator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Authenticator for MtlsAuthenticator {
     fn authenticate(&self, identity: &Identity) -> Result<Identity> {
         // The TLS handshake (via rustls) already validated the chain.
         // We trust the identity extracted from the verified certificate.
         Ok(identity.clone())
+    }
+}
+
+/// An authenticator that checks SSH-style Ed25519 public keys against an `AuthorizedKeys` set.
+#[derive(Debug, Clone, Default)]
+pub struct PubkeyAuthenticator {
+    authorized_keys: AuthorizedKeys,
+}
+
+impl PubkeyAuthenticator {
+    pub fn new(authorized_keys: AuthorizedKeys) -> Self {
+        Self { authorized_keys }
+    }
+}
+
+impl Authenticator for PubkeyAuthenticator {
+    fn authenticate(&self, _identity: &Identity) -> Result<Identity> {
+        Err(VelcruxError::Protocol(ProtocolError::InvalidIdentity(
+            "mTLS certificate authentication not supported by PubkeyAuthenticator",
+        )))
+    }
+
+    fn authenticate_token(
+        &self,
+        mechanism: u16,
+        token: &[u8],
+        exporter_secret: &[u8; pubkey::EXPORTER_SECRET_LEN],
+    ) -> Result<Identity> {
+        if mechanism != crate::protocol::message::AUTH_MECHANISM_SSH_PUBKEY {
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidIdentity(
+                "unsupported mechanism for PubkeyAuthenticator",
+            )));
+        }
+        self.authorized_keys.authenticate(token, exporter_secret)
+    }
+}
+
+/// An authenticator that supports both mTLS certificates and SSH-style Ed25519 public keys.
+#[derive(Debug, Clone, Default)]
+pub struct HybridAuthenticator {
+    mtls: MtlsAuthenticator,
+    authorized_keys: Option<AuthorizedKeys>,
+}
+
+impl HybridAuthenticator {
+    pub fn new(authorized_keys: Option<AuthorizedKeys>) -> Self {
+        Self {
+            mtls: MtlsAuthenticator::new(),
+            authorized_keys,
+        }
+    }
+}
+
+impl Authenticator for HybridAuthenticator {
+    fn authenticate(&self, identity: &Identity) -> Result<Identity> {
+        self.mtls.authenticate(identity)
+    }
+
+    fn authenticate_token(
+        &self,
+        mechanism: u16,
+        token: &[u8],
+        exporter_secret: &[u8; pubkey::EXPORTER_SECRET_LEN],
+    ) -> Result<Identity> {
+        if mechanism == crate::protocol::message::AUTH_MECHANISM_SSH_PUBKEY {
+            if let Some(ref ak) = self.authorized_keys {
+                return ak.authenticate(token, exporter_secret);
+            }
+        }
+        Err(VelcruxError::Protocol(ProtocolError::InvalidIdentity(
+            "unsupported token authentication mechanism or no authorized_keys configured",
+        )))
     }
 }
 
