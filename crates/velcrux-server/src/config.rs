@@ -48,6 +48,8 @@ pub struct NetworkCfg {
     pub idle_timeout: String,
     #[serde(default = "default_keepalive")]
     pub keepalive: String,
+    #[serde(default)]
+    pub drain_timeout: Option<String>,
 }
 
 impl Default for NetworkCfg {
@@ -60,6 +62,7 @@ impl Default for NetworkCfg {
             max_connections_unauth: None,
             idle_timeout: default_idle_timeout(),
             keepalive: default_keepalive(),
+            drain_timeout: None,
         }
     }
 }
@@ -240,6 +243,9 @@ impl ServerConfig {
         }
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_KEEPALIVE") {
             self.network.keepalive = val;
+        }
+        if let Ok(val) = std::env::var("VELCRUX_NETWORK_DRAIN_TIMEOUT") {
+            self.network.drain_timeout = Some(val);
         }
 
         // QUIC

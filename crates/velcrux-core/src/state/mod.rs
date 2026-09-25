@@ -300,6 +300,10 @@ pub trait StateStore: Send + Sync {
     /// are not modified; the caller calls `mark_journal_committed`
     /// after acting.
     fn recover_commit_journal(&self) -> StateStoreResult<Vec<JournalRecovery>>;
+
+    /// Transition any transfer currently in `Active` status to `Resumable`.
+    /// Called during server graceful drain and at startup crash recovery.
+    fn mark_active_transfers_resumable(&self) -> StateStoreResult<usize>;
 }
 
 /// Convenience: a request from the engine to commit a transfer. The

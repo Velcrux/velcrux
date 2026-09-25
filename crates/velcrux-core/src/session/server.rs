@@ -21,10 +21,10 @@ use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
 use crate::state::{Direction, StateStore, TransferStatus};
 use crate::storage::{LocalChunkStore, LocalFilesystemBackend, VPath};
 use crate::transport::identity::Identity;
-use crate::transport::Connection;
+use crate::transport::{BiRecvStream, Connection};
 use std::sync::Arc;
 
-use super::{read_frame, write_frame};
+use super::{read_frame, write_frame, Frame};
 
 /// Per-connection state. The match in [`ServerConn::run`] has no wildcard
 /// arm, so unknown message types or invalid transitions are
@@ -110,6 +110,30 @@ pub struct ServerConn {
     authorizer: Arc<dyn Authorizer>,
     /// Optional content-addressed chunk store for cross-file deduplication.
     chunk_store: Option<Arc<LocalChunkStore>>,
+    /// Optional drain signal receiver (Option M).
+    drain_signal: Option<tokio::sync::watch::Receiver<bool>>,
+}
+
+async fn next_frame(
+    recv: &mut dyn BiRecvStream,
+    drain_signal: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<Option<Frame<'static>>> {
+    if let Some(drain_rx) = drain_signal {
+        if *drain_rx.borrow() {
+            return Ok(None);
+        }
+        tokio::select! {
+            res = read_frame(recv) => res,
+            changed = drain_rx.changed() => {
+                match changed {
+                    Ok(()) if *drain_rx.borrow() => Ok(None),
+                    _ => read_frame(recv).await,
+                }
+            }
+        }
+    } else {
+        read_frame(recv).await
+    }
 }
 
 impl ServerConn {
@@ -145,6 +169,7 @@ impl ServerConn {
             authenticator,
             authorizer,
             chunk_store: None,
+            drain_signal: None,
         }
     }
 
@@ -154,9 +179,19 @@ impl ServerConn {
         self
     }
 
+    /// Attach an optional drain signal receiver.
+    pub fn with_drain_signal(
+        mut self,
+        drain_signal: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Self {
+        self.drain_signal = drain_signal;
+        self
+    }
+
     /// Drive the connection from `Accepted` through `Closed`. Returns the
     /// final state.
     pub async fn run(self, conn: &dyn Connection) -> Result<ServerState> {
+        let mut drain_signal = self.drain_signal.clone();
         self.stats.connections.fetch_add(1, Ordering::Relaxed);
         let mut state = ServerState::AwaitHello;
         let (mut send, mut recv) = conn.accept_bi().await?;
@@ -171,7 +206,7 @@ impl ServerConn {
         loop {
             match state {
                 ServerState::AwaitHello => {
-                    let frame = match read_frame(recv.as_mut()).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
                         Some(f) => f,
                         None => break,
                     };
@@ -223,7 +258,7 @@ impl ServerConn {
                     }
                 }
                 ServerState::AwaitAuth => {
-                    let frame = match read_frame(recv.as_mut()).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
                         Some(f) => f,
                         None => break,
                     };
@@ -379,7 +414,7 @@ impl ServerConn {
                             ));
                         }
                     };
-                    let frame = match read_frame(recv.as_mut()).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
                         Some(f) => f,
                         None => break,
                     };
@@ -779,6 +814,20 @@ async fn handle_transfer_create(
                             crate::chunking::ChunkMode::Fixed,
                             params,
                         );
+                    }
+
+                    if let Some(store) = state {
+                        if let Ok(mut record) = store.get_transfer(transfer_id) {
+                            record.status = TransferStatus::Committed;
+                            record.bytes_completed = bytes_total;
+                            record.verified_up_to = bytes_total;
+                            record.updated_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            let _ = store.update_transfer(&record);
+                        }
+                        let _ = store.mark_journal_committed(transfer_id, 1);
                     }
                 }
             }
@@ -1207,6 +1256,13 @@ async fn handle_transfer_create(
             }
             if create.op == TransferOp::Upload {
                 let _ = store.mark_journal_committed(transfer_id, 1);
+            }
+        } else if let Ok(mut record) = store.get_transfer(transfer_id) {
+            // When transfer is interrupted by drain or connection drop, persist as Resumable.
+            if record.status == TransferStatus::Active {
+                record.status = TransferStatus::Resumable;
+                record.updated_ms = now;
+                let _ = store.update_transfer(&record);
             }
         }
     }

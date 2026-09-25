@@ -68,6 +68,15 @@ impl Authorizer for ReloadableAuthorizer {
 /// Load TLS material, refuse to start on insecure permissions, build the
 /// QUIC server, spawn metrics exporter, and run the accept loop with signal handling.
 pub async fn run(config_path: &Path) -> Result<()> {
+    run_with_shutdown(config_path, std::future::pending()).await
+}
+
+/// Run server daemon with an external shutdown future, enabling graceful drain
+/// coordination during production lifecycle tests and signal handling.
+pub async fn run_with_shutdown<F>(config_path: &Path, external_shutdown: F) -> Result<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
     let cfg = ServerConfig::load(config_path)?;
 
     let cert_pem = std::fs::read(&cfg.security.certificate)
@@ -175,17 +184,45 @@ pub async fn run(config_path: &Path) -> Result<()> {
                         Ok(actions) if !actions.is_empty() => {
                             info!(count = actions.len(), "commit journal recovery actions");
                             for a in actions {
-                                if let velcrux_core::state::JournalRecovery::Finalize {
-                                    transfer_id,
-                                    file_id,
-                                } = a
-                                {
-                                    let _ = s.mark_journal_committed(transfer_id, file_id);
+                                match a {
+                                    velcrux_core::state::JournalRecovery::Finalize {
+                                        transfer_id,
+                                        file_id,
+                                    } => {
+                                        let _ = s.mark_journal_committed(transfer_id, file_id);
+                                        if let Ok(mut r) = s.get_transfer(transfer_id) {
+                                            r.status =
+                                                velcrux_core::state::TransferStatus::Committed;
+                                            let _ = s.update_transfer(&r);
+                                        }
+                                    }
+                                    velcrux_core::state::JournalRecovery::LeavePending {
+                                        transfer_id,
+                                        ..
+                                    } => {
+                                        if let Ok(mut r) = s.get_transfer(transfer_id) {
+                                            if r.status
+                                                == velcrux_core::state::TransferStatus::Active
+                                            {
+                                                r.status =
+                                                    velcrux_core::state::TransferStatus::Resumable;
+                                                let _ = s.update_transfer(&r);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                         Ok(_) => {}
                         Err(e) => warn!(error = %e, "journal recovery failed"),
+                    }
+                    if let Ok(count) = s.mark_active_transfers_resumable() {
+                        if count > 0 {
+                            info!(
+                                count,
+                                "recovered in-flight transfers from previous unclean shutdown as resumable"
+                            );
+                        }
                     }
                     Some(Arc::new(s))
                 }
@@ -209,6 +246,7 @@ pub async fn run(config_path: &Path) -> Result<()> {
     let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
 
     let next_id = Arc::new(AtomicU64::new(1));
+    let (drain_tx, drain_rx) = tokio::sync::watch::channel(false);
 
     // Signal listeners setup
     #[cfg(unix)]
@@ -221,10 +259,15 @@ pub async fn run(config_path: &Path) -> Result<()> {
             .context("failed to register SIGTERM handler")?;
 
     info!("velcruxd operational loop started");
+    tokio::pin!(external_shutdown);
 
     loop {
         #[cfg(unix)]
         tokio::select! {
+            _ = &mut external_shutdown => {
+                info!("external shutdown signal received, starting graceful drain");
+                break;
+            }
             _ = tokio::signal::ctrl_c() => {
                 info!("SIGINT (Ctrl+C) received, starting graceful drain");
                 break;
@@ -270,7 +313,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
                     Some(Arc::clone(&authenticator)),
                     Some(Arc::clone(&authorizer)),
                 )
-                .with_chunk_store(chunk_store.clone());
+                .with_chunk_store(chunk_store.clone())
+                .with_drain_signal(Some(drain_rx.clone()));
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
@@ -283,6 +327,10 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
         #[cfg(not(unix))]
         tokio::select! {
+            _ = &mut external_shutdown => {
+                info!("external shutdown signal received, starting graceful drain");
+                break;
+            }
             _ = tokio::signal::ctrl_c() => {
                 info!("SIGINT (Ctrl+C) received, starting graceful drain");
                 break;
@@ -305,7 +353,8 @@ pub async fn run(config_path: &Path) -> Result<()> {
                     Some(Arc::clone(&authenticator)),
                     Some(Arc::clone(&authorizer)),
                 )
-                .with_chunk_store(chunk_store.clone());
+                .with_chunk_store(chunk_store.clone())
+                .with_drain_signal(Some(drain_rx.clone()));
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
@@ -317,23 +366,41 @@ pub async fn run(config_path: &Path) -> Result<()> {
         }
     }
 
-    info!("shutting down metrics server and draining active transfers");
+    info!("initiating graceful drain of active connections and transfers");
+    let _ = drain_tx.send(true);
+
     if let Some(metrics_tx) = metrics_shutdown {
         let _ = metrics_tx.send(());
     }
 
-    // Drain window (up to 5 seconds for in-flight tasks to checkpoint)
+    // Drain window (up to drain_timeout for in-flight tasks to checkpoint)
+    let drain_timeout = cfg
+        .network
+        .drain_timeout
+        .as_deref()
+        .and_then(|s| parse_duration(s).ok())
+        .unwrap_or(Duration::from_secs(5));
+
     let drain_start = std::time::Instant::now();
     while stats
         .transfers_active
         .load(std::sync::atomic::Ordering::Relaxed)
         > 0
     {
-        if drain_start.elapsed() >= Duration::from_secs(5) {
-            warn!("drain timeout exceeded, forcing exit");
+        if drain_start.elapsed() >= drain_timeout {
+            warn!(?drain_timeout, "drain timeout exceeded, forcing exit");
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Persist any remaining in-flight active transfers as resumable
+    if let Some(store) = &state_store {
+        if let Ok(count) = store.mark_active_transfers_resumable() {
+            if count > 0 {
+                info!(count, "persisted in-flight active transfers as resumable");
+            }
+        }
     }
 
     info!("velcruxd graceful shutdown complete");

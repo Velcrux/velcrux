@@ -317,3 +317,61 @@ fn checkpoint_cadence_constants() {
     assert_eq!(CHECKPOINT_BYTES_INTERVAL, 1u64 << 30, "1 GiB");
     assert_eq!(CHECKPOINT_TIME_INTERVAL_MS, 10_000, "10 s");
 }
+
+#[test]
+fn mock_mark_active_transfers_resumable() {
+    let s = MockStateStore::new();
+    let t1 = TransferId::generate();
+    let t2 = TransferId::generate();
+    let mut r1 = sample("idem1", t1);
+    r1.status = TransferStatus::Active;
+    let mut r2 = sample("idem2", t2);
+    r2.status = TransferStatus::Committed;
+    s.upsert_transfer(&r1).unwrap();
+    s.upsert_transfer(&r2).unwrap();
+
+    let count = s.mark_active_transfers_resumable().unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        s.get_transfer(t1).unwrap().status,
+        TransferStatus::Resumable
+    );
+    assert_eq!(
+        s.get_transfer(t2).unwrap().status,
+        TransferStatus::Committed
+    );
+}
+
+#[test]
+fn sqlite_mark_active_transfers_resumable() {
+    let p = tmp_path("active_resumable.db");
+    let s = SqliteStateStore::new(&p).unwrap();
+    let t1 = TransferId::generate();
+    let t2 = TransferId::generate();
+    let t3 = TransferId::generate();
+    let mut r1 = sample("idem1", t1);
+    r1.status = TransferStatus::Active;
+    let mut r2 = sample("idem2", t2);
+    r2.status = TransferStatus::Active;
+    let mut r3 = sample("idem3", t3);
+    r3.status = TransferStatus::Committed;
+
+    s.upsert_transfer(&r1).unwrap();
+    s.upsert_transfer(&r2).unwrap();
+    s.upsert_transfer(&r3).unwrap();
+
+    let count = s.mark_active_transfers_resumable().unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(
+        s.get_transfer(t1).unwrap().status,
+        TransferStatus::Resumable
+    );
+    assert_eq!(
+        s.get_transfer(t2).unwrap().status,
+        TransferStatus::Resumable
+    );
+    assert_eq!(
+        s.get_transfer(t3).unwrap().status,
+        TransferStatus::Committed
+    );
+}

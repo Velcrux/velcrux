@@ -130,7 +130,7 @@ pub async fn client_upload(
     remote_path: &str,
     file_size: u64,
     expected_hash: Hash,
-    mut bitmap: ChunkBitmap,
+    bitmap: ChunkBitmap,
 ) -> Result<Hash> {
     use crate::session::encode_message;
 

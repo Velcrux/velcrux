@@ -310,7 +310,7 @@ fn current_ms() -> u64 {
 
 impl StateStore for SqliteStateStore {
     fn upsert_transfer(&self, record: &TransferRecord) -> StateStoreResult<UpsertOutcome> {
-        let mut g = lock_db(self.conn.lock())?;
+        let g = lock_db(self.conn.lock())?;
         // Look up by (role, idempotency_key) first. If present, verify
         // compatibility and return the existing row.
         let existing: Option<TransferRecord> = g
@@ -347,7 +347,7 @@ impl StateStore for SqliteStateStore {
     }
 
     fn update_transfer(&self, record: &TransferRecord) -> StateStoreResult<()> {
-        let mut g = lock_db(self.conn.lock())?;
+        let g = lock_db(self.conn.lock())?;
         let mut stmt = g
             .prepare(&update_sql())
             .map_err(|e| StateStoreError::Database(format!("prepare update: {e}")))?;
@@ -617,6 +617,17 @@ impl StateStore for SqliteStateStore {
                 CommitStatus::Committed => unreachable!(),
             })
             .collect())
+    }
+
+    fn mark_active_transfers_resumable(&self) -> StateStoreResult<usize> {
+        let g = lock_db(self.conn.lock())?;
+        let count = g
+            .execute(
+                "UPDATE transfers SET status='resumable', updated_ms=? WHERE status='active'",
+                params![current_ms() as i64],
+            )
+            .map_err(|e| StateStoreError::Database(format!("mark active resumable: {e}")))?;
+        Ok(count)
     }
 }
 

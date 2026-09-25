@@ -12,7 +12,7 @@ use crate::util::TransferId;
 
 use super::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, JournalRecovery, Role, StateStore,
-    StateStoreError, StateStoreResult, TransferRecord, UpsertOutcome,
+    StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
 };
 
 /// In-memory state store. All operations are serialized through a
@@ -241,6 +241,23 @@ impl StateStore for MockStateStore {
                 CommitStatus::Committed => unreachable!(),
             })
             .collect())
+    }
+
+    fn mark_active_transfers_resumable(&self) -> StateStoreResult<usize> {
+        let mut g = self.inner.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut count = 0;
+        for r in g.transfers_by_id.values_mut() {
+            if r.status == TransferStatus::Active {
+                r.status = TransferStatus::Resumable;
+                r.updated_ms = now;
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }
 
