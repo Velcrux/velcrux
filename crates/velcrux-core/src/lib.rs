@@ -35,8 +35,8 @@ pub mod util;
 
 pub use auth::{Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet};
 pub use chunking::{
-    create_chunker, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams, Chunker,
-    FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN,
+    create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
+    Chunker, FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN,
     CHUNK_DEFAULT_TARGET,
 };
 pub use error::{Result, VelcruxError};

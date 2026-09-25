@@ -71,12 +71,16 @@ pub struct DeltaSyncReport {
     pub local_bytes_reused: u64,
     /// Bytes reused from the content-addressed chunk store.
     pub store_bytes_reused: u64,
+    /// Bytes skipped due to sparse holes (zero transfer and zero disk allocation).
+    pub sparse_bytes_skipped: u64,
     /// Number of chunks transferred over the wire.
     pub wire_chunks_count: usize,
     /// Number of chunks reused from local file.
     pub local_chunks_count: usize,
     /// Number of chunks reused from chunk store.
     pub store_chunks_count: usize,
+    /// Number of sparse hole regions skipped.
+    pub sparse_holes_count: usize,
     /// Total chunks in the file.
     pub total_chunks: usize,
     /// Final verified whole-file BLAKE3 hash.
@@ -141,9 +145,7 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
         params,
         read_buffer_size,
         |desc, _payload| {
-            if let Some(hash) = desc.hash {
-                src_chunks.push((current_offset, desc.length, hash));
-            }
+            src_chunks.push((current_offset, desc.length, desc.hash));
             current_offset += desc.length;
             Ok(())
         },
@@ -161,9 +163,11 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
                 wire_bytes_transferred: 0,
                 local_bytes_reused: src_size,
                 store_bytes_reused: 0,
+                sparse_bytes_skipped: 0,
                 wire_chunks_count: 0,
                 local_chunks_count: total_chunks,
                 store_chunks_count: 0,
+                sparse_holes_count: 0,
                 total_chunks,
                 whole_file_hash: src_whole_hash,
             });
@@ -172,29 +176,34 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
 
     // 4. Negotiate chunks using InventoryHint, ChunkQuery, and ChunkResponse
     let tid = TransferId::generate();
-    let query_hashes: Vec<_> = src_chunks.iter().map(|(_, _, h)| *h).collect();
 
-    // Determine presence in destination file and/or chunk store
-    let mut have_bits = Vec::with_capacity(query_hashes.len());
-    let mut have_sources = Vec::with_capacity(query_hashes.len()); // 0 = none, 1 = local file, 2 = chunk store
+    // Determine presence in destination file, chunk store, or sparse hole
+    let mut have_bits = Vec::with_capacity(src_chunks.len());
+    let mut have_sources = Vec::with_capacity(src_chunks.len()); // 0 = wire, 1 = local file, 2 = chunk store, 3 = sparse hole
 
-    for h in &query_hashes {
-        if let Some(ref inv) = dst_inventory {
-            if inv.contains(h) {
-                have_bits.push(true);
-                have_sources.push(1u8);
-                continue;
+    for &(_, _, maybe_hash) in &src_chunks {
+        if let Some(h) = maybe_hash {
+            if let Some(ref inv) = dst_inventory {
+                if inv.contains(&h) {
+                    have_bits.push(true);
+                    have_sources.push(1u8);
+                    continue;
+                }
             }
-        }
-        if let Some(store) = chunk_store {
-            if store.contains_sync(h) {
-                have_bits.push(true);
-                have_sources.push(2u8);
-                continue;
+            if let Some(store) = chunk_store {
+                if store.contains_sync(&h) {
+                    have_bits.push(true);
+                    have_sources.push(2u8);
+                    continue;
+                }
             }
+            have_bits.push(false);
+            have_sources.push(0u8);
+        } else {
+            // Sparse hole
+            have_bits.push(true);
+            have_sources.push(3u8);
         }
-        have_bits.push(false);
-        have_sources.push(0u8);
     }
 
     let rle = RleBitmap::from_bits(&have_bits);
@@ -231,9 +240,11 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
     let mut wire_bytes_transferred = 0u64;
     let mut local_bytes_reused = 0u64;
     let mut store_bytes_reused = 0u64;
+    let mut sparse_bytes_skipped = 0u64;
     let mut wire_chunks_count = 0usize;
     let mut local_chunks_count = 0usize;
     let mut store_chunks_count = 0usize;
+    let mut sparse_holes_count = 0usize;
 
     let mut src_f = File::open(src)?;
     let mut dst_f = if dst.exists() {
@@ -246,8 +257,16 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
         SyncDecision::Delta => {
             let mut read_buf = vec![0u8; params.max as usize];
 
-            for (i, &(offset, length, hash)) in src_chunks.iter().enumerate() {
+            for (i, &(offset, length, maybe_hash)) in src_chunks.iter().enumerate() {
                 let source = have_sources[i];
+                if source == 3 || maybe_hash.is_none() {
+                    // Sparse hole: skip without disk write or wire transfer
+                    reconstructor.skip_hole(length)?;
+                    sparse_bytes_skipped += length;
+                    sparse_holes_count += 1;
+                    continue;
+                }
+                let hash = maybe_hash.unwrap();
                 if source == 1 {
                     if let Some(ref inv) = dst_inventory {
                         if let Some(extent) = inv.lookup(&hash) {
@@ -287,18 +306,25 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
             }
         }
         _ => {
-            // Full sync: transfer all chunks from source
+            // Full sync: transfer non-hole chunks from source
             let mut read_buf = vec![0u8; params.max as usize];
-            for &(offset, length, hash) in &src_chunks {
-                src_f.seek(SeekFrom::Start(offset))?;
-                let slice = &mut read_buf[..length as usize];
-                src_f.read_exact(slice)?;
-                reconstructor.write_wire_chunk(offset, slice)?;
-                wire_bytes_transferred += length;
-                wire_chunks_count += 1;
+            for &(offset, length, maybe_hash) in &src_chunks {
+                if let Some(hash) = maybe_hash {
+                    src_f.seek(SeekFrom::Start(offset))?;
+                    let slice = &mut read_buf[..length as usize];
+                    src_f.read_exact(slice)?;
+                    reconstructor.write_wire_chunk(offset, slice)?;
+                    wire_bytes_transferred += length;
+                    wire_chunks_count += 1;
 
-                if let Some(store) = chunk_store {
-                    let _ = store.put_sync(&hash, slice);
+                    if let Some(store) = chunk_store {
+                        let _ = store.put_sync(&hash, slice);
+                    }
+                } else {
+                    // Sparse hole: skip without disk write or wire transfer
+                    reconstructor.skip_hole(length)?;
+                    sparse_bytes_skipped += length;
+                    sparse_holes_count += 1;
                 }
             }
         }
@@ -312,9 +338,11 @@ pub fn execute_dedup_sync<P1: AsRef<std::path::Path>, P2: AsRef<std::path::Path>
         wire_bytes_transferred,
         local_bytes_reused,
         store_bytes_reused,
+        sparse_bytes_skipped,
         wire_chunks_count,
         local_chunks_count,
         store_chunks_count,
+        sparse_holes_count,
         total_chunks,
         whole_file_hash: src_whole_hash,
     })

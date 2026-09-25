@@ -348,6 +348,19 @@ pub fn create_chunker(mode: ChunkMode, params: ChunkParams) -> Box<dyn Chunker +
     }
 }
 
+/// Returns true if all bytes in the slice are zero.
+///
+/// Implemented without `unsafe` code using 64-bit word comparisons for high throughput.
+pub fn is_all_zeros(slice: &[u8]) -> bool {
+    let mut chunks = slice.chunks_exact(8);
+    for chunk in &mut chunks {
+        if u64::from_ne_bytes(chunk.try_into().unwrap()) != 0 {
+            return false;
+        }
+    }
+    chunks.remainder().iter().all(|&b| b == 0)
+}
+
 /// High-throughput streaming chunk engine with strictly bounded memory (`ARCHITECTURE.md` §2).
 ///
 /// Feeds chunks to a callback while calculating per-chunk BLAKE3 digests and
@@ -359,7 +372,8 @@ impl ChunkEngine {
     /// Stream-chunks an `std::io::Read` source with a bounded read buffer.
     ///
     /// For every chunk identified by the chunker, invokes `on_chunk` with its [`ChunkDesc`]
-    /// and payload slice.
+    /// and payload slice. Sparse regions consisting entirely of zero bytes are identified
+    /// as [`ChunkDesc::hole`] (with `hash == None` and `flags.is_hole() == true`).
     /// Returns the whole-stream BLAKE3 [`Hash`] and total bytes read.
     pub fn chunk_reader<R: std::io::Read, F>(
         mut reader: R,
@@ -393,8 +407,12 @@ impl ChunkEngine {
                 let target = b.end();
                 let need = (target - pending_offset) as usize;
                 let chunk_bytes = &pending[..need];
-                let hash = Hash::of(chunk_bytes);
-                let desc = ChunkDesc::new(need as u64, hash);
+                let desc = if is_all_zeros(chunk_bytes) {
+                    ChunkDesc::hole(need as u64)
+                } else {
+                    let hash = Hash::of(chunk_bytes);
+                    ChunkDesc::new(need as u64, hash)
+                };
                 on_chunk(desc, chunk_bytes)?;
                 pending.drain(..need);
                 pending_offset = target;
@@ -405,8 +423,12 @@ impl ChunkEngine {
             let target = b.end();
             let need = (target - pending_offset) as usize;
             let chunk_bytes = &pending[..need];
-            let hash = Hash::of(chunk_bytes);
-            let desc = ChunkDesc::new(need as u64, hash);
+            let desc = if is_all_zeros(chunk_bytes) {
+                ChunkDesc::hole(need as u64)
+            } else {
+                let hash = Hash::of(chunk_bytes);
+                ChunkDesc::new(need as u64, hash)
+            };
             on_chunk(desc, chunk_bytes)?;
             pending.drain(..need);
         }
@@ -806,5 +828,71 @@ mod tests {
         assert_eq!(stats.reused_chunks, 2);
         assert!((stats.byte_reuse_ratio - 0.8).abs() < 1e-6);
         assert!((stats.chunk_reuse_ratio - (2.0 / 3.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_is_all_zeros() {
+        assert!(is_all_zeros(&[]));
+        assert!(is_all_zeros(&[0u8; 1]));
+        assert!(is_all_zeros(&[0u8; 7]));
+        assert!(is_all_zeros(&[0u8; 8]));
+        assert!(is_all_zeros(&[0u8; 64]));
+        assert!(is_all_zeros(&[0u8; 1024]));
+
+        let mut buf = vec![0u8; 1024];
+        buf[0] = 1;
+        assert!(!is_all_zeros(&buf));
+
+        let mut buf2 = vec![0u8; 1024];
+        buf2[1023] = 1;
+        assert!(!is_all_zeros(&buf2));
+
+        let mut buf3 = vec![0u8; 1024];
+        buf3[500] = 0xFF;
+        assert!(!is_all_zeros(&buf3));
+    }
+
+    #[test]
+    fn test_chunk_reader_sparse_hole_detection() {
+        // Construct stream with:
+        // 4000 bytes data
+        // 4000 bytes zeros (hole)
+        // 4000 bytes data
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&vec![0xAAu8; 4000]);
+        stream.extend_from_slice(&vec![0x00u8; 4000]);
+        stream.extend_from_slice(&vec![0xBBu8; 4000]);
+
+        let mut collected = Vec::new();
+        let (whole_hash, total_bytes) = ChunkEngine::chunk_reader(
+            stream.as_slice(),
+            ChunkMode::Fixed,
+            ChunkParams::fixed(4000),
+            1024,
+            |desc, bytes| {
+                collected.push((desc, bytes.to_vec()));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(total_bytes, 12_000);
+        assert_eq!(whole_hash, Hash::of(&stream));
+        assert_eq!(collected.len(), 3);
+
+        // Chunk 0: normal data
+        assert!(!collected[0].0.flags.is_hole());
+        assert!(collected[0].0.hash.is_some());
+        assert_eq!(collected[0].0.hash.unwrap(), Hash::of(&vec![0xAAu8; 4000]));
+
+        // Chunk 1: sparse hole
+        assert!(collected[1].0.flags.is_hole());
+        assert!(collected[1].0.hash.is_none());
+        assert_eq!(collected[1].0.length, 4000);
+
+        // Chunk 2: normal data
+        assert!(!collected[2].0.flags.is_hole());
+        assert!(collected[2].0.hash.is_some());
+        assert_eq!(collected[2].0.hash.unwrap(), Hash::of(&vec![0xBBu8; 4000]));
     }
 }

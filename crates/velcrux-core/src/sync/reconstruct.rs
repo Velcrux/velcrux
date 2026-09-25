@@ -19,6 +19,8 @@ pub struct DeltaProgress {
     pub store_chunks_copied: usize,
     /// Chunks written from wire transfer.
     pub wire_chunks_written: usize,
+    /// Sparse hole chunks skipped (zero bytes not transferred or written).
+    pub sparse_holes_skipped: usize,
     /// Total bytes written to staging so far.
     pub bytes_written: u64,
     /// Target file size in bytes.
@@ -37,6 +39,7 @@ pub struct DeltaReconstructor {
     local_chunks_copied: usize,
     store_chunks_copied: usize,
     wire_chunks_written: usize,
+    sparse_holes_skipped: usize,
     bytes_written: u64,
     committed: bool,
 }
@@ -74,6 +77,7 @@ impl DeltaReconstructor {
             local_chunks_copied: 0,
             store_chunks_copied: 0,
             wire_chunks_written: 0,
+            sparse_holes_skipped: 0,
             bytes_written: 0,
             committed: false,
         })
@@ -152,6 +156,17 @@ impl DeltaReconstructor {
         Ok(())
     }
 
+    /// Skip a sparse hole region without writing zero blocks to disk, preserving filesystem sparseness.
+    pub fn skip_hole(&mut self, length: u64) -> Result<(), SyncError> {
+        let _ = self.staging_file.as_mut().ok_or_else(|| {
+            SyncError::Reconstruction("staging file is closed or committed".into())
+        })?;
+
+        self.sparse_holes_skipped += 1;
+        self.bytes_written += length;
+        Ok(())
+    }
+
     /// Current reconstruction progress.
     pub fn progress(&self) -> DeltaProgress {
         DeltaProgress {
@@ -159,6 +174,7 @@ impl DeltaReconstructor {
             local_chunks_copied: self.local_chunks_copied,
             store_chunks_copied: self.store_chunks_copied,
             wire_chunks_written: self.wire_chunks_written,
+            sparse_holes_skipped: self.sparse_holes_skipped,
             bytes_written: self.bytes_written,
             total_bytes: self.total_size,
         }
@@ -324,5 +340,58 @@ mod tests {
         assert!(matches!(res, Err(SyncError::HashMismatch { .. })));
         assert!(!target_path.exists());
         assert!(!staging_path.exists());
+    }
+
+    #[test]
+    fn reconstruct_sparse_file_with_holes() {
+        let dir = tempdir().unwrap();
+        let target_path = dir.path().join("sparse_reconstructed.bin");
+        let staging_path = dir.path().join("sparse_reconstructed.bin.velcrux-partial");
+
+        let header = vec![0xAAu8; 32 * 1024];
+        let hole_len = 128 * 1024u64;
+        let footer = vec![0xBBu8; 32 * 1024];
+
+        let mut expected_content = Vec::new();
+        expected_content.extend_from_slice(&header);
+        expected_content.resize(expected_content.len() + hole_len as usize, 0u8);
+        expected_content.extend_from_slice(&footer);
+
+        let expected_hash = Hash::of(&expected_content);
+        let total_size = expected_content.len() as u64;
+
+        let mut recon = DeltaReconstructor::new(
+            target_path.clone(),
+            staging_path.clone(),
+            expected_hash,
+            total_size,
+            3,
+        )
+        .unwrap();
+
+        // 1. Write header
+        recon.write_wire_chunk(0, &header).unwrap();
+
+        // 2. Skip sparse hole (128 KiB at offset 32 KiB)
+        recon.skip_hole(hole_len).unwrap();
+
+        // 3. Write footer (32 KiB at offset 160 KiB)
+        recon
+            .write_wire_chunk(32 * 1024 + hole_len, &footer)
+            .unwrap();
+
+        assert_eq!(recon.progress().wire_chunks_written, 2);
+        assert_eq!(recon.progress().sparse_holes_skipped, 1);
+        assert_eq!(recon.progress().bytes_written, total_size);
+
+        recon.verify_and_commit().unwrap();
+
+        assert!(target_path.exists());
+        assert!(!staging_path.exists());
+
+        let target_content = fs::read(&target_path).unwrap();
+        assert_eq!(target_content.len(), total_size as usize);
+        assert_eq!(target_content, expected_content);
+        assert_eq!(Hash::of(&target_content), expected_hash);
     }
 }

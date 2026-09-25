@@ -179,8 +179,14 @@ impl FileEntry {
         file_hash: Hash,
         chunks: Vec<ChunkDesc>,
     ) -> Self {
+        let is_sparse = chunks.iter().any(|c| c.flags.is_hole());
+        let flags = if is_sparse {
+            FileFlags::regular().with_sparse(true)
+        } else {
+            FileFlags::regular()
+        };
         Self {
-            flags: FileFlags::regular(),
+            flags,
             path,
             size,
             mode,
