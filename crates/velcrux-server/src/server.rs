@@ -367,11 +367,10 @@ where
     }
 
     info!("initiating graceful drain of active connections and transfers");
+    stats
+        .is_ready
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     let _ = drain_tx.send(true);
-
-    if let Some(metrics_tx) = metrics_shutdown {
-        let _ = metrics_tx.send(());
-    }
 
     // Drain window (up to drain_timeout for in-flight tasks to checkpoint)
     let drain_timeout = cfg
@@ -401,6 +400,10 @@ where
                 info!(count, "persisted in-flight active transfers as resumable");
             }
         }
+    }
+
+    if let Some(metrics_tx) = metrics_shutdown {
+        let _ = metrics_tx.send(());
     }
 
     info!("velcruxd graceful shutdown complete");

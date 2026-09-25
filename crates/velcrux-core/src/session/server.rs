@@ -12,7 +12,7 @@
 //! reply AUTH_OK, then loop receiving PING/PONG and other control messages
 //! until the peer sends BYE or the connection drops.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator, Op};
 use crate::error::{Result, VelcruxError};
@@ -63,8 +63,10 @@ impl ServerState {
 }
 
 /// Server-wide counters, exported in `ServerStats` for tests and `/metrics`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ServerStats {
+    /// Readiness flag: true if server is accepting traffic and ready.
+    pub is_ready: AtomicBool,
     /// Total connections accepted.
     pub connections: AtomicU64,
     /// Connections that completed HELLO/HELLO_ACK.
@@ -73,20 +75,117 @@ pub struct ServerStats {
     pub pings: AtomicU64,
     /// Active transfers currently running.
     pub transfers_active: AtomicU64,
+    /// Active upload transfers.
+    pub transfers_active_upload: AtomicU64,
+    /// Active download transfers.
+    pub transfers_active_download: AtomicU64,
     /// Total completed uploads.
     pub transfers_total_upload: AtomicU64,
     /// Total completed downloads.
     pub transfers_total_download: AtomicU64,
+    /// Total resumable uploads.
+    pub transfers_resumable_upload: AtomicU64,
+    /// Total resumable downloads.
+    pub transfers_resumable_download: AtomicU64,
+    /// Total failed uploads.
+    pub transfers_failed_upload: AtomicU64,
+    /// Total failed downloads.
+    pub transfers_failed_download: AtomicU64,
     /// Bytes transferred on wire for uploads.
     pub bytes_transferred_upload: AtomicU64,
     /// Bytes transferred on wire for downloads.
     pub bytes_transferred_download: AtomicU64,
     /// Bytes reused locally via delta/inventory.
     pub bytes_reused: AtomicU64,
+    /// Total bytes saved via deduplication, delta, and sparse zeros.
+    pub bytes_saved: AtomicU64,
+    /// Current wire throughput in bits per second (upload).
+    pub throughput_bps_upload: AtomicU64,
+    /// Current wire throughput in bits per second (download).
+    pub throughput_bps_download: AtomicU64,
     /// Total authorization denials.
     pub authz_denials: AtomicU64,
+    /// Total authorization denials for read operations.
+    pub authz_denials_read: AtomicU64,
+    /// Total authorization denials for write operations.
+    pub authz_denials_write: AtomicU64,
+    /// Total authentication failures (invalid cert, bad token).
+    pub auth_failures: AtomicU64,
+    /// Total resource limit hits (bandwidth cap, connection limit).
+    pub resource_limit_hits: AtomicU64,
     /// Total checksum verification mismatches.
     pub checksum_mismatches: AtomicU64,
+    /// Checksum mismatches on server side.
+    pub checksum_mismatches_server: AtomicU64,
+    /// Checksum mismatches on client side.
+    pub checksum_mismatches_client: AtomicU64,
+    /// Connections currently active (open).
+    pub connections_active: AtomicU64,
+    /// Connections closed.
+    pub connections_closed: AtomicU64,
+    /// Total chunk store hits.
+    pub chunk_hits: AtomicU64,
+    /// Total chunk store lookups.
+    pub chunk_lookups: AtomicU64,
+    /// Dedup bytes saved.
+    pub dedup_bytes_saved: AtomicU64,
+    /// Dedup bytes total.
+    pub dedup_bytes_total: AtomicU64,
+    /// Total disk bytes read per second.
+    pub disk_read_bps: AtomicU64,
+    /// Total disk bytes written per second.
+    pub disk_write_bps: AtomicU64,
+    /// Latest observed RTT in microseconds.
+    pub last_rtt_us: AtomicU64,
+    /// Estimated packet loss ratio in parts per million (e.g. 1000 = 0.001 = 0.1%).
+    pub quic_loss_ratio_ppm: AtomicU64,
+    /// Current estimated QUIC bytes in flight.
+    pub quic_bytes_in_flight: AtomicU64,
+}
+
+impl Default for ServerStats {
+    fn default() -> Self {
+        Self {
+            is_ready: AtomicBool::new(true),
+            connections: AtomicU64::new(0),
+            handshakes: AtomicU64::new(0),
+            pings: AtomicU64::new(0),
+            transfers_active: AtomicU64::new(0),
+            transfers_active_upload: AtomicU64::new(0),
+            transfers_active_download: AtomicU64::new(0),
+            transfers_total_upload: AtomicU64::new(0),
+            transfers_total_download: AtomicU64::new(0),
+            transfers_resumable_upload: AtomicU64::new(0),
+            transfers_resumable_download: AtomicU64::new(0),
+            transfers_failed_upload: AtomicU64::new(0),
+            transfers_failed_download: AtomicU64::new(0),
+            bytes_transferred_upload: AtomicU64::new(0),
+            bytes_transferred_download: AtomicU64::new(0),
+            bytes_reused: AtomicU64::new(0),
+            bytes_saved: AtomicU64::new(0),
+            throughput_bps_upload: AtomicU64::new(0),
+            throughput_bps_download: AtomicU64::new(0),
+            authz_denials: AtomicU64::new(0),
+            authz_denials_read: AtomicU64::new(0),
+            authz_denials_write: AtomicU64::new(0),
+            auth_failures: AtomicU64::new(0),
+            resource_limit_hits: AtomicU64::new(0),
+            checksum_mismatches: AtomicU64::new(0),
+            checksum_mismatches_server: AtomicU64::new(0),
+            checksum_mismatches_client: AtomicU64::new(0),
+            connections_active: AtomicU64::new(0),
+            connections_closed: AtomicU64::new(0),
+            chunk_hits: AtomicU64::new(0),
+            chunk_lookups: AtomicU64::new(0),
+            dedup_bytes_saved: AtomicU64::new(0),
+            dedup_bytes_total: AtomicU64::new(0),
+            disk_read_bps: AtomicU64::new(0),
+            disk_write_bps: AtomicU64::new(0),
+            last_rtt_us: AtomicU64::new(0),
+            quic_loss_ratio_ppm: AtomicU64::new(0),
+            quic_bytes_in_flight: AtomicU64::new(0),
+        }
+    }
 }
 
 /// A per-connection actor. Constructed by `run`; runs to completion.
