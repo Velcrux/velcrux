@@ -630,7 +630,10 @@ pub fn plan_directory_sync(
                         options.read_buffer_size,
                         |desc, _payload| {
                             let mut found = false;
-                            if let Some(h) = desc.hash {
+                            if desc.flags.is_hole() {
+                                reusable += desc.length;
+                                found = true;
+                            } else if let Some(h) = desc.hash {
                                 if inv.contains(&h) {
                                     reusable += desc.length;
                                     found = true;
@@ -677,7 +680,10 @@ pub fn plan_directory_sync(
                     options.read_buffer_size,
                     |desc, _payload| {
                         let mut found = false;
-                        if let Some(h) = desc.hash {
+                        if desc.flags.is_hole() {
+                            reusable += desc.length;
+                            found = true;
+                        } else if let Some(h) = desc.hash {
                             if let Some(store) = chunk_store {
                                 if store.contains_sync(&h) {
                                     reusable += desc.length;
@@ -826,9 +832,7 @@ pub fn execute_directory_sync(
             options.params,
             options.read_buffer_size,
             |desc, _payload| {
-                if let Some(hash) = desc.hash {
-                    src_chunks.push((current_offset, desc.length, hash));
-                }
+                src_chunks.push((current_offset, desc.length, desc.hash));
                 current_offset += desc.length;
                 Ok(())
             },
@@ -836,23 +840,26 @@ pub fn execute_directory_sync(
         .map_err(|e| SyncError::Reconstruction(format!("failed to scan source file: {e}")))?;
 
         let total_chunks = src_chunks.len();
-        let query_hashes: Vec<_> = src_chunks.iter().map(|(_, _, h)| *h).collect();
-
-        let mut have_sources = Vec::with_capacity(query_hashes.len());
-        for h in &query_hashes {
-            if let Some(ref inv) = dst_inventory {
-                if inv.contains(h) {
-                    have_sources.push(1u8);
-                    continue;
+        let mut have_sources = Vec::with_capacity(src_chunks.len());
+        for &(_, _, maybe_hash) in &src_chunks {
+            if let Some(h) = maybe_hash {
+                if let Some(ref inv) = dst_inventory {
+                    if inv.contains(&h) {
+                        have_sources.push(1u8);
+                        continue;
+                    }
                 }
-            }
-            if let Some(store) = chunk_store {
-                if store.contains_sync(h) {
-                    have_sources.push(2u8);
-                    continue;
+                if let Some(store) = chunk_store {
+                    if store.contains_sync(&h) {
+                        have_sources.push(2u8);
+                        continue;
+                    }
                 }
+                have_sources.push(0u8);
+            } else {
+                // Sparse hole: 3
+                have_sources.push(3u8);
             }
-            have_sources.push(0u8);
         }
 
         let temp_partial = staging_root.join(format!("{}.velcrux-partial", file_idx));
@@ -872,8 +879,14 @@ pub fn execute_directory_sync(
         };
         let mut read_buf = vec![0u8; options.params.max as usize];
 
-        for (i, &(offset, length, hash)) in src_chunks.iter().enumerate() {
+        for (i, &(offset, length, maybe_hash)) in src_chunks.iter().enumerate() {
             let src_source = have_sources[i];
+            if src_source == 3 || maybe_hash.is_none() {
+                reconstructor.skip_hole(length)?;
+                total_local_reused += length;
+                continue;
+            }
+            let hash = maybe_hash.unwrap();
             if src_source == 1 {
                 if let Some(ref inv) = dst_inventory {
                     if let Some(extent) = inv.lookup(&hash) {
