@@ -63,6 +63,34 @@ impl Default for TransportConfigTunables {
 }
 
 impl TransportConfigTunables {
+    /// Compute optimal transport tunables for a link defined by its bandwidth (bytes/sec) and RTT.
+    pub fn from_link(bandwidth_bytes_per_sec: u64, rtt: Duration) -> Self {
+        let est = super::flow_control::BdpEstimator::default();
+        let win = est.optimal_receive_window(bandwidth_bytes_per_sec, rtt);
+        let stream_win = est.optimal_stream_receive_window(bandwidth_bytes_per_sec, rtt);
+        let concurrency = est.optimal_concurrency(bandwidth_bytes_per_sec, rtt, 1024 * 1024, 64);
+        Self {
+            receive_window: win,
+            stream_receive_window: stream_win,
+            max_concurrent_streams: concurrency as u32,
+            initial_rtt: rtt,
+            ..Self::default()
+        }
+    }
+
+    /// Compute optimal transport tunables from a bandwidth string (e.g., "10Gbps", "100MB/s", "1G")
+    /// and expected RTT.
+    pub fn from_bandwidth_str(bandwidth_str: &str, rtt: Duration) -> crate::error::Result<Self> {
+        let bps = crate::transfer::parse_rate_limit(bandwidth_str)
+            .map_err(|e| crate::error::VelcruxError::Config(format!("invalid bandwidth: {e}")))?;
+        let effective_bps = if bps == 0 {
+            1_250_000_000 // 10 Gbps default
+        } else {
+            bps
+        };
+        Ok(Self::from_link(effective_bps, rtt))
+    }
+
     /// Build a quinn `TransportConfig` from these tunables.
     pub fn build_quinn(&self) -> TransportConfig {
         let mut c = TransportConfig::default();

@@ -69,5 +69,8 @@ pub use transfer::{
     server_upload_session_with_state, PipelineConfig, RateLimiter, TransferDir, TransferKind,
     TransferRequest,
 };
-pub use transport::{Connection, SharedTransport};
+pub use transport::{
+    AdaptiveFlowController, BdpEstimator, Connection, PacingController, SharedTransport,
+    TransportConfigTunables,
+};
 pub use util::{Hash, HashAlgorithm, HashHasher};
