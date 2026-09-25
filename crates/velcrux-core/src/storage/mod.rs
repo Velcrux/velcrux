@@ -22,7 +22,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub mod chunk_store;
+pub mod gc;
 pub use chunk_store::{ChunkStore, LocalChunkStore};
+pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
 
 use crate::error::{ProtocolError, VelcruxError};
 use crate::protocol::limits::{MAX_PATH_COMPONENT, MAX_PATH_TOTAL};

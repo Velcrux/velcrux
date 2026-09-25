@@ -98,6 +98,18 @@ impl LocalChunkStore {
         &self.root
     }
 
+    /// Chunks directory.
+    #[inline]
+    pub fn chunks_dir(&self) -> &Path {
+        &self.chunks_dir
+    }
+
+    /// Staging directory.
+    #[inline]
+    pub fn staging_dir(&self) -> &Path {
+        &self.staging_dir
+    }
+
     /// Export a clone of the internal BloomFilter for network negotiation.
     pub fn bloom_filter(&self) -> BloomFilter {
         self.bloom.read().unwrap().clone()
@@ -244,7 +256,7 @@ impl LocalChunkStore {
     }
 
     /// Scan directory and rebuild Bloom filter.
-    fn rebuild_bloom_sync(&self) -> Result<(), VelcruxError> {
+    pub fn rebuild_bloom_sync(&self) -> Result<(), VelcruxError> {
         if !self.chunks_dir.exists() {
             return Ok(());
         }

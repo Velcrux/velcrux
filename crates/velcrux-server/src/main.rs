@@ -69,6 +69,24 @@ enum Cmd {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
     },
+    /// Garbage-collect unreferenced chunks or orphaned staging files (docs/OPERATIONS.md §6).
+    Gc {
+        /// Path to a TOML config file.
+        #[arg(long, short)]
+        config: PathBuf,
+
+        /// Clean up unreferenced chunks in the content-addressed chunk store.
+        #[arg(long)]
+        chunks: bool,
+
+        /// Clean up orphaned staging directories and partial files.
+        #[arg(long)]
+        staging: bool,
+
+        /// Report reclaimable disk space without making any filesystem modifications.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -123,6 +141,102 @@ async fn main() -> anyhow::Result<()> {
                 println!("server cert for {:?} written to {}", host, out.display());
             } else {
                 anyhow::bail!("--host or --client is required");
+            }
+        }
+        Cmd::Gc {
+            config,
+            mut chunks,
+            mut staging,
+            dry_run,
+        } => {
+            use std::path::Path;
+
+            if !chunks && !staging {
+                chunks = true;
+                staging = true;
+            }
+
+            let cfg = config::ServerConfig::load(&config)
+                .with_context(|| format!("load config {}", config.display()))?;
+
+            if staging {
+                let staging_path = PathBuf::from(&cfg.storage.staging);
+                let state_db_path = cfg
+                    .storage
+                    .state_db
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        staging_path
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join("state.db")
+                    });
+
+                if state_db_path.exists() && staging_path.exists() {
+                    let state_store = velcrux_core::SqliteStateStore::new(&state_db_path)
+                        .with_context(|| format!("open state store {}", state_db_path.display()))?;
+                    let report = velcrux_core::gc_staging(&staging_path, &state_store, dry_run)
+                        .with_context(|| "garbage collect staging")?;
+
+                    if dry_run {
+                        println!(
+                            "[GC:staging:dry-run] scanned={}, orphans_found={}, reclaimable_bytes={}",
+                            report.entries_scanned, report.orphans_found, report.bytes_reclaimed
+                        );
+                    } else {
+                        println!(
+                            "[GC:staging] scanned={}, orphans_deleted={}, bytes_reclaimed={}",
+                            report.entries_scanned, report.orphans_deleted, report.bytes_reclaimed
+                        );
+                    }
+                } else {
+                    println!("[GC:staging] staging directory or state DB not found; skipped.");
+                }
+            }
+
+            if chunks {
+                let storage_root = PathBuf::from(&cfg.storage.root);
+                let chunk_store_path = cfg
+                    .storage
+                    .chunk_store
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        storage_root
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join("chunks")
+                    });
+
+                if chunk_store_path.exists() {
+                    let chunk_store = velcrux_core::LocalChunkStore::new(&chunk_store_path)
+                        .await
+                        .with_context(|| {
+                            format!("open chunk store {}", chunk_store_path.display())
+                        })?;
+                    let report =
+                        velcrux_core::gc_chunk_store(&chunk_store, &[&storage_root], dry_run)
+                            .with_context(|| "garbage collect chunk store")?;
+
+                    if dry_run {
+                        println!(
+                            "[GC:chunks:dry-run] scanned={}, unreferenced_found={}, reclaimable_bytes={}",
+                            report.chunks_scanned,
+                            report.unreferenced_found,
+                            report.bytes_reclaimed
+                        );
+                    } else {
+                        println!(
+                            "[GC:chunks] scanned={}, unreferenced_deleted={}, bytes_reclaimed={}",
+                            report.chunks_scanned,
+                            report.unreferenced_deleted,
+                            report.bytes_reclaimed
+                        );
+                    }
+                } else {
+                    println!("[GC:chunks] chunk store path not found; skipped.");
+                }
             }
         }
     }

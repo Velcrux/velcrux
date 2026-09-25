@@ -50,8 +50,8 @@ pub use state::{
     TransferStatus, UpsertOutcome, MAX_WIRE_CHUNKS,
 };
 pub use storage::{
-    ChunkStore, FileMeta, LocalChunkStore, LocalFilesystemBackend, Staging, StorageBackend, VPath,
-    VPathError,
+    gc_chunk_store, gc_staging, ChunkStore, ChunkStoreGcReport, FileMeta, LocalChunkStore,
+    LocalFilesystemBackend, Staging, StagingGcReport, StorageBackend, VPath, VPathError,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,

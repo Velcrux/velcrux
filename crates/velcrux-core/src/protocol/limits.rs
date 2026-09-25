@@ -95,4 +95,3 @@ mod tests {
         assert_eq!(ALPN, b"RAVEN/1");
     }
 }
-
