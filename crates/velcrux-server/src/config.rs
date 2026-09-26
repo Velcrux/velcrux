@@ -498,6 +498,37 @@ impl ServerConfig {
             }
         }
 
+        // 9. Validate network.max_bandwidth if specified
+        if let Some(ref bw) = self.network.max_bandwidth {
+            velcrux_core::parse_rate_limit(bw)
+                .map_err(|e| anyhow::anyhow!("invalid network.max_bandwidth {bw:?}: {e}"))?;
+        }
+
+        // 10. Validate limits table entries
+        for lim in &self.limits {
+            if lim.identity.trim().is_empty() {
+                anyhow::bail!("limits identity cannot be empty");
+            }
+            if let Some(ref bw) = lim.max_bandwidth {
+                velcrux_core::parse_rate_limit(bw).map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid max_bandwidth {:?} in limits for {:?}: {e}",
+                        bw,
+                        lim.identity
+                    )
+                })?;
+            }
+            if let Some(ref q) = lim.quota_bytes {
+                velcrux_core::parse_rate_limit(q).map_err(|e| {
+                    anyhow::anyhow!(
+                        "invalid quota_bytes {:?} in limits for {:?}: {e}",
+                        q,
+                        lim.identity
+                    )
+                })?;
+            }
+        }
+
         Ok(())
     }
 

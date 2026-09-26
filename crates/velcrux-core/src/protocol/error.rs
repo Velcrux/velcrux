@@ -174,6 +174,8 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::InvalidIdentity(_) => "invalid identity",
             ProtocolError::PermissionDenied => "not found",
             ProtocolError::InvalidManifest(_) => "invalid manifest",
+            ProtocolError::ResourceLimitExceeded(_) => "resource limit exceeded",
+            ProtocolError::QuotaExceeded(_) => "quota exceeded",
         };
         Self::new(s)
     }

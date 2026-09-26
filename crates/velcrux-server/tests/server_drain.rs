@@ -239,7 +239,7 @@ state_db = "{}"
     assert_eq!(pending[0].status, CommitStatus::Pending);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_server_graceful_drain_persists_resumable_state() {
     let temp = tempdir().unwrap();
     let storage_root = temp.path().join("storage_root");

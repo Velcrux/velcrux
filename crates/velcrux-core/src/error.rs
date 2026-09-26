@@ -101,6 +101,14 @@ pub enum ProtocolError {
     /// A manifest failed validation (hash mismatch, bounds violation, bad format).
     #[error("invalid manifest: {0}")]
     InvalidManifest(String),
+
+    /// A resource limit (bandwidth, connections, memory) was hit.
+    #[error("resource limit exceeded: {0}")]
+    ResourceLimitExceeded(String),
+
+    /// The caller exceeded its quota.
+    #[error("quota exceeded: {0}")]
+    QuotaExceeded(String),
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

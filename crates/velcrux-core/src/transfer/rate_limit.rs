@@ -3,6 +3,7 @@
 //! Provides human-friendly rate-limit parsing (e.g. `10M`, `10MB`, `10MiB`, `500K`, `1G`)
 //! and an asynchronous token bucket limiter with bounded memory and thread-safe sharing.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
@@ -97,6 +98,8 @@ struct BucketState {
 pub struct RateLimiter {
     inner: Arc<Mutex<BucketState>>,
     bytes_per_sec: u64,
+    parent: Option<Arc<RateLimiter>>,
+    hit_counter: Option<Arc<AtomicU64>>,
 }
 
 impl RateLimiter {
@@ -113,7 +116,23 @@ impl RateLimiter {
                 burst_limit: burst,
             })),
             bytes_per_sec,
+            parent: None,
+            hit_counter: None,
         }
+    }
+
+    /// Chain a parent rate limiter (e.g. global server bandwidth cap).
+    /// Calls to `acquire` will require permission from both the parent limiter
+    /// and this limiter concurrently.
+    pub fn with_parent(mut self, parent: Arc<RateLimiter>) -> Self {
+        self.parent = Some(parent);
+        self
+    }
+
+    /// Attach a metric counter that is incremented whenever token deficit causes throttling.
+    pub fn with_hit_counter(mut self, counter: Arc<AtomicU64>) -> Self {
+        self.hit_counter = Some(counter);
+        self
     }
 
     /// The configured rate limit in bytes per second.
@@ -126,6 +145,27 @@ impl RateLimiter {
     /// Asynchronously sleeps if insufficient tokens are available,
     /// yielding the Tokio executor without blocking the thread.
     pub async fn acquire(&self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+
+        // Collect ancestors to avoid recursive async future sizing
+        let mut cur = self.parent.clone();
+        let mut ancestors = Vec::new();
+        while let Some(p) = cur {
+            ancestors.push(p.clone());
+            cur = p.parent.clone();
+        }
+
+        // Acquire parent / root limiters first
+        for ancestor in ancestors.iter().rev() {
+            ancestor.acquire_self(bytes).await;
+        }
+
+        self.acquire_self(bytes).await;
+    }
+
+    async fn acquire_self(&self, bytes: usize) {
         if self.bytes_per_sec == 0 || bytes == 0 {
             return;
         }
@@ -147,6 +187,10 @@ impl RateLimiter {
             if state.tokens >= req {
                 state.tokens -= req;
                 return;
+            }
+
+            if let Some(ref counter) = self.hit_counter {
+                counter.fetch_add(1, Ordering::Relaxed);
             }
 
             let deficit = req - state.tokens;
@@ -241,5 +285,28 @@ mod tests {
             "Expected elapsed >= 350ms, got {:?}",
             elapsed
         );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_hierarchical_and_hit_counter() {
+        let parent_counter = Arc::new(AtomicU64::new(0));
+        let child_counter = Arc::new(AtomicU64::new(0));
+
+        let parent =
+            Arc::new(RateLimiter::new(100 * 1024).with_hit_counter(Arc::clone(&parent_counter)));
+        let child = RateLimiter::new(200 * 1024)
+            .with_parent(Arc::clone(&parent))
+            .with_hit_counter(Arc::clone(&child_counter));
+
+        // Drain tokens from parent (child has 200KB burst, parent has 100KB)
+        child.acquire(100 * 1024).await;
+
+        // Next acquire will be throttled by parent limiter
+        let start = Instant::now();
+        child.acquire(50 * 1024).await;
+        assert!(start.elapsed() >= Duration::from_millis(350));
+
+        // Parent was throttled so parent_counter should be > 0
+        assert!(parent_counter.load(Ordering::Relaxed) >= 1);
     }
 }

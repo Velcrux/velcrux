@@ -18,13 +18,14 @@ use tracing::{info, warn};
 use velcrux_core::auth::{Authenticator, Authorizer, MtlsAuthenticator, Op};
 use velcrux_core::error::{Result as CoreResult, VelcruxError};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
-use velcrux_core::session::{ServerConn, ServerStats};
+use velcrux_core::session::{LimitsProvider, ServerConn, ServerStats};
 use velcrux_core::storage::VPath;
 use velcrux_core::transport::identity::Identity;
 use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
 use velcrux_core::transport::Transport;
 
 use crate::config::{parse_size_bytes, ServerConfig};
+use crate::limits::LimitsManager;
 use crate::sessions::SessionRegistry;
 
 /// An authorizer wrapper that allows atomically swapping the underlying authorizer
@@ -253,6 +254,15 @@ where
     let reloadable_authorizer = Arc::new(ReloadableAuthorizer::new(initial_authorizer));
     let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
 
+    let limits_manager = Arc::new(LimitsManager::new(
+        cfg.network.max_bandwidth.as_deref(),
+        cfg.network.max_connections,
+        &cfg.limits,
+        Arc::clone(&stats),
+    )?);
+    let limits_provider: Arc<dyn LimitsProvider> =
+        Arc::clone(&limits_manager) as Arc<dyn LimitsProvider>;
+
     let next_id = Arc::new(AtomicU64::new(1));
     let (drain_tx, drain_rx) = tokio::sync::watch::channel(false);
 
@@ -285,7 +295,7 @@ where
                 break;
             }
             _ = sighup_stream.recv() => {
-                info!("SIGHUP received, reloading configuration and authorization grants (`OPERATIONS.md` §3)");
+                info!("SIGHUP received, reloading configuration, limits, and authorization grants (`OPERATIONS.md` §3)");
                 match ServerConfig::load(config_path) {
                     Ok(new_cfg) => {
                         match new_cfg.build_authorizer() {
@@ -296,6 +306,11 @@ where
                             Err(e) => {
                                 warn!(error = %e, "failed to build authorizer during SIGHUP reload");
                             }
+                        }
+                        if let Err(e) = limits_manager
+                            .reload(new_cfg.network.max_bandwidth.as_deref(), &new_cfg.limits)
+                        {
+                            warn!(error = %e, "failed to reload limits during SIGHUP reload");
                         }
                     }
                     Err(e) => {
@@ -311,6 +326,12 @@ where
                         continue;
                     }
                 };
+
+                if let Err(reason) = limits_manager.check_connection_limit(stats.connections_active.load(std::sync::atomic::Ordering::Relaxed)) {
+                    warn!(reason = %reason, "rejecting incoming connection due to connection ceiling");
+                    continue;
+                }
+
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let remote_addr = conn.quinn().remote_address();
                 let kill_rx = registry.register(id, remote_addr).await;
@@ -337,6 +358,7 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
+                .with_limits_provider(Some(Arc::clone(&limits_provider)))
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))
@@ -379,6 +401,12 @@ where
                         continue;
                     }
                 };
+
+                if let Err(reason) = limits_manager.check_connection_limit(stats.connections_active.load(std::sync::atomic::Ordering::Relaxed)) {
+                    warn!(reason = %reason, "rejecting incoming connection due to connection ceiling");
+                    continue;
+                }
+
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let remote_addr = conn.quinn().remote_address();
                 let kill_rx = registry.register(id, remote_addr).await;
@@ -405,6 +433,7 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
+                .with_limits_provider(Some(Arc::clone(&limits_provider)))
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))

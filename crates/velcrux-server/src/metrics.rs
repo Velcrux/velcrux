@@ -76,6 +76,16 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let authz_write = stats.authz_denials_write.load(Ordering::Relaxed);
     let auth_failures = stats.auth_failures.load(Ordering::Relaxed);
     let resource_limit_hits = stats.resource_limit_hits.load(Ordering::Relaxed);
+    let res_bandwidth = stats.resource_limit_hits_bandwidth.load(Ordering::Relaxed);
+    let res_quota = stats.resource_limit_hits_quota.load(Ordering::Relaxed);
+    let res_conns = stats
+        .resource_limit_hits_connections
+        .load(Ordering::Relaxed);
+    let bandwidth_hits = if res_bandwidth > 0 {
+        res_bandwidth
+    } else {
+        resource_limit_hits
+    };
 
     let checksum_mismatches = stats.checksum_mismatches.load(Ordering::Relaxed);
     let checksum_server =
@@ -200,8 +210,9 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_authz_denials_total{{op=\"write\"}} {authz_write}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
-         velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {resource_limit_hits}\n\
-         velcrux_resource_limit_hits_total{{limit=\"connections\"}} 0\n\n\
+         velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\
+         velcrux_resource_limit_hits_total{{limit=\"quota\"}} {res_quota}\n\
+         velcrux_resource_limit_hits_total{{limit=\"connections\"}} {res_conns}\n\n\
          # HELP velcrux_disk_read_bps Disk read throughput in bytes per second\n\
          # TYPE velcrux_disk_read_bps gauge\n\
          velcrux_disk_read_bps {disk_read_bps}\n\n\

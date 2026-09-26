@@ -111,8 +111,14 @@ pub struct ServerStats {
     pub authz_denials_write: AtomicU64,
     /// Total authentication failures (invalid cert, bad token).
     pub auth_failures: AtomicU64,
-    /// Total resource limit hits (bandwidth cap, connection limit).
+    /// Total resource limit hits (bandwidth cap, connection limit, quota).
     pub resource_limit_hits: AtomicU64,
+    /// Total bandwidth throttling events.
+    pub resource_limit_hits_bandwidth: Arc<AtomicU64>,
+    /// Total quota limit exhaustion events.
+    pub resource_limit_hits_quota: AtomicU64,
+    /// Total connection ceiling rejection events.
+    pub resource_limit_hits_connections: AtomicU64,
     /// Total checksum verification mismatches.
     pub checksum_mismatches: AtomicU64,
     /// Checksum mismatches on server side.
@@ -170,6 +176,9 @@ impl Default for ServerStats {
             authz_denials_write: AtomicU64::new(0),
             auth_failures: AtomicU64::new(0),
             resource_limit_hits: AtomicU64::new(0),
+            resource_limit_hits_bandwidth: Arc::new(AtomicU64::new(0)),
+            resource_limit_hits_quota: AtomicU64::new(0),
+            resource_limit_hits_connections: AtomicU64::new(0),
             checksum_mismatches: AtomicU64::new(0),
             checksum_mismatches_server: AtomicU64::new(0),
             checksum_mismatches_client: AtomicU64::new(0),
@@ -186,6 +195,23 @@ impl Default for ServerStats {
             quic_bytes_in_flight: AtomicU64::new(0),
         }
     }
+}
+
+/// Pluggable provider for bandwidth rate limiting and multi-tenant quota enforcement (`OPERATIONS.md` §4).
+pub trait LimitsProvider: Send + Sync {
+    /// Return an optional bandwidth rate limiter for the given tenant/identity.
+    fn get_rate_limiter(&self, identity: Option<&str>) -> Option<crate::transfer::RateLimiter>;
+
+    /// Check if the given identity has sufficient quota to perform a transfer of `additional_bytes`.
+    /// Returns `Ok(())` if allowed, or `Err(reason)` if quota exceeded.
+    fn check_quota(
+        &self,
+        identity: Option<&str>,
+        additional_bytes: u64,
+    ) -> std::result::Result<(), String>;
+
+    /// Record committed transfer bytes against the identity's quota meter.
+    fn record_transfer(&self, identity: Option<&str>, bytes: u64);
 }
 
 /// A per-connection actor. Constructed by `run`; runs to completion.
@@ -209,6 +235,8 @@ pub struct ServerConn {
     authorizer: Arc<dyn Authorizer>,
     /// Optional content-addressed chunk store for cross-file deduplication.
     chunk_store: Option<Arc<LocalChunkStore>>,
+    /// Optional limits provider for bandwidth and quota enforcement (Option O).
+    limits_provider: Option<Arc<dyn LimitsProvider>>,
     /// Optional drain signal receiver (Option M).
     drain_signal: Option<tokio::sync::watch::Receiver<bool>>,
     /// Optional session kill signal receiver (Option N).
@@ -324,11 +352,21 @@ impl ServerConn {
             authenticator,
             authorizer,
             chunk_store: None,
+            limits_provider: None,
             drain_signal: None,
             kill_signal: None,
             conn_id: 0,
             auth_notifier: None,
         }
+    }
+
+    /// Attach an optional limits provider for rate limiting and quota enforcement (Option O).
+    pub fn with_limits_provider(
+        mut self,
+        limits_provider: Option<Arc<dyn LimitsProvider>>,
+    ) -> Self {
+        self.limits_provider = limits_provider;
+        self
     }
 
     /// Attach an optional content-addressed LocalChunkStore for deduplication.
@@ -646,6 +684,7 @@ impl ServerConn {
                                 self.authorizer.as_ref(),
                                 &self.state,
                                 &self.chunk_store,
+                                &self.limits_provider,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -664,6 +703,7 @@ impl ServerConn {
                                 &self.backend,
                                 self.authorizer.as_ref(),
                                 &self.state,
+                                &self.limits_provider,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -755,6 +795,7 @@ async fn handle_transfer_create(
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
     chunk_store: &Option<Arc<LocalChunkStore>>,
+    limits_provider: &Option<Arc<dyn LimitsProvider>>,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -893,6 +934,27 @@ async fn handle_transfer_create(
         },
         _ => unreachable!(),
     };
+
+    if let Some(limits) = limits_provider {
+        if let Err(reason) = limits.check_quota(Some(&identity.name), bytes_total) {
+            stats
+                .resource_limit_hits_quota
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            stats
+                .resource_limit_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::QuotaExceeded,
+                reason,
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+    }
+
+    let rate_limiter = limits_provider
+        .as_ref()
+        .and_then(|lp| lp.get_rate_limiter(Some(&identity.name)));
 
     if let Some(store) = state {
         let now = std::time::SystemTime::now()
@@ -1240,7 +1302,7 @@ async fn handle_transfer_create(
                     return Ok(());
                 }
 
-                let res = crate::transfer::server_upload_session_with_delta(
+                let res = crate::transfer::server_upload_session_with_limits(
                     conn,
                     backend,
                     send,
@@ -1253,10 +1315,14 @@ async fn handle_transfer_create(
                     create.file_hash,
                     Some(initial_bitmap),
                     begin.streams as usize,
+                    rate_limiter.clone(),
                 )
                 .await
                 .map(|_| ());
                 if res.is_ok() {
+                    if let Some(limits) = limits_provider {
+                        limits.record_transfer(Some(&identity.name), plan.bytes_to_transfer);
+                    }
                     stats
                         .transfers_total_upload
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1396,7 +1462,7 @@ async fn handle_transfer_create(
     }
 
     let res = match create.op {
-        TransferOp::Upload => crate::transfer::server_upload_session_with_delta(
+        TransferOp::Upload => crate::transfer::server_upload_session_with_limits(
             conn,
             backend,
             send,
@@ -1409,6 +1475,7 @@ async fn handle_transfer_create(
             create.file_hash,
             None,
             begin.streams as usize,
+            rate_limiter.clone(),
         )
         .await
         .map(|_| ()),
@@ -1424,7 +1491,7 @@ async fn handle_transfer_create(
                     return Ok(());
                 }
             };
-            crate::transfer::server_download_session_with_delta(
+            crate::transfer::server_download_session_with_limits(
                 conn,
                 backend,
                 send,
@@ -1435,11 +1502,18 @@ async fn handle_transfer_create(
                 file_hash,
                 download_skip_bitmap,
                 begin.streams as usize,
+                rate_limiter.clone(),
             )
             .await
         }
         _ => unreachable!(),
     };
+
+    if res.is_ok() {
+        if let Some(limits) = limits_provider {
+            limits.record_transfer(Some(&identity.name), bytes_total);
+        }
+    }
 
     if let Some(store) = state {
         let now = std::time::SystemTime::now()
@@ -1507,6 +1581,7 @@ async fn handle_resume(
     backend: &Arc<LocalFilesystemBackend>,
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
+    limits_provider: &Option<Arc<dyn LimitsProvider>>,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -1588,9 +1663,13 @@ async fn handle_resume(
         ));
     }
 
+    let rate_limiter = limits_provider
+        .as_ref()
+        .and_then(|lp| lp.get_rate_limiter(Some(&identity.name)));
+
     let dst = VPath::validate(&record.remote_path)?;
     let res = match record.direction {
-        Direction::Upload => crate::transfer::server_upload_session_with_delta(
+        Direction::Upload => crate::transfer::server_upload_session_with_limits(
             conn,
             backend,
             send,
@@ -1603,11 +1682,12 @@ async fn handle_resume(
             record.file_hash,
             None,
             begin.streams as usize,
+            rate_limiter.clone(),
         )
         .await
         .map(|_| ()),
         Direction::Download => {
-            crate::transfer::server_download_session_with_delta(
+            crate::transfer::server_download_session_with_limits(
                 conn,
                 backend,
                 send,
@@ -1618,12 +1698,16 @@ async fn handle_resume(
                 record.file_hash,
                 None,
                 begin.streams as usize,
+                rate_limiter.clone(),
             )
             .await
         }
     };
 
     if res.is_ok() {
+        if let Some(limits) = limits_provider {
+            limits.record_transfer(Some(&identity.name), record.file_size);
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

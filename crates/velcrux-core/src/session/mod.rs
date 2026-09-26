@@ -14,7 +14,7 @@ pub mod client;
 pub mod server;
 
 pub use client::ClientSession;
-pub use server::{ServerConn, ServerState, ServerStats};
+pub use server::{LimitsProvider, ServerConn, ServerState, ServerStats};
 
 use crate::error::Result;
 use crate::protocol::frame::{encode_frame, header_size_for, Frame, FrameFlags};

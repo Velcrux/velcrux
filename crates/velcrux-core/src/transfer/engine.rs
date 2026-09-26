@@ -837,6 +837,41 @@ pub async fn server_upload_session_with_delta(
     initial_bitmap: Option<ChunkBitmap>,
     parallel_streams: usize,
 ) -> Result<Hash> {
+    server_upload_session_with_limits(
+        conn,
+        backend,
+        control_send,
+        control_recv,
+        store,
+        resumed,
+        transfer_id,
+        dst,
+        expected_size,
+        expected_hash,
+        initial_bitmap,
+        parallel_streams,
+        None,
+    )
+    .await
+}
+
+/// Server-side upload session with optional bandwidth rate limiting, initial bitmap (e.g. for delta transfer)
+/// and resume support.
+pub async fn server_upload_session_with_limits(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    store: Option<Arc<dyn StateStore>>,
+    resumed: bool,
+    transfer_id: TransferId,
+    dst: &VPath,
+    expected_size: u64,
+    expected_hash: Hash,
+    initial_bitmap: Option<ChunkBitmap>,
+    parallel_streams: usize,
+    rate_limiter: Option<RateLimiter>,
+) -> Result<Hash> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
@@ -863,6 +898,7 @@ pub async fn server_upload_session_with_delta(
             let mut data_recv = conn.accept_uni().await?;
             let writer = Arc::clone(&writer);
             let shared_bitmap = Arc::clone(&shared_bitmap);
+            let limiter_clone = rate_limiter.clone();
             let tid = transfer_id;
 
             let handle = tokio::spawn(async move {
@@ -904,6 +940,10 @@ pub async fn server_upload_session_with_delta(
                         let mut w = writer.lock().await;
                         w.write_at(hdr.chunk_offset, &payload).await?;
                         bm.mark_complete(chunk_index, payload_len as u64);
+                    }
+                    drop(bm);
+                    if let Some(ref lim) = limiter_clone {
+                        lim.acquire(payload_len).await;
                     }
                 }
                 Result::<()>::Ok(())
@@ -970,6 +1010,9 @@ pub async fn server_upload_session_with_delta(
                 writer.write_at(hdr.chunk_offset, &payload).await?;
                 bitmap.mark_complete(chunk_index, payload_len as u64);
                 bytes_received = bytes_received.saturating_add(payload_len as u64);
+            }
+            if let Some(ref lim) = rate_limiter {
+                lim.acquire(payload_len).await;
             }
             if let Some(s) = &store {
                 if bytes_received.saturating_sub(last_checkpoint_bytes) >= 16 * 1024 * 1024 {
@@ -1415,6 +1458,36 @@ pub async fn server_download_session_with_delta(
     skip_bitmap: Option<ChunkBitmap>,
     parallel_streams: usize,
 ) -> Result<()> {
+    server_download_session_with_limits(
+        conn,
+        backend,
+        control_send,
+        control_recv,
+        transfer_id,
+        src,
+        file_size,
+        file_hash,
+        skip_bitmap,
+        parallel_streams,
+        None,
+    )
+    .await
+}
+
+/// Server-side download session with bandwidth rate limiting and optional skip bitmap for delta transfer.
+pub async fn server_download_session_with_limits(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    src: &VPath,
+    file_size: u64,
+    file_hash: Hash,
+    skip_bitmap: Option<ChunkBitmap>,
+    parallel_streams: usize,
+    rate_limiter: Option<RateLimiter>,
+) -> Result<()> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
@@ -1454,6 +1527,7 @@ pub async fn server_download_session_with_delta(
             let chunk_indices = Arc::clone(&chunk_indices);
             let next_work_idx = Arc::clone(&next_work_idx);
             let mut reader = backend.open_read(&src_path).await?;
+            let limiter_clone = rate_limiter.clone();
             let tid = transfer_id;
 
             let handle = tokio::spawn(async move {
@@ -1495,6 +1569,9 @@ pub async fn server_download_session_with_delta(
                             &hash,
                             &buf[..read_bytes],
                         );
+                        if let Some(ref lim) = limiter_clone {
+                            lim.acquire(read_bytes).await;
+                        }
                         data_send.write_all(Bytes::from(bytes)).await?;
                     }
                 }
@@ -1561,6 +1638,9 @@ pub async fn server_download_session_with_delta(
                     &hash,
                     &buf[..read_bytes],
                 );
+                if let Some(ref lim) = rate_limiter {
+                    lim.acquire(read_bytes).await;
+                }
                 data_send.write_all(Bytes::from(bytes)).await?;
                 next_chunk = bm
                     .first_missing_from(next_chunk + 1)
@@ -1595,6 +1675,9 @@ pub async fn server_download_session_with_delta(
                             &hash,
                             &pending,
                         );
+                        if let Some(ref lim) = rate_limiter {
+                            lim.acquire(pending.len()).await;
+                        }
                         data_send.write_all(Bytes::from(bytes)).await?;
                     }
                     break;
@@ -1615,6 +1698,9 @@ pub async fn server_download_session_with_delta(
                         &hash,
                         &payload,
                     );
+                    if let Some(ref lim) = rate_limiter {
+                        lim.acquire(need).await;
+                    }
                     data_send.write_all(Bytes::from(bytes)).await?;
                     pending_offset = b.end();
                 }

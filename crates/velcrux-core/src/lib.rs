@@ -48,6 +48,7 @@ pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,
 };
+pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, JournalRecovery, MockStateStore,
     Role, SqliteStateStore, StateStore, StateStoreError, StateStoreResult, TransferRecord,
@@ -69,7 +70,8 @@ pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,
     client_download_with_progress, client_upload, client_upload_stream, client_upload_with_state,
     parse_rate_limit, server_download_session, server_download_session_with_delta,
-    server_staging_path, server_upload_session, server_upload_session_with_delta,
+    server_download_session_with_limits, server_staging_path, server_upload_session,
+    server_upload_session_with_delta, server_upload_session_with_limits,
     server_upload_session_with_state, PipelineConfig, RateLimiter, TransferDir, TransferKind,
     TransferRequest,
 };
