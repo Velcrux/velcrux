@@ -157,7 +157,17 @@ async fn test_cli_sessions_and_kill_session() {
     let storage_dir = temp.path().join("data");
     let staging_dir = temp.path().join("staging");
     std::fs::create_dir_all(&storage_dir).unwrap();
-    std::fs::create_dir_all(&staging_dir).unwrap();
+    let key_file = temp.path().join("server.key");
+    let cert_file = temp.path().join("server.crt");
+    let ca_file = temp.path().join("ca.crt");
+    std::fs::write(&key_file, "dummy key").unwrap();
+    std::fs::write(&cert_file, "dummy cert").unwrap();
+    std::fs::write(&ca_file, "dummy ca").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     let toml = format!(
         r#"
@@ -165,9 +175,9 @@ async fn test_cli_sessions_and_kill_session() {
 listen = "127.0.0.1:7443"
 
 [security]
-client_ca = "/tmp/ca.crt"
-certificate = "/tmp/server.crt"
-private_key = "/tmp/server.key"
+client_ca = "{}"
+certificate = "{}"
+private_key = "{}"
 
 [storage]
 root = "{}"
@@ -177,6 +187,9 @@ state_db = "{}"
 [telemetry]
 metrics_listen = "{}"
 "#,
+        ca_file.display(),
+        cert_file.display(),
+        key_file.display(),
         storage_dir.display(),
         staging_dir.display(),
         state_db.display(),

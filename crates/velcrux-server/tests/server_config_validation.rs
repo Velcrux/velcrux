@@ -5,9 +5,12 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use velcrux_core::auth::Op;
 use velcrux_core::transport::Identity;
 use velcrux_server::config::{parse_size_bytes, ServerConfig};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn setup_temp_dir(name: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -19,6 +22,11 @@ fn setup_temp_dir(name: &str) -> PathBuf {
 
 #[test]
 fn test_full_server_config_parsing_from_spec() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_NETWORK_LISTEN");
+    std::env::remove_var("VELCRUX_NETWORK_MAX_BANDWIDTH");
+    std::env::remove_var("VELCRUX_TRANSFER_PARALLELISM");
+    std::env::remove_var("VELCRUX_QUIC_RECEIVE_WINDOW");
     let tmp = setup_temp_dir("full_spec");
     let root = tmp.join("files");
     let staging = tmp.join("files/.velcrux-staging");
@@ -180,6 +188,11 @@ quota_bytes   = "50TiB"
 
 #[test]
 fn test_env_var_overrides() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_NETWORK_LISTEN");
+    std::env::remove_var("VELCRUX_NETWORK_MAX_BANDWIDTH");
+    std::env::remove_var("VELCRUX_TRANSFER_PARALLELISM");
+    std::env::remove_var("VELCRUX_QUIC_RECEIVE_WINDOW");
     let tmp = setup_temp_dir("env_overrides");
     let root = tmp.join("files");
     let staging = tmp.join("files/.velcrux-staging");
@@ -249,6 +262,11 @@ state_db = "{}"
 
 #[test]
 fn test_fail_closed_validations() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_NETWORK_LISTEN");
+    std::env::remove_var("VELCRUX_NETWORK_MAX_BANDWIDTH");
+    std::env::remove_var("VELCRUX_TRANSFER_PARALLELISM");
+    std::env::remove_var("VELCRUX_QUIC_RECEIVE_WINDOW");
     let tmp = setup_temp_dir("fail_closed");
     let cert = tmp.join("server.crt");
     let key = tmp.join("server.key");
