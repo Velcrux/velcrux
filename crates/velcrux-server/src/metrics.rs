@@ -217,11 +217,22 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     )
 }
 
+use crate::sessions::SessionRegistry;
+
 /// Spawns the Prometheus HTTP server task.
 /// Returns the bound local address and a shutdown sender to stop the metrics server gracefully.
 pub async fn start_metrics_server(
     listen_addr: &str,
     stats: Arc<ServerStats>,
+) -> anyhow::Result<(std::net::SocketAddr, oneshot::Sender<()>)> {
+    start_metrics_server_with_registry(listen_addr, stats, None).await
+}
+
+/// Spawns the Prometheus HTTP server task with optional active session registry for operator management.
+pub async fn start_metrics_server_with_registry(
+    listen_addr: &str,
+    stats: Arc<ServerStats>,
+    registry: Option<Arc<SessionRegistry>>,
 ) -> anyhow::Result<(std::net::SocketAddr, oneshot::Sender<()>)> {
     let listener = TcpListener::bind(listen_addr)
         .await
@@ -247,8 +258,9 @@ pub async fn start_metrics_server(
                         }
                     };
                     let stats = Arc::clone(&stats);
+                    let registry = registry.clone();
                     tokio::spawn(async move {
-                        let mut buf = [0u8; 1024];
+                        let mut buf = [0u8; 2048];
                         let n = match socket.read(&mut buf).await {
                             Ok(n) if n > 0 => n,
                             _ => return,
@@ -300,6 +312,49 @@ pub async fn start_metrics_server(
                                     body
                                 )
                             }
+                        } else if path == "/admin/sessions" {
+                            let sessions = if let Some(reg) = &registry {
+                                reg.list_sessions().await
+                            } else {
+                                Vec::new()
+                            };
+                            let body = serde_json::to_string_pretty(&sessions).unwrap_or_else(|_| "[]".into());
+                            format!(
+                                "HTTP/1.1 200 OK\r\n\
+                                 Content-Type: application/json\r\n\
+                                 Content-Length: {}\r\n\
+                                 Connection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                        } else if path.starts_with("/admin/kill-session") {
+                            let mut killed = 0;
+                            if let Some(reg) = &registry {
+                                if let Some((_, query)) = path.split_once('?') {
+                                    for param in query.split('&') {
+                                        if let Some((k, v)) = param.split_once('=') {
+                                            if k == "identity" {
+                                                killed += reg.kill_by_identity(v).await;
+                                            } else if k == "conn_id" {
+                                                if let Ok(id) = v.parse::<u64>() {
+                                                    if reg.kill_by_conn_id(id).await {
+                                                        killed += 1;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let body = format!("{{\"killed\":{}}}\n", killed);
+                            format!(
+                                "HTTP/1.1 200 OK\r\n\
+                                 Content-Type: application/json\r\n\
+                                 Content-Length: {}\r\n\
+                                 Connection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
                         } else {
                             let body = "404 Not Found\n";
                             format!(

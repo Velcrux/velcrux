@@ -129,7 +129,7 @@ impl ManifestWriter {
         }
 
         // Compress with zstd level 3 (ADR-005, ARCHITECTURE.md §11)
-        let compressed = zstd::encode_all(&self.encode_buf[..], 3).map_err(|e| {
+        let compressed = zstd::encode_all(&self.encode_buf[..], 3).map_err(|_e| {
             VelcruxError::Protocol(ProtocolError::Malformed("zstd compression failed"))
         })?;
 

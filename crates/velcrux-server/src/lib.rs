@@ -6,3 +6,4 @@ pub mod config;
 pub mod dev_pki;
 pub mod metrics;
 pub mod server;
+pub mod sessions;

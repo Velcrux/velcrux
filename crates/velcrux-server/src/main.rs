@@ -12,6 +12,7 @@ pub mod config;
 mod dev_pki;
 pub mod metrics;
 mod server;
+pub mod sessions;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -86,6 +87,30 @@ enum Cmd {
         /// Report reclaimable disk space without making any filesystem modifications.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// List active client sessions (docs/OPERATIONS.md §6).
+    Sessions {
+        /// Path to a TOML config file.
+        #[arg(long, short)]
+        config: PathBuf,
+
+        /// Output format: "table" (default) or "json".
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+    /// Terminate active client session(s) by identity or connection ID (docs/OPERATIONS.md §6).
+    KillSession {
+        /// Path to a TOML config file.
+        #[arg(long, short)]
+        config: PathBuf,
+
+        /// Authenticated peer identity name to terminate.
+        #[arg(long)]
+        identity: Option<String>,
+
+        /// Connection ID to terminate.
+        #[arg(long)]
+        conn_id: Option<u64>,
     },
 }
 
@@ -239,6 +264,139 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Sessions { config, format } => {
+            let cfg = config::ServerConfig::load(&config)
+                .with_context(|| format!("load config {}", config.display()))?;
+            let listen = cfg
+                .telemetry
+                .metrics_listen
+                .unwrap_or_else(|| "127.0.0.1:9090".to_string());
+            let addr = resolve_admin_addr(&listen);
+
+            let body = admin_request(&addr, "GET", "/admin/sessions").await?;
+            if format.eq_ignore_ascii_case("json") {
+                println!("{body}");
+            } else {
+                let sessions: Vec<sessions::SessionInfo> = serde_json::from_str(&body)
+                    .with_context(|| "parse sessions response from admin endpoint")?;
+                if sessions.is_empty() {
+                    println!("No active sessions.");
+                } else {
+                    println!(
+                        "{:<8} {:<24} {:<24} {:<10}",
+                        "CONN ID", "IDENTITY", "REMOTE ADDRESS", "UPTIME"
+                    );
+                    println!("{:-<8} {:-<24} {:-<24} {:-<10}", "", "", "", "");
+                    for s in sessions {
+                        let ident = s.identity.as_deref().unwrap_or("<unauthenticated>");
+                        let uptime = format!("{}s", s.uptime_secs);
+                        println!(
+                            "{:<8} {:<24} {:<24} {:<10}",
+                            s.conn_id, ident, s.remote_addr, uptime
+                        );
+                    }
+                }
+            }
+        }
+        Cmd::KillSession {
+            config,
+            identity,
+            conn_id,
+        } => {
+            if identity.is_none() && conn_id.is_none() {
+                anyhow::bail!("either --identity or --conn-id is required");
+            }
+            let cfg = config::ServerConfig::load(&config)
+                .with_context(|| format!("load config {}", config.display()))?;
+            let listen = cfg
+                .telemetry
+                .metrics_listen
+                .unwrap_or_else(|| "127.0.0.1:9090".to_string());
+            let addr = resolve_admin_addr(&listen);
+
+            let path = if let Some(id) = identity {
+                format!("/admin/kill-session?identity={}", percent_encode(&id))
+            } else if let Some(cid) = conn_id {
+                format!("/admin/kill-session?conn_id={cid}")
+            } else {
+                unreachable!()
+            };
+
+            let body = admin_request(&addr, "POST", &path).await?;
+            #[derive(serde::Deserialize)]
+            struct KillResp {
+                killed: usize,
+            }
+            let resp: KillResp = serde_json::from_str(&body)
+                .with_context(|| "parse kill-session response from admin endpoint")?;
+            if resp.killed > 0 {
+                println!("Successfully terminated {} active session(s).", resp.killed);
+            } else {
+                println!("No matching active sessions found.");
+            }
+        }
     }
     Ok(())
+}
+
+fn resolve_admin_addr(listen: &str) -> String {
+    if let Some(port) = listen.strip_prefix("0.0.0.0:") {
+        format!("127.0.0.1:{port}")
+    } else if let Some(port) = listen.strip_prefix("[::]:") {
+        format!("[::1]:{port}")
+    } else {
+        listen.to_string()
+    }
+}
+
+async fn admin_request(addr: &str, method: &str, path: &str) -> anyhow::Result<String> {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    use tokio::time::timeout;
+
+    timeout(Duration::from_secs(5), async {
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .with_context(|| format!("failed to connect to admin endpoint at http://{addr}"))?;
+
+        let req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: velcruxd-cli\r\nConnection: close\r\n\r\n"
+        );
+        stream
+            .write_all(req.as_bytes())
+            .await
+            .with_context(|| "failed to send request to admin endpoint")?;
+
+        let mut resp = String::new();
+        stream
+            .read_to_string(&mut resp)
+            .await
+            .with_context(|| "failed to read response from admin endpoint")?;
+
+        if let Some((headers, body)) = resp.split_once("\r\n\r\n") {
+            let status_line = headers.lines().next().unwrap_or("");
+            if !status_line.contains("200") {
+                anyhow::bail!("admin endpoint error: {status_line}");
+            }
+            Ok(body.to_string())
+        } else {
+            Ok(resp)
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("timeout communicating with admin endpoint at http://{addr}"))?
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+            out.push(b as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(out, "%{:02X}", b);
+        }
+    }
+    out
 }

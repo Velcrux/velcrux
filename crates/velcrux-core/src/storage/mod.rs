@@ -151,6 +151,7 @@ impl VPath {
 
     /// Construct a `VPath` from a string already known to be valid. The
     /// only public caller is the storage backend resolving relative paths.
+    #[allow(dead_code)]
     pub(crate) fn from_validated(s: String) -> Self {
         Self(s)
     }
@@ -706,6 +707,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 fn tempdir_in_target() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

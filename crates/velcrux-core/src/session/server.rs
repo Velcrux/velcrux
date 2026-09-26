@@ -211,27 +211,83 @@ pub struct ServerConn {
     chunk_store: Option<Arc<LocalChunkStore>>,
     /// Optional drain signal receiver (Option M).
     drain_signal: Option<tokio::sync::watch::Receiver<bool>>,
+    /// Optional session kill signal receiver (Option N).
+    kill_signal: Option<tokio::sync::watch::Receiver<bool>>,
+    /// Connection identifier.
+    conn_id: u64,
+    /// Optional callback invoked when client identity is authenticated.
+    auth_notifier: Option<Arc<dyn Fn(u64, &str) + Send + Sync>>,
 }
 
 async fn next_frame(
     recv: &mut dyn BiRecvStream,
     drain_signal: &mut Option<tokio::sync::watch::Receiver<bool>>,
+    kill_signal: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<Option<Frame<'static>>> {
+    if let Some(kill_rx) = kill_signal {
+        if *kill_rx.borrow() {
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::InvalidStateTransition(
+                    "session terminated by administrator",
+                ),
+            ));
+        }
+    }
     if let Some(drain_rx) = drain_signal {
         if *drain_rx.borrow() {
             return Ok(None);
         }
-        tokio::select! {
-            res = read_frame(recv) => res,
-            changed = drain_rx.changed() => {
-                match changed {
-                    Ok(()) if *drain_rx.borrow() => Ok(None),
-                    _ => read_frame(recv).await,
+    }
+
+    match (drain_signal.as_mut(), kill_signal.as_mut()) {
+        (Some(drain_rx), Some(kill_rx)) => {
+            tokio::select! {
+                res = read_frame(recv) => res,
+                changed = drain_rx.changed() => {
+                    match changed {
+                        Ok(()) if *drain_rx.borrow() => Ok(None),
+                        _ => read_frame(recv).await,
+                    }
+                }
+                changed = kill_rx.changed() => {
+                    match changed {
+                        Ok(()) if *kill_rx.borrow() => Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::InvalidStateTransition(
+                                "session terminated by administrator",
+                            ),
+                        )),
+                        _ => read_frame(recv).await,
+                    }
                 }
             }
         }
-    } else {
-        read_frame(recv).await
+        (Some(drain_rx), None) => {
+            tokio::select! {
+                res = read_frame(recv) => res,
+                changed = drain_rx.changed() => {
+                    match changed {
+                        Ok(()) if *drain_rx.borrow() => Ok(None),
+                        _ => read_frame(recv).await,
+                    }
+                }
+            }
+        }
+        (None, Some(kill_rx)) => {
+            tokio::select! {
+                res = read_frame(recv) => res,
+                changed = kill_rx.changed() => {
+                    match changed {
+                        Ok(()) if *kill_rx.borrow() => Err(VelcruxError::Protocol(
+                            crate::error::ProtocolError::InvalidStateTransition(
+                                "session terminated by administrator",
+                            ),
+                        )),
+                        _ => read_frame(recv).await,
+                    }
+                }
+            }
+        }
+        (None, None) => read_frame(recv).await,
     }
 }
 
@@ -269,6 +325,9 @@ impl ServerConn {
             authorizer,
             chunk_store: None,
             drain_signal: None,
+            kill_signal: None,
+            conn_id: 0,
+            auth_notifier: None,
         }
     }
 
@@ -287,10 +346,43 @@ impl ServerConn {
         self
     }
 
+    /// Attach an optional session kill signal receiver (Option N).
+    pub fn with_kill_signal(
+        mut self,
+        kill_signal: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Self {
+        self.kill_signal = kill_signal;
+        self
+    }
+
+    /// Set connection ID for session tracking (Option N).
+    pub fn with_conn_id(mut self, conn_id: u64) -> Self {
+        self.conn_id = conn_id;
+        self
+    }
+
+    /// Attach an optional auth callback invoked when client identity is authenticated (Option N).
+    pub fn with_auth_notifier(
+        mut self,
+        notifier: Option<Arc<dyn Fn(u64, &str) + Send + Sync>>,
+    ) -> Self {
+        self.auth_notifier = notifier;
+        self
+    }
+
+    /// Returns true if an operator kill signal has been received for this session.
+    pub fn is_killed(&self) -> bool {
+        self.kill_signal
+            .as_ref()
+            .map(|k| *k.borrow())
+            .unwrap_or(false)
+    }
+
     /// Drive the connection from `Accepted` through `Closed`. Returns the
     /// final state.
     pub async fn run(self, conn: &dyn Connection) -> Result<ServerState> {
         let mut drain_signal = self.drain_signal.clone();
+        let mut kill_signal = self.kill_signal.clone();
         self.stats.connections.fetch_add(1, Ordering::Relaxed);
         let mut state = ServerState::AwaitHello;
         let (mut send, mut recv) = conn.accept_bi().await?;
@@ -305,7 +397,9 @@ impl ServerConn {
         loop {
             match state {
                 ServerState::AwaitHello => {
-                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal, &mut kill_signal)
+                        .await?
+                    {
                         Some(f) => f,
                         None => break,
                     };
@@ -357,7 +451,9 @@ impl ServerConn {
                     }
                 }
                 ServerState::AwaitAuth => {
-                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal, &mut kill_signal)
+                        .await?
+                    {
                         Some(f) => f,
                         None => break,
                     };
@@ -486,6 +582,9 @@ impl ServerConn {
                                 .await?;
 
                             // Carry the verified identity into SERVING.
+                            if let Some(notifier) = &self.auth_notifier {
+                                notifier(self.conn_id, &verified_identity.name);
+                            }
                             authenticated_identity = Some(verified_identity);
                             state = ServerState::Serving;
                         }
@@ -513,7 +612,9 @@ impl ServerConn {
                             ));
                         }
                     };
-                    let frame = match next_frame(recv.as_mut(), &mut drain_signal).await? {
+                    let frame = match next_frame(recv.as_mut(), &mut drain_signal, &mut kill_signal)
+                        .await?
+                    {
                         Some(f) => f,
                         None => break,
                     };

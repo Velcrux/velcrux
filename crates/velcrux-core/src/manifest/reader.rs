@@ -22,6 +22,7 @@ use crate::util::Hash;
 /// Streaming reader for a manifest stored in a spill file.
 pub struct ManifestReader {
     reader: BufReader<File>,
+    #[allow(dead_code)]
     path: PathBuf,
     expected_hash: Hash,
     hasher: blake3::Hasher,

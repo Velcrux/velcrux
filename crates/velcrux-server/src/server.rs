@@ -25,6 +25,7 @@ use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConf
 use velcrux_core::transport::Transport;
 
 use crate::config::{parse_size_bytes, ServerConfig};
+use crate::sessions::SessionRegistry;
 
 /// An authorizer wrapper that allows atomically swapping the underlying authorizer
 /// at runtime without restarting the server or breaking active connections (e.g. on SIGHUP).
@@ -122,10 +123,17 @@ where
         .with_tunables(tunables)
         .build(addr)?;
     let stats = Arc::new(ServerStats::default());
+    let registry: Arc<SessionRegistry> = SessionRegistry::new();
     info!(%addr, "velcruxd listening");
 
     let metrics_shutdown = if let Some(metrics_listen) = &cfg.telemetry.metrics_listen {
-        match crate::metrics::start_metrics_server(metrics_listen, Arc::clone(&stats)).await {
+        match crate::metrics::start_metrics_server_with_registry(
+            metrics_listen,
+            Arc::clone(&stats),
+            Some(Arc::clone(&registry)),
+        )
+        .await
+        {
             Ok((_addr, tx)) => Some(tx),
             Err(e) => {
                 warn!(error = %e, "failed to start metrics server");
@@ -304,6 +312,21 @@ where
                     }
                 };
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let remote_addr = conn.quinn().remote_address();
+                let kill_rx = registry.register(id, remote_addr).await;
+                stats
+                    .connections_active
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let reg_auth: Arc<SessionRegistry> = Arc::clone(&registry);
+                let auth_notifier = Arc::new(move |conn_id: u64, ident: &str| {
+                    let reg = Arc::clone(&reg_auth);
+                    let ident = ident.to_string();
+                    tokio::spawn(async move {
+                        reg.set_identity(conn_id, &ident).await;
+                    });
+                });
+
                 let actor = ServerConn::with_state(
                     server_caps,
                     "velcruxd",
@@ -314,13 +337,26 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
-                .with_drain_signal(Some(drain_rx.clone()));
+                .with_drain_signal(Some(drain_rx.clone()))
+                .with_conn_id(id)
+                .with_kill_signal(Some(kill_rx))
+                .with_auth_notifier(Some(auth_notifier));
+
+                let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
+                let stats_clean = Arc::clone(&stats);
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
                         Ok(state) => info!(conn_id = id, ?state, "connection finished"),
                         Err(e) => warn!(conn_id = id, error = %e, "connection error"),
                     }
+                    reg_clean.unregister(id).await;
+                    stats_clean
+                        .connections_active
+                        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    stats_clean
+                        .connections_closed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 });
             }
         }
@@ -344,6 +380,21 @@ where
                     }
                 };
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let remote_addr = conn.quinn().remote_address();
+                let kill_rx = registry.register(id, remote_addr).await;
+                stats
+                    .connections_active
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let reg_auth: Arc<SessionRegistry> = Arc::clone(&registry);
+                let auth_notifier = Arc::new(move |conn_id: u64, ident: &str| {
+                    let reg = Arc::clone(&reg_auth);
+                    let ident = ident.to_string();
+                    tokio::spawn(async move {
+                        reg.set_identity(conn_id, &ident).await;
+                    });
+                });
+
                 let actor = ServerConn::with_state(
                     server_caps,
                     "velcruxd",
@@ -354,13 +405,26 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
-                .with_drain_signal(Some(drain_rx.clone()));
+                .with_drain_signal(Some(drain_rx.clone()))
+                .with_conn_id(id)
+                .with_kill_signal(Some(kill_rx))
+                .with_auth_notifier(Some(auth_notifier));
+
+                let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
+                let stats_clean = Arc::clone(&stats);
                 tokio::spawn(async move {
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
                         Ok(state) => info!(conn_id = id, ?state, "connection finished"),
                         Err(e) => warn!(conn_id = id, error = %e, "connection error"),
                     }
+                    reg_clean.unregister(id).await;
+                    stats_clean
+                        .connections_active
+                        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    stats_clean
+                        .connections_closed
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 });
             }
         }
