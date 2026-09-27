@@ -26,7 +26,35 @@ use crate::transport::{BiRecvStream, BiSendStream};
 /// `request_id` is zero for unsolicited server-to-client messages; the
 /// client uses non-zero ids to correlate responses (M2+).
 pub fn encode_message(msg: &Message, request_id: u64) -> Result<Vec<u8>> {
+    encode_message_compressed(msg, request_id, false)
+}
+
+/// Encode `msg` as a single frame with optional zstd compression (Option Q).
+pub fn encode_message_compressed(
+    msg: &Message,
+    request_id: u64,
+    enable_compression: bool,
+) -> Result<Vec<u8>> {
     let (type_byte, payload) = msg.encode()?;
+    if enable_compression {
+        if let Some(compressed) = crate::protocol::compression::compress_if_beneficial(
+            &payload,
+            crate::protocol::compression::DEFAULT_MIN_SAVINGS,
+        ) {
+            let length = compressed.len() as u64;
+            let total = header_size_for(length) + compressed.len();
+            let mut out = vec![0u8; total];
+            let n = encode_frame(
+                &mut out,
+                type_byte,
+                FrameFlags::COMPRESSED,
+                request_id,
+                &compressed,
+            );
+            debug_assert_eq!(n, total);
+            return Ok(out);
+        }
+    }
     let length = payload.len() as u64;
     let total = header_size_for(length) + payload.len();
     let mut out = vec![0u8; total];
@@ -40,6 +68,9 @@ pub fn encode_message(msg: &Message, request_id: u64) -> Result<Vec<u8>> {
 /// The frame header is parsed first; if the declared `length` exceeds
 /// `max_message_size` (the all-important bound from `PROTOCOL.md` §3) the
 /// function returns `Err` **before** any payload allocation.
+///
+/// If `frame.flags.compressed()` is set, the payload is decompressed
+/// with strict bounds against decompression bombs (`SECURITY.md` §8, §10).
 pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'static>>> {
     // Read 5 bytes: the 4-byte fixed prefix (ver, type, flags_lo,
     // flags_hi) and the first byte of the `length` varint. The first
@@ -97,15 +128,25 @@ pub async fn read_frame(recv: &mut dyn BiRecvStream) -> Result<Option<Frame<'sta
     // re-checks version, length, etc. — those checks are cheap and the
     // test in the frame module is the spec.
     let frame = crate::protocol::frame::decode_frame(&buf)?;
-    // The decoder returns a `Frame<'_>` borrowing from `buf`; re-emit as
-    // `Frame<'static>` by leaking the payload (it is small, bounded by
-    // max_message_size, and the original buffer is dropped immediately).
-    let payload_static: &'static [u8] = Box::leak(frame.payload.to_vec().into_boxed_slice());
+
+    // Decompress payload if the COMPRESSED flag is set (Option Q).
+    let payload_bytes = if frame.flags.compressed() {
+        crate::protocol::compression::decompress_payload_bounded(
+            frame.payload,
+            crate::protocol::limits::MAX_BATCH_DECOMPRESSED_BYTES,
+            Some(500),
+        )?
+    } else {
+        frame.payload.to_vec()
+    };
+
+    let payload_len = payload_bytes.len() as u64;
+    let payload_static: &'static [u8] = Box::leak(payload_bytes.into_boxed_slice());
     Ok(Some(Frame {
         version: frame.version,
         type_byte: frame.type_byte,
         flags: frame.flags,
-        length: frame.length,
+        length: payload_len,
         request_id: frame.request_id,
         payload: payload_static,
     }))
@@ -118,7 +159,17 @@ pub async fn write_frame(
     msg: &Message,
     request_id: u64,
 ) -> Result<()> {
-    let buf = encode_message(msg, request_id)?;
+    write_frame_compressed(send, msg, request_id, false).await
+}
+
+/// Write a single frame to `send` with optional zstd compression (Option Q).
+pub async fn write_frame_compressed(
+    send: &mut dyn BiSendStream,
+    msg: &Message,
+    request_id: u64,
+    enable_compression: bool,
+) -> Result<()> {
+    let buf = encode_message_compressed(msg, request_id, enable_compression)?;
     send.write_all(bytes::Bytes::from(buf)).await?;
     Ok(())
 }

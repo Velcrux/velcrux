@@ -78,6 +78,16 @@ struct Cli {
     )]
     rate_limit: Option<String>,
 
+    /// Data compression mode: "none" (default) or "zstd" (Option Q).
+    #[arg(
+        long = "compression",
+        short = 'C',
+        env = "VELCRUX_COMPRESSION",
+        default_value = "none",
+        global = true
+    )]
+    compression: String,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -777,6 +787,7 @@ async fn upload_file_stream(
     let mut cfg = velcrux_core::PipelineConfig {
         parallel_streams: cli.parallel.clamp(1, 16),
         rate_limiter,
+        compression: cli.compression.to_lowercase() == "zstd",
         ..Default::default()
     };
     if !initial_bitmap.is_empty() {
@@ -997,6 +1008,7 @@ async fn run_resume(
     let cfg = velcrux_core::PipelineConfig {
         parallel_streams: cli.parallel.clamp(1, 16),
         rate_limiter,
+        compression: cli.compression.to_lowercase() == "zstd",
         ..Default::default()
     };
     let (send_half, recv_half) = session.stream_halves_mut();

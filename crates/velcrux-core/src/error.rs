@@ -109,6 +109,10 @@ pub enum ProtocolError {
     /// The caller exceeded its quota.
     #[error("quota exceeded: {0}")]
     QuotaExceeded(String),
+
+    /// A compressed frame or payload exceeded the expansion limit (decompression bomb defense).
+    #[error("decompression bomb detected: {0}")]
+    DecompressionBomb(String),
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

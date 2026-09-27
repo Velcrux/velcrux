@@ -176,6 +176,7 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::InvalidManifest(_) => "invalid manifest",
             ProtocolError::ResourceLimitExceeded(_) => "resource limit exceeded",
             ProtocolError::QuotaExceeded(_) => "quota exceeded",
+            ProtocolError::DecompressionBomb(_) => "decompression limit exceeded",
         };
         Self::new(s)
     }

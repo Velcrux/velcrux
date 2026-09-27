@@ -255,6 +255,8 @@ pub struct ServerConn {
     max_auth_attempts: u32,
     /// Counter of failed authentication attempts on this connection.
     auth_attempts: u32,
+    /// Enable wire-level zstd compression (Option Q).
+    compression: bool,
 }
 
 async fn next_frame(
@@ -369,7 +371,14 @@ impl ServerConn {
             auth_notifier: None,
             max_auth_attempts: 3,
             auth_attempts: 0,
+            compression: false,
         }
+    }
+
+    /// Enable wire-level zstd compression (Option Q).
+    pub fn with_compression(mut self, enabled: bool) -> Self {
+        self.compression = enabled;
+        self
     }
 
     /// Set the maximum authentication attempts allowed before closing the connection.
@@ -773,6 +782,7 @@ impl ServerConn {
                                 recv.as_mut(),
                                 &frame.payload,
                                 &self.stats,
+                                self.compression,
                             )
                             .await
                             {
@@ -792,6 +802,7 @@ impl ServerConn {
                                 recv.as_mut(),
                                 &frame.payload,
                                 frame.request_id,
+                                self.compression,
                             )
                             .await
                             {
@@ -884,6 +895,7 @@ async fn handle_transfer_create(
     recv: &mut dyn crate::transport::BiRecvStream,
     payload: &[u8],
     stats: &ServerStats,
+    compression: bool,
 ) -> Result<()> {
     use crate::protocol::limits::MAX_CHUNK_SIZE;
     use crate::protocol::message::{
@@ -1574,7 +1586,7 @@ async fn handle_transfer_create(
                     return Ok(());
                 }
             };
-            crate::transfer::server_download_session_with_limits(
+            crate::transfer::server_download_session_with_compression(
                 conn,
                 backend,
                 send,
@@ -1586,6 +1598,7 @@ async fn handle_transfer_create(
                 download_skip_bitmap,
                 begin.streams as usize,
                 rate_limiter.clone(),
+                compression,
             )
             .await
         }
@@ -1670,6 +1683,7 @@ async fn handle_resume(
     recv: &mut dyn crate::transport::BiRecvStream,
     payload: &[u8],
     request_id: u64,
+    compression: bool,
 ) -> Result<()> {
     use crate::protocol::message::{Message, Resume, ResumeState, TransferBegin};
 
@@ -1770,7 +1784,7 @@ async fn handle_resume(
         .await
         .map(|_| ()),
         Direction::Download => {
-            crate::transfer::server_download_session_with_limits(
+            crate::transfer::server_download_session_with_compression(
                 conn,
                 backend,
                 send,
@@ -1782,6 +1796,7 @@ async fn handle_resume(
                 None,
                 begin.streams as usize,
                 rate_limiter.clone(),
+                compression,
             )
             .await
         }

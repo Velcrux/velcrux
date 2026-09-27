@@ -399,7 +399,8 @@ where
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))
                 .with_auth_notifier(Some(auth_notifier))
-                .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3));
+                .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3))
+                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"));
 
                 let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
                 let stats_clean = Arc::clone(&stats);
@@ -476,7 +477,9 @@ where
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))
-                .with_auth_notifier(Some(auth_notifier));
+                .with_auth_notifier(Some(auth_notifier))
+                .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3))
+                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"));
 
                 let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
                 let stats_clean = Arc::clone(&stats);

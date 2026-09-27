@@ -180,11 +180,17 @@ pub struct DataFrameFlags(pub u16);
 
 impl DataFrameFlags {
     pub const NONE: Self = Self(0);
+    /// Bit 1: payload is zstd-compressed (PROTOCOL.md §3).
+    pub const COMPRESSED: Self = Self(0x0002);
+
     pub const fn bits(self) -> u16 {
         self.0
     }
     pub const fn from_bits_truncate(bits: u16) -> Self {
         Self(bits & 0xFFFF)
+    }
+    pub const fn compressed(self) -> bool {
+        (self.0 & 0x0002) != 0
     }
 }
 
@@ -368,6 +374,45 @@ pub fn encode_data_frame(
     out
 }
 
+/// Encode a DATA frame with optional zstd compression (Option Q).
+///
+/// If `enable_compression` is true and compression yields meaningful savings,
+/// the payload is compressed with zstd, `flags` has `COMPRESSED` set,
+/// and `chunk_len` is set to the compressed payload length.
+/// The `chunk_hash` is always the hash of the original uncompressed chunk.
+///
+/// Returns `(wire_bytes, was_compressed)`.
+pub fn encode_data_frame_maybe_compressed(
+    chunk_offset: u64,
+    chunk_hash: &crate::util::Hash,
+    payload: &[u8],
+    enable_compression: bool,
+) -> (Vec<u8>, bool) {
+    if enable_compression {
+        if let Some(compressed) = crate::protocol::compression::compress_if_beneficial(
+            payload,
+            crate::protocol::compression::DEFAULT_MIN_SAVINGS,
+        ) {
+            let buf = encode_data_frame(
+                chunk_offset,
+                compressed.len() as u32,
+                DataFrameFlags::COMPRESSED,
+                chunk_hash,
+                &compressed,
+            );
+            return (buf, true);
+        }
+    }
+    let buf = encode_data_frame(
+        chunk_offset,
+        payload.len() as u32,
+        DataFrameFlags::NONE,
+        chunk_hash,
+        payload,
+    );
+    (buf, false)
+}
+
 /// Encode a frame into `out`. Returns the number of bytes written.
 ///
 /// `out` must be sized for the full frame: `header_size_for(length) + length`.
@@ -527,5 +572,41 @@ mod tests {
             decode_data_frame_header(&bad),
             Err(ProtocolError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn data_frame_compressed_roundtrip() {
+        let original_data = vec![0xEE; 8192];
+        let h = crate::util::Hash::of(&original_data);
+
+        // When compression is enabled and beneficial:
+        let (buf, was_compressed) =
+            encode_data_frame_maybe_compressed(4096, &h, &original_data, true);
+        assert!(was_compressed);
+        let (hdr, payload_after) = decode_data_frame_header(&buf).unwrap();
+        assert_eq!(hdr.chunk_offset, 4096);
+        assert_eq!(hdr.chunk_hash, h);
+        assert!(hdr.flags.compressed());
+        assert!(hdr.chunk_len < original_data.len() as u32);
+        assert_eq!(payload_after.len(), hdr.chunk_len as usize);
+
+        // Decompress and verify against chunk_hash
+        let decompressed = crate::protocol::compression::decompress_payload_bounded(
+            payload_after,
+            crate::protocol::limits::MAX_CHUNK_SIZE as usize,
+            None,
+        )
+        .expect("decompress chunk");
+        assert_eq!(decompressed, original_data);
+        assert_eq!(crate::util::Hash::of(&decompressed), hdr.chunk_hash);
+
+        // When compression is disabled:
+        let (buf_raw, was_raw) =
+            encode_data_frame_maybe_compressed(4096, &h, &original_data, false);
+        assert!(!was_raw);
+        let (hdr_raw, payload_raw) = decode_data_frame_header(&buf_raw).unwrap();
+        assert!(!hdr_raw.flags.compressed());
+        assert_eq!(hdr_raw.chunk_len, original_data.len() as u32);
+        assert_eq!(payload_raw, original_data.as_slice());
     }
 }

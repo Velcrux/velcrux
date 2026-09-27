@@ -12,6 +12,7 @@
 //!   - §10 wire error codes
 
 pub mod capabilities;
+pub mod compression;
 pub mod error;
 pub mod frame;
 pub mod limits;
@@ -19,6 +20,9 @@ pub mod message;
 pub mod varint;
 
 pub use capabilities::{Capabilities, Capability};
+pub use compression::{
+    compress_if_beneficial, compress_payload, decompress_payload_bounded, DEFAULT_ZSTD_LEVEL,
+};
 pub use error::{ErrorCode, ErrorDetail, ERROR_CODE_NAMES};
 pub use frame::{
     DataFrame, DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags,

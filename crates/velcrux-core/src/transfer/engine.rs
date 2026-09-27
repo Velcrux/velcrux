@@ -58,9 +58,10 @@ use tokio::sync::mpsc;
 use crate::chunking::{create_chunker, ChunkMode, ChunkParams, Chunker, RollingChunker};
 use crate::error::{Result, VelcruxError};
 use crate::protocol::frame::{
-    decode_data_frame_header, decode_data_preamble, encode_data_frame, encode_data_preamble,
-    DataFrameFlags, DataPreamble, DATA_FRAME_HEADER_LEN, DATA_PREAMBLE_LEN,
+    decode_data_frame_header, decode_data_preamble, encode_data_frame_maybe_compressed,
+    encode_data_preamble, DataPreamble, DATA_FRAME_HEADER_LEN, DATA_PREAMBLE_LEN,
 };
+use crate::protocol::limits::MAX_CHUNK_SIZE;
 use crate::protocol::message::{
     Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, Verify as VerifyMsg,
     VerifyResult as VerifyResultMsg,
@@ -96,6 +97,8 @@ pub struct PipelineConfig {
     pub parallel_streams: usize,
     /// Optional rate limiter for bandwidth throttling (Option F).
     pub rate_limiter: Option<RateLimiter>,
+    /// Enable wire-level zstd compression (Option Q).
+    pub compression: bool,
 }
 
 impl Default for PipelineConfig {
@@ -107,6 +110,7 @@ impl Default for PipelineConfig {
             chunk_params: ChunkParams::default(),
             parallel_streams: 1,
             rate_limiter: None,
+            compression: false,
         }
     }
 }
@@ -118,6 +122,11 @@ impl PipelineConfig {
         } else {
             self.rate_limiter = None;
         }
+        self
+    }
+
+    pub fn with_compression(mut self, enabled: bool) -> Self {
+        self.compression = enabled;
         self
     }
 }
@@ -330,15 +339,14 @@ pub async fn client_upload_stream(
                         let mut buf = vec![0u8; want];
                         file.read_exact(&mut buf).await?;
                         let hash = Hash::of(&buf);
-                        let bytes = encode_data_frame(
+                        let (bytes, _) = encode_data_frame_maybe_compressed(
                             offset,
-                            want as u32,
-                            DataFrameFlags::NONE,
                             &hash,
                             &buf,
+                            cfg.compression,
                         );
                         if let Some(ref lim) = limiter_clone {
-                            lim.acquire(want).await;
+                            lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
                         data_send.write_all(Bytes::from(bytes)).await?;
                         {
@@ -412,10 +420,10 @@ pub async fn client_upload_stream(
                 }
                 let hash = Hash::of(&buf);
                 bitmap.mark_complete(next_chunk, read as u64);
-                let bytes =
-                    encode_data_frame(offset, read as u32, DataFrameFlags::NONE, &hash, &buf);
+                let (bytes, _) =
+                    encode_data_frame_maybe_compressed(offset, &hash, &buf, cfg.compression);
                 if let Some(ref lim) = cfg.rate_limiter {
-                    lim.acquire(read).await;
+                    lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                 }
                 data_send.write_all(Bytes::from(bytes)).await?;
 
@@ -441,6 +449,7 @@ pub async fn client_upload_stream(
             let _ = data_send.finish().await;
         } else {
             // CDC streaming pipeline.
+            let compression = cfg.compression;
             let rate_limiter = cfg.rate_limiter.clone();
             let (tx, mut rx) = mpsc::channel::<DataItem>(cfg.max_inflight);
             let read_path = local_path.clone();
@@ -459,15 +468,14 @@ pub async fn client_upload_stream(
                             hash,
                             payload,
                         } => {
-                            let bytes = encode_data_frame(
+                            let (bytes, _) = encode_data_frame_maybe_compressed(
                                 offset,
-                                length,
-                                DataFrameFlags::NONE,
                                 &hash,
                                 &payload,
+                                compression,
                             );
                             if let Some(ref lim) = rate_limiter {
-                                lim.acquire(length as usize).await;
+                                lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                             }
                             data_send.write_all(Bytes::from(bytes)).await?;
                             if let Some(tx) = &progress_clone {
@@ -928,7 +936,16 @@ pub async fn server_upload_session_with_limits(
                             ));
                         }
                     };
-                    let computed = hash_bytes(&payload);
+                    let chunk_data = if hdr.flags.compressed() {
+                        crate::protocol::compression::decompress_payload_bounded(
+                            &payload,
+                            MAX_CHUNK_SIZE as usize,
+                            Some(500),
+                        )?
+                    } else {
+                        payload.to_vec()
+                    };
+                    let computed = hash_bytes(&chunk_data);
                     if computed != hdr.chunk_hash {
                         return Err(VelcruxError::Protocol(
                             crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
@@ -938,8 +955,8 @@ pub async fn server_upload_session_with_limits(
                     let mut bm = shared_bitmap.lock().await;
                     if !bm.contains(chunk_index) {
                         let mut w = writer.lock().await;
-                        w.write_at(hdr.chunk_offset, &payload).await?;
-                        bm.mark_complete(chunk_index, payload_len as u64);
+                        w.write_at(hdr.chunk_offset, &chunk_data).await?;
+                        bm.mark_complete(chunk_index, chunk_data.len() as u64);
                     }
                     drop(bm);
                     if let Some(ref lim) = limiter_clone {
@@ -999,7 +1016,16 @@ pub async fn server_upload_session_with_limits(
                     ));
                 }
             };
-            let computed = hash_bytes(&payload);
+            let chunk_data = if hdr.flags.compressed() {
+                crate::protocol::compression::decompress_payload_bounded(
+                    &payload,
+                    MAX_CHUNK_SIZE as usize,
+                    Some(500),
+                )?
+            } else {
+                payload.to_vec()
+            };
+            let computed = hash_bytes(&chunk_data);
             if computed != hdr.chunk_hash {
                 return Err(VelcruxError::Protocol(
                     crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
@@ -1007,9 +1033,9 @@ pub async fn server_upload_session_with_limits(
             }
             let chunk_index = hdr.chunk_offset / chunk_size;
             if !bitmap.contains(chunk_index) {
-                writer.write_at(hdr.chunk_offset, &payload).await?;
-                bitmap.mark_complete(chunk_index, payload_len as u64);
-                bytes_received = bytes_received.saturating_add(payload_len as u64);
+                writer.write_at(hdr.chunk_offset, &chunk_data).await?;
+                bitmap.mark_complete(chunk_index, chunk_data.len() as u64);
+                bytes_received = bytes_received.saturating_add(chunk_data.len() as u64);
             }
             if let Some(ref lim) = rate_limiter {
                 lim.acquire(payload_len).await;
@@ -1268,7 +1294,16 @@ pub async fn client_download_stream_with_staging(
                             ));
                         }
                     };
-                    let computed = hash_bytes(&payload);
+                    let chunk_data = if hdr.flags.compressed() {
+                        crate::protocol::compression::decompress_payload_bounded(
+                            &payload,
+                            MAX_CHUNK_SIZE as usize,
+                            Some(500),
+                        )?
+                    } else {
+                        payload.to_vec()
+                    };
+                    let computed = hash_bytes(&chunk_data);
                     if computed != hdr.chunk_hash {
                         return Err(VelcruxError::Protocol(
                             crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
@@ -1278,7 +1313,7 @@ pub async fn client_download_stream_with_staging(
                         use tokio::io::{AsyncSeekExt, AsyncWriteExt};
                         let mut f = staging_file.lock().await;
                         f.seek(std::io::SeekFrom::Start(hdr.chunk_offset)).await?;
-                        f.write_all(&payload).await?;
+                        f.write_all(&chunk_data).await?;
                     }
 
                     if let Some(ref lim) = limiter_clone {
@@ -1286,7 +1321,7 @@ pub async fn client_download_stream_with_staging(
                     }
 
                     if let Some(ref tx) = progress_clone {
-                        let _ = tx.try_send(payload_len as u64);
+                        let _ = tx.try_send(chunk_data.len() as u64);
                     }
                 }
                 Result::<()>::Ok(())
@@ -1331,7 +1366,16 @@ pub async fn client_download_stream_with_staging(
                     ));
                 }
             };
-            let computed = hash_bytes(&payload);
+            let chunk_data = if hdr.flags.compressed() {
+                crate::protocol::compression::decompress_payload_bounded(
+                    &payload,
+                    MAX_CHUNK_SIZE as usize,
+                    Some(500),
+                )?
+            } else {
+                payload.to_vec()
+            };
+            let computed = hash_bytes(&chunk_data);
             if computed != hdr.chunk_hash {
                 return Err(VelcruxError::Protocol(
                     crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
@@ -1343,14 +1387,14 @@ pub async fn client_download_stream_with_staging(
             staging_file
                 .seek(std::io::SeekFrom::Start(hdr.chunk_offset))
                 .await?;
-            staging_file.write_all(&payload).await?;
+            staging_file.write_all(&chunk_data).await?;
 
             if let Some(ref lim) = rate_limiter {
                 lim.acquire(payload_len).await;
             }
 
             if let Some(tx) = &progress_tx {
-                let _ = tx.try_send(payload_len as u64);
+                let _ = tx.try_send(chunk_data.len() as u64);
             }
         }
         staging_file.sync_all().await?;
@@ -1488,6 +1532,38 @@ pub async fn server_download_session_with_limits(
     parallel_streams: usize,
     rate_limiter: Option<RateLimiter>,
 ) -> Result<()> {
+    server_download_session_with_compression(
+        conn,
+        backend,
+        control_send,
+        control_recv,
+        transfer_id,
+        src,
+        file_size,
+        file_hash,
+        skip_bitmap,
+        parallel_streams,
+        rate_limiter,
+        false,
+    )
+    .await
+}
+
+/// Server-side download session with bandwidth rate limiting, optional skip bitmap, and optional zstd compression (Option Q).
+pub async fn server_download_session_with_compression(
+    conn: &dyn Connection,
+    backend: &LocalFilesystemBackend,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    src: &VPath,
+    file_size: u64,
+    file_hash: Hash,
+    skip_bitmap: Option<ChunkBitmap>,
+    parallel_streams: usize,
+    rate_limiter: Option<RateLimiter>,
+    compression: bool,
+) -> Result<()> {
     use crate::protocol::message::Message;
     use crate::session::encode_message;
 
@@ -1529,6 +1605,7 @@ pub async fn server_download_session_with_limits(
             let mut reader = backend.open_read(&src_path).await?;
             let limiter_clone = rate_limiter.clone();
             let tid = transfer_id;
+            let comp = compression;
 
             let handle = tokio::spawn(async move {
                 let preamble = DataPreamble {
@@ -1562,15 +1639,14 @@ pub async fn server_download_session_with_limits(
                             read_bytes += n;
                         }
                         let hash = hash_bytes(&buf[..read_bytes]);
-                        let bytes = encode_data_frame(
+                        let (bytes, _) = encode_data_frame_maybe_compressed(
                             offset,
-                            read_bytes as u32,
-                            DataFrameFlags::NONE,
                             &hash,
                             &buf[..read_bytes],
+                            comp,
                         );
                         if let Some(ref lim) = limiter_clone {
-                            lim.acquire(read_bytes).await;
+                            lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
                         data_send.write_all(Bytes::from(bytes)).await?;
                     }
@@ -1631,15 +1707,14 @@ pub async fn server_download_session_with_limits(
                     read_bytes += n;
                 }
                 let hash = hash_bytes(&buf[..read_bytes]);
-                let bytes = encode_data_frame(
+                let (bytes, _) = encode_data_frame_maybe_compressed(
                     offset,
-                    read_bytes as u32,
-                    DataFrameFlags::NONE,
                     &hash,
                     &buf[..read_bytes],
+                    compression,
                 );
                 if let Some(ref lim) = rate_limiter {
-                    lim.acquire(read_bytes).await;
+                    lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                 }
                 data_send.write_all(Bytes::from(bytes)).await?;
                 next_chunk = bm
@@ -1668,15 +1743,14 @@ pub async fn server_download_session_with_limits(
                     // EOF: emit trailing chunk if any.
                     if !pending.is_empty() {
                         let hash = hash_bytes(&pending);
-                        let bytes = encode_data_frame(
+                        let (bytes, _) = encode_data_frame_maybe_compressed(
                             pending_offset,
-                            pending.len() as u32,
-                            DataFrameFlags::NONE,
                             &hash,
                             &pending,
+                            compression,
                         );
                         if let Some(ref lim) = rate_limiter {
-                            lim.acquire(pending.len()).await;
+                            lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
                         data_send.write_all(Bytes::from(bytes)).await?;
                     }
@@ -1691,15 +1765,14 @@ pub async fn server_download_session_with_limits(
                     let need = (target - pending_offset) as usize;
                     let hash = hash_bytes(&pending[..need]);
                     let payload = pending.drain(..need).collect::<Vec<u8>>();
-                    let bytes = encode_data_frame(
+                    let (bytes, _) = encode_data_frame_maybe_compressed(
                         pending_offset,
-                        need as u32,
-                        DataFrameFlags::NONE,
                         &hash,
                         &payload,
+                        compression,
                     );
                     if let Some(ref lim) = rate_limiter {
-                        lim.acquire(need).await;
+                        lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                     }
                     data_send.write_all(Bytes::from(bytes)).await?;
                     pending_offset = b.end();
