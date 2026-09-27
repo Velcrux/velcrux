@@ -111,6 +111,10 @@ pub struct ServerStats {
     pub authz_denials_write: AtomicU64,
     /// Total authentication failures (invalid cert, bad token).
     pub auth_failures: AtomicU64,
+    /// Total authentication failures due to CRL revocation.
+    pub auth_failures_crl: AtomicU64,
+    /// Total authentication failures due to exceeding max auth attempts.
+    pub auth_failures_max_attempts: AtomicU64,
     /// Total resource limit hits (bandwidth cap, connection limit, quota).
     pub resource_limit_hits: AtomicU64,
     /// Total bandwidth throttling events.
@@ -175,6 +179,8 @@ impl Default for ServerStats {
             authz_denials_read: AtomicU64::new(0),
             authz_denials_write: AtomicU64::new(0),
             auth_failures: AtomicU64::new(0),
+            auth_failures_crl: AtomicU64::new(0),
+            auth_failures_max_attempts: AtomicU64::new(0),
             resource_limit_hits: AtomicU64::new(0),
             resource_limit_hits_bandwidth: Arc::new(AtomicU64::new(0)),
             resource_limit_hits_quota: AtomicU64::new(0),
@@ -245,6 +251,10 @@ pub struct ServerConn {
     conn_id: u64,
     /// Optional callback invoked when client identity is authenticated.
     auth_notifier: Option<Arc<dyn Fn(u64, &str) + Send + Sync>>,
+    /// Maximum allowed authentication attempts before connection is terminated (Option P).
+    max_auth_attempts: u32,
+    /// Counter of failed authentication attempts on this connection.
+    auth_attempts: u32,
 }
 
 async fn next_frame(
@@ -357,7 +367,15 @@ impl ServerConn {
             kill_signal: None,
             conn_id: 0,
             auth_notifier: None,
+            max_auth_attempts: 3,
+            auth_attempts: 0,
         }
+    }
+
+    /// Set the maximum authentication attempts allowed before closing the connection.
+    pub fn with_max_auth_attempts(mut self, max: u32) -> Self {
+        self.max_auth_attempts = if max == 0 { 3 } else { max };
+        self
     }
 
     /// Attach an optional limits provider for rate limiting and quota enforcement (Option O).
@@ -418,7 +436,7 @@ impl ServerConn {
 
     /// Drive the connection from `Accepted` through `Closed`. Returns the
     /// final state.
-    pub async fn run(self, conn: &dyn Connection) -> Result<ServerState> {
+    pub async fn run(mut self, conn: &dyn Connection) -> Result<ServerState> {
         let mut drain_signal = self.drain_signal.clone();
         let mut kill_signal = self.kill_signal.clone();
         self.stats.connections.fetch_add(1, Ordering::Relaxed);
@@ -510,8 +528,20 @@ impl ServerConn {
                                     )
                                 })?;
                                 match self.authenticator.authenticate(&identity) {
-                                    Ok(id) => id,
+                                    Ok(id) => {
+                                        self.auth_attempts = 0;
+                                        id
+                                    }
                                     Err(e) => {
+                                        let is_crl =
+                                            e.to_string().to_lowercase().contains("revoked")
+                                                || e.to_string().to_lowercase().contains("crl");
+                                        if is_crl {
+                                            self.stats
+                                                .auth_failures_crl
+                                                .fetch_add(1, Ordering::Relaxed);
+                                        }
+                                        self.stats.auth_failures.fetch_add(1, Ordering::Relaxed);
                                         let err = crate::protocol::message::ErrorMsg::new(
                                             crate::protocol::error::ErrorCode::AuthFailed,
                                             format!("mTLS authentication failed: {e}"),
@@ -522,6 +552,9 @@ impl ServerConn {
                                             frame.request_id,
                                         )
                                         .await;
+                                        let _ = send.finish().await;
+                                        tokio::time::sleep(std::time::Duration::from_millis(25))
+                                            .await;
                                         conn.close(
                                             crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
                                             b"auth failed",
@@ -539,6 +572,7 @@ impl ServerConn {
                                     crate::auth::AUTH_EXPORTER_LABEL,
                                     b"",
                                 ) {
+                                    self.stats.auth_failures.fetch_add(1, Ordering::Relaxed);
                                     let err = crate::protocol::message::ErrorMsg::new(
                                         crate::protocol::error::ErrorCode::AuthFailed,
                                         format!("TLS exporter secret error: {e}"),
@@ -562,43 +596,92 @@ impl ServerConn {
                                     &auth.token,
                                     &exporter_secret,
                                 ) {
-                                    Ok(id) => id,
+                                    Ok(id) => {
+                                        self.auth_attempts = 0;
+                                        id
+                                    }
                                     Err(e) => {
-                                        let err = crate::protocol::message::ErrorMsg::new(
-                                            crate::protocol::error::ErrorCode::AuthFailed,
-                                            format!("pubkey auth failed: {e}"),
-                                        );
-                                        let _ = write_frame(
-                                            send.as_mut(),
-                                            &Message::Error(err),
-                                            frame.request_id,
-                                        )
-                                        .await;
-                                        conn.close(
-                                            crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
-                                            b"auth failed",
-                                        );
-                                        state = ServerState::Closed;
-                                        break;
+                                        self.auth_attempts += 1;
+                                        self.stats.auth_failures.fetch_add(1, Ordering::Relaxed);
+                                        if self.auth_attempts >= self.max_auth_attempts {
+                                            self.stats
+                                                .auth_failures_max_attempts
+                                                .fetch_add(1, Ordering::Relaxed);
+                                            let err = crate::protocol::message::ErrorMsg::new(
+                                                crate::protocol::error::ErrorCode::AuthFailed,
+                                                "maximum authentication attempts exceeded",
+                                            );
+                                            let _ = write_frame(
+                                                send.as_mut(),
+                                                &Message::Error(err),
+                                                frame.request_id,
+                                            )
+                                            .await;
+                                            let _ = send.finish().await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                25,
+                                            ))
+                                            .await;
+                                            conn.close(
+                                                crate::protocol::error::ErrorCode::AuthFailed
+                                                    .to_wire(),
+                                                b"max auth attempts exceeded",
+                                            );
+                                            state = ServerState::Closed;
+                                            break;
+                                        } else {
+                                            let err = crate::protocol::message::ErrorMsg::new(
+                                                crate::protocol::error::ErrorCode::AuthFailed,
+                                                format!("pubkey auth failed: {e}"),
+                                            );
+                                            let _ = write_frame(
+                                                send.as_mut(),
+                                                &Message::Error(err),
+                                                frame.request_id,
+                                            )
+                                            .await;
+                                            continue;
+                                        }
                                     }
                                 }
                             } else {
-                                let err = crate::protocol::message::ErrorMsg::new(
-                                    crate::protocol::error::ErrorCode::AuthFailed,
-                                    "unsupported auth mechanism",
-                                );
-                                let _ = write_frame(
-                                    send.as_mut(),
-                                    &Message::Error(err),
-                                    frame.request_id,
-                                )
-                                .await;
-                                conn.close(
-                                    crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
-                                    b"unsupported auth mechanism",
-                                );
-                                state = ServerState::Closed;
-                                break;
+                                self.auth_attempts += 1;
+                                self.stats.auth_failures.fetch_add(1, Ordering::Relaxed);
+                                if self.auth_attempts >= self.max_auth_attempts {
+                                    self.stats
+                                        .auth_failures_max_attempts
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    let err = crate::protocol::message::ErrorMsg::new(
+                                        crate::protocol::error::ErrorCode::AuthFailed,
+                                        "maximum authentication attempts exceeded",
+                                    );
+                                    let _ = write_frame(
+                                        send.as_mut(),
+                                        &Message::Error(err),
+                                        frame.request_id,
+                                    )
+                                    .await;
+                                    let _ = send.finish().await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                                    conn.close(
+                                        crate::protocol::error::ErrorCode::AuthFailed.to_wire(),
+                                        b"max auth attempts exceeded",
+                                    );
+                                    state = ServerState::Closed;
+                                    break;
+                                } else {
+                                    let err = crate::protocol::message::ErrorMsg::new(
+                                        crate::protocol::error::ErrorCode::AuthFailed,
+                                        "unsupported auth mechanism",
+                                    );
+                                    let _ = write_frame(
+                                        send.as_mut(),
+                                        &Message::Error(err),
+                                        frame.request_id,
+                                    )
+                                    .await;
+                                    continue;
+                                }
                             };
 
                             // Permissions reported in AUTH_OK are the union of

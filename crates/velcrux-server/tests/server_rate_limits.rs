@@ -85,8 +85,15 @@ async fn test_limits_manager_quota_enforcement_and_metrics() {
         },
     ];
 
-    let manager = LimitsManager::new(Some("10Gbps"), Some(10), &limits_cfg, Arc::clone(&stats))
-        .expect("create limits manager");
+    let manager = LimitsManager::new(
+        Some("10Gbps"),
+        Some(10),
+        None,
+        None,
+        &limits_cfg,
+        Arc::clone(&stats),
+    )
+    .expect("create limits manager");
 
     // 1. Unlimited tenant can request large size without quota error
     let unlim_res = manager.check_quota(Some("tenant-unlimited"), 10 * 1024 * 1024);
@@ -116,7 +123,7 @@ async fn test_limits_manager_quota_enforcement_and_metrics() {
 #[tokio::test]
 async fn test_limits_manager_connection_ceiling_and_metrics() {
     let stats = Arc::new(ServerStats::default());
-    let manager = LimitsManager::new(None, Some(2), &[], Arc::clone(&stats))
+    let manager = LimitsManager::new(None, Some(2), None, None, &[], Arc::clone(&stats))
         .expect("create limits manager with max 2 connections");
 
     // 0 active conns: allowed
@@ -149,8 +156,15 @@ async fn test_limits_manager_sighup_reload_preserves_usage() {
         quota_bytes: Some("100KiB".into()),
     }];
 
-    let manager = LimitsManager::new(Some("1Gbps"), Some(10), &initial_limits, Arc::clone(&stats))
-        .expect("create initial manager");
+    let manager = LimitsManager::new(
+        Some("1Gbps"),
+        Some(10),
+        None,
+        None,
+        &initial_limits,
+        Arc::clone(&stats),
+    )
+    .expect("create initial manager");
 
     // Record 80 KiB usage for tenant-dyn
     manager.record_transfer(Some("tenant-dyn"), 80 * 1024);
@@ -163,7 +177,7 @@ async fn test_limits_manager_sighup_reload_preserves_usage() {
     }];
 
     manager
-        .reload(Some("2Gbps"), &reloaded_limits)
+        .reload(Some("2Gbps"), Some(10), None, None, &reloaded_limits)
         .expect("reload limits manager");
 
     // Accumulated 80 KiB usage should be preserved:

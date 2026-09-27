@@ -344,24 +344,43 @@ fn prefix_match_len(grant_prefix: &str, path: &str) -> Option<usize> {
     None
 }
 
-/// The mTLS authenticator for the MVP.
+pub mod crl;
+pub use crl::CrlStore;
+
+/// The mTLS authenticator.
 ///
+/// Validates identity extracted from mTLS handshake and checks revocation status
+/// against the configured Certificate Revocation List (CRL) store.
 #[derive(Debug, Clone, Default)]
 pub struct MtlsAuthenticator {
-    // In the MVP, the TLS handshake already validates the chain.
-    // This struct exists for the trait shape and future extensibility.
+    crl_store: Option<std::sync::Arc<CrlStore>>,
 }
 
 impl MtlsAuthenticator {
     pub fn new() -> Self {
-        Self {}
+        Self { crl_store: None }
+    }
+
+    pub fn with_crl_store(crl_store: std::sync::Arc<CrlStore>) -> Self {
+        Self {
+            crl_store: Some(crl_store),
+        }
+    }
+
+    pub fn crl_store(&self) -> Option<&std::sync::Arc<CrlStore>> {
+        self.crl_store.as_ref()
     }
 }
 
 impl Authenticator for MtlsAuthenticator {
     fn authenticate(&self, identity: &Identity) -> Result<Identity> {
-        // The TLS handshake (via rustls) already validated the chain.
-        // We trust the identity extracted from the verified certificate.
+        if let Some(ref crl) = self.crl_store {
+            if !identity.serial_hex.is_empty() && crl.is_revoked(&identity.serial_hex) {
+                return Err(VelcruxError::Protocol(ProtocolError::InvalidIdentity(
+                    "certificate revoked in CRL",
+                )));
+            }
+        }
         Ok(identity.clone())
     }
 }
@@ -411,6 +430,20 @@ impl HybridAuthenticator {
     pub fn new(authorized_keys: Option<AuthorizedKeys>) -> Self {
         Self {
             mtls: MtlsAuthenticator::new(),
+            authorized_keys,
+        }
+    }
+
+    pub fn with_crl(
+        authorized_keys: Option<AuthorizedKeys>,
+        crl_store: Option<std::sync::Arc<CrlStore>>,
+    ) -> Self {
+        let mtls = match crl_store {
+            Some(store) => MtlsAuthenticator::with_crl_store(store),
+            None => MtlsAuthenticator::new(),
+        };
+        Self {
+            mtls,
             authorized_keys,
         }
     }

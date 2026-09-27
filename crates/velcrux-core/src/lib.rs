@@ -35,8 +35,8 @@ pub mod util;
 
 pub use auth::{
     compute_signed_payload, create_pubkey_auth_token, verify_pubkey_auth_token, Authenticator,
-    AuthorizedKeys, Authorizer, FileAuthorizer, Grant, HybridAuthenticator, MtlsAuthenticator, Op,
-    PermSet, PubkeyAuthenticator,
+    AuthorizedKeys, Authorizer, CrlStore, FileAuthorizer, Grant, HybridAuthenticator,
+    MtlsAuthenticator, Op, PermSet, PubkeyAuthenticator,
 };
 pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,

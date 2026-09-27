@@ -672,7 +672,7 @@ mod tests {
     fn new_creates_db_at_absolute_path() {
         let p = tmp_path("s.db");
         let _ = std::fs::remove_file(&p);
-        let s = SqliteStateStore::new(&p).unwrap();
+        let _s = SqliteStateStore::new(&p).unwrap();
         assert!(p.exists(), "DB file should exist after open");
         let s2 = SqliteStateStore::new(&p).unwrap();
         assert!(s2.path().is_absolute());

@@ -22,6 +22,8 @@ pub struct Identity {
     pub issuer_fingerprint: String,
     /// SHA-256 of the leaf certificate, hex-encoded.
     pub cert_fingerprint: String,
+    /// Hex-encoded certificate serial number (lowercase), for CRL matching.
+    pub serial_hex: String,
 }
 
 impl fmt::Debug for Identity {
@@ -33,6 +35,7 @@ impl fmt::Debug for Identity {
             .field("name", &self.name)
             .field("issuer_fingerprint", &"<redacted>")
             .field("cert_fingerprint", &"<redacted>")
+            .field("serial_hex", &self.serial_hex)
             .finish()
     }
 }
@@ -55,6 +58,13 @@ impl Identity {
             name: name.into(),
             issuer_fingerprint: issuer_fingerprint.into(),
             cert_fingerprint: cert_fingerprint.into(),
+            serial_hex: String::new(),
         }
+    }
+
+    /// Set the hex-encoded serial number.
+    pub fn with_serial(mut self, serial_hex: impl Into<String>) -> Self {
+        self.serial_hex = serial_hex.into().to_ascii_lowercase();
+        self
     }
 }

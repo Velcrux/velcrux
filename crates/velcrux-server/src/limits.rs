@@ -32,8 +32,51 @@ pub struct LimitsManager {
     usage: Arc<RwLock<HashMap<String, u64>>>,
     /// Configured maximum concurrent connections (0 = unlimited).
     max_connections: AtomicU32,
+    /// Maximum concurrent connections per IP (0 = unlimited).
+    max_connections_per_ip: AtomicU32,
+    /// Maximum concurrent unauthenticated connections (0 = unlimited).
+    max_connections_unauth: AtomicU32,
+    /// Active connections per IP address.
+    ip_connections: Arc<RwLock<HashMap<std::net::IpAddr, u32>>>,
+    /// Number of active unauthenticated connections.
+    unauth_connections: Arc<AtomicU32>,
     /// Shared server statistics.
     stats: Arc<ServerStats>,
+}
+
+/// RAII guard tracking active connections per IP and unauthenticated connections.
+#[derive(Debug)]
+pub struct ConnectionGuard {
+    ip: std::net::IpAddr,
+    ip_connections: Arc<RwLock<HashMap<std::net::IpAddr, u32>>>,
+    unauth_connections: Arc<AtomicU32>,
+    is_unauth: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ConnectionGuard {
+    /// Mark this connection as authenticated, decrementing the unauthenticated connection count.
+    pub fn mark_authenticated(&self) {
+        if self.is_unauth.swap(false, Ordering::SeqCst) {
+            self.unauth_connections.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if self.is_unauth.swap(false, Ordering::SeqCst) {
+            self.unauth_connections.fetch_sub(1, Ordering::SeqCst);
+        }
+        if let Ok(mut map) = self.ip_connections.write() {
+            if let Some(count) = map.get_mut(&self.ip) {
+                if *count <= 1 {
+                    map.remove(&self.ip);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+    }
 }
 
 impl LimitsManager {
@@ -41,6 +84,8 @@ impl LimitsManager {
     pub fn new(
         network_bandwidth: Option<&str>,
         max_connections: Option<u32>,
+        max_connections_per_ip: Option<u32>,
+        max_connections_unauth: Option<u32>,
         limits: &[LimitsCfg],
         stats: Arc<ServerStats>,
     ) -> anyhow::Result<Self> {
@@ -90,15 +135,22 @@ impl LimitsManager {
             quotas: Arc::new(RwLock::new(quota_map)),
             usage: Arc::new(RwLock::new(HashMap::new())),
             max_connections: AtomicU32::new(max_connections.unwrap_or(0)),
+            max_connections_per_ip: AtomicU32::new(max_connections_per_ip.unwrap_or(0)),
+            max_connections_unauth: AtomicU32::new(max_connections_unauth.unwrap_or(0)),
+            ip_connections: Arc::new(RwLock::new(HashMap::new())),
+            unauth_connections: Arc::new(AtomicU32::new(0)),
             stats,
         })
     }
 
-    /// Hot-reloads rate limits and quotas from reloaded configuration (e.g. on SIGHUP).
-    /// Preserves existing accumulated tenant usage.
+    /// Hot-reloads rate limits, quotas, and connection limits from reloaded configuration (e.g. on SIGHUP).
+    /// Preserves existing accumulated tenant usage and active connection counts.
     pub fn reload(
         &self,
         network_bandwidth: Option<&str>,
+        max_connections: Option<u32>,
+        max_connections_per_ip: Option<u32>,
+        max_connections_unauth: Option<u32>,
         limits: &[LimitsCfg],
     ) -> anyhow::Result<()> {
         let global_rate = match network_bandwidth {
@@ -151,7 +203,17 @@ impl LimitsManager {
             *q = new_quota_map;
         }
 
-        info!("reloaded bandwidth limits and tenant quotas on SIGHUP");
+        if let Some(m) = max_connections {
+            self.max_connections.store(m, Ordering::Relaxed);
+        }
+        if let Some(m) = max_connections_per_ip {
+            self.max_connections_per_ip.store(m, Ordering::Relaxed);
+        }
+        if let Some(m) = max_connections_unauth {
+            self.max_connections_unauth.store(m, Ordering::Relaxed);
+        }
+
+        info!("reloaded bandwidth limits, tenant quotas, and connection ceilings on SIGHUP");
         Ok(())
     }
 
@@ -170,6 +232,87 @@ impl LimitsManager {
             ));
         }
         Ok(())
+    }
+
+    /// Check connection limits across global ceiling, per-IP ceiling, and unauthenticated ceiling.
+    /// Returns an RAII `ConnectionGuard` on success.
+    pub fn check_connection_limits(
+        &self,
+        remote_ip: std::net::IpAddr,
+        current_active: u64,
+    ) -> Result<ConnectionGuard, String> {
+        let max = self.max_connections.load(Ordering::Relaxed);
+        if max > 0 && current_active >= max as u64 {
+            self.stats
+                .resource_limit_hits_connections
+                .fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .resource_limit_hits
+                .fetch_add(1, Ordering::Relaxed);
+            return Err(format!(
+                "connection ceiling reached ({current_active} >= {max})"
+            ));
+        }
+
+        let max_per_ip = self.max_connections_per_ip.load(Ordering::Relaxed);
+        if max_per_ip > 0 {
+            if let Ok(map) = self.ip_connections.read() {
+                let count = map.get(&remote_ip).copied().unwrap_or(0);
+                if count >= max_per_ip {
+                    self.stats
+                        .resource_limit_hits_connections
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .resource_limit_hits
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Err(format!(
+                        "per-IP connection limit reached for {remote_ip} ({count} >= {max_per_ip})"
+                    ));
+                }
+            }
+        }
+
+        let max_unauth = self.max_connections_unauth.load(Ordering::Relaxed);
+        if max_unauth > 0 {
+            let unauth = self.unauth_connections.load(Ordering::Relaxed);
+            if unauth >= max_unauth {
+                self.stats
+                    .resource_limit_hits_connections
+                    .fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .resource_limit_hits
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(format!(
+                    "unauthenticated connection limit reached ({unauth} >= {max_unauth})"
+                ));
+            }
+        }
+
+        if let Ok(mut map) = self.ip_connections.write() {
+            *map.entry(remote_ip).or_insert(0) += 1;
+        }
+        self.unauth_connections.fetch_add(1, Ordering::SeqCst);
+
+        Ok(ConnectionGuard {
+            ip: remote_ip,
+            ip_connections: Arc::clone(&self.ip_connections),
+            unauth_connections: Arc::clone(&self.unauth_connections),
+            is_unauth: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        })
+    }
+
+    /// Return active connections for a given IP.
+    pub fn active_ip_connections(&self, ip: std::net::IpAddr) -> u32 {
+        self.ip_connections
+            .read()
+            .ok()
+            .and_then(|m| m.get(&ip).copied())
+            .unwrap_or(0)
+    }
+
+    /// Return active unauthenticated connections.
+    pub fn active_unauth_connections(&self) -> u32 {
+        self.unauth_connections.load(Ordering::Relaxed)
     }
 
     /// Return the current usage for a tenant in bytes.

@@ -75,6 +75,8 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let authz_read = stats.authz_denials_read.load(Ordering::Relaxed);
     let authz_write = stats.authz_denials_write.load(Ordering::Relaxed);
     let auth_failures = stats.auth_failures.load(Ordering::Relaxed);
+    let auth_failures_crl = stats.auth_failures_crl.load(Ordering::Relaxed);
+    let auth_failures_max_attempts = stats.auth_failures_max_attempts.load(Ordering::Relaxed);
     let resource_limit_hits = stats.resource_limit_hits.load(Ordering::Relaxed);
     let res_bandwidth = stats.resource_limit_hits_bandwidth.load(Ordering::Relaxed);
     let res_quota = stats.resource_limit_hits_quota.load(Ordering::Relaxed);
@@ -202,7 +204,9 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_auth_failures_total Total authentication failures\n\
          # TYPE velcrux_auth_failures_total counter\n\
          velcrux_auth_failures_total{{reason=\"invalid_cert\"}} {auth_failures}\n\
-         velcrux_auth_failures_total{{reason=\"bad_token\"}} 0\n\n\
+         velcrux_auth_failures_total{{reason=\"bad_token\"}} 0\n\
+         velcrux_auth_failures_total{{reason=\"crl_revoked\"}} {auth_failures_crl}\n\
+         velcrux_auth_failures_total{{reason=\"max_attempts_exceeded\"}} {auth_failures_max_attempts}\n\n\
          # HELP velcrux_authz_denials_total Total authorization denials\n\
          # TYPE velcrux_authz_denials_total counter\n\
          velcrux_authz_denials_total{{op=\"all\"}} {authz_denials}\n\

@@ -521,18 +521,12 @@ pub fn identity_from_chain(chain: &[Certificate]) -> Result<Identity> {
         // Self-signed (or single-cert chain) — issuer == leaf.
         leaf_fp.clone()
     };
-    let name = extract_identity_name(leaf.as_ref())?;
-    Ok(Identity::new(name, issuer_fp, leaf_fp))
+    let (name, serial_hex) = extract_identity_and_serial(leaf.as_ref())?;
+    Ok(Identity::new(name, issuer_fp, leaf_fp).with_serial(serial_hex))
 }
 
-/// Extract the identity name from a DER-encoded leaf certificate.
-///
-/// SAN URI `velcrux://identity/<name>` wins; failing that, the first
-/// subject Common Name attribute. The result is passed through
-/// [`validate_identity_name`] before returning, so a malformed, oversized,
-/// or control-laden name fails closed rather than reaching authorization,
-/// the state DB, or the logs.
-fn extract_identity_name(leaf_der: &[u8]) -> Result<String> {
+/// Extract identity name and serial hex from a leaf certificate.
+fn extract_identity_and_serial(leaf_der: &[u8]) -> Result<(String, String)> {
     use x509_parser::certificate::X509Certificate;
     use x509_parser::extensions::{GeneralName, ParsedExtension};
     use x509_parser::prelude::FromDer;
@@ -540,6 +534,12 @@ fn extract_identity_name(leaf_der: &[u8]) -> Result<String> {
     let (_, cert) = X509Certificate::from_der(leaf_der).map_err(|_| {
         crate::error::ProtocolError::InvalidIdentity("leaf certificate parse failed")
     })?;
+
+    let serial_hex = cert
+        .raw_serial()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
 
     // 1. Prefer the SAN URI velcrux://identity/<name>. First match wins.
     let mut name: Option<String> = None;
@@ -570,7 +570,7 @@ fn extract_identity_name(leaf_der: &[u8]) -> Result<String> {
         "no SAN identity URI and no Common Name",
     ))?;
     validate_identity_name(&name)?;
-    Ok(name)
+    Ok((name, serial_hex))
 }
 
 /// Validate an extracted identity name: non-empty, within

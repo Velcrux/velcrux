@@ -156,11 +156,7 @@ quota_bytes   = "50TiB"
 
     // Authorizer checking
     let authorizer = cfg.build_authorizer().expect("build authorizer");
-    let id = Identity {
-        name: "svc-replica".into(),
-        issuer_fingerprint: "0123456789abcdef".into(),
-        cert_fingerprint: "fedcba9876543210".into(),
-    };
+    let id = Identity::new("svc-replica", "0123456789abcdef", "fedcba9876543210");
 
     // Allowed operations on customerA
     assert!(authorizer

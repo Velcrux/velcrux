@@ -15,14 +15,15 @@ use anyhow::{Context, Result};
 use rustls::{Certificate, PrivateKey};
 use tracing::{info, warn};
 
-use velcrux_core::auth::{Authenticator, Authorizer, MtlsAuthenticator, Op};
+use velcrux_core::auth::{Authenticator, Authorizer, CrlStore, MtlsAuthenticator, Op};
 use velcrux_core::error::{Result as CoreResult, VelcruxError};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
+use velcrux_core::protocol::error::ErrorCode;
 use velcrux_core::session::{LimitsProvider, ServerConn, ServerStats};
 use velcrux_core::storage::VPath;
 use velcrux_core::transport::identity::Identity;
 use velcrux_core::transport::quic::{QuicConnection, ServerBuilder, TransportConfigTunables};
-use velcrux_core::transport::Transport;
+use velcrux_core::transport::{Connection, Transport};
 
 use crate::config::{parse_size_bytes, ServerConfig};
 use crate::limits::LimitsManager;
@@ -247,7 +248,18 @@ where
         None => None,
     };
 
-    let authenticator: Arc<dyn Authenticator> = Arc::new(MtlsAuthenticator::new());
+    let crl_store = Arc::new(CrlStore::new());
+    if let Some(ref crl_path) = cfg.security.crl {
+        match std::fs::read(crl_path) {
+            Ok(crl_bytes) => match crl_store.add_crl_pem(&crl_bytes) {
+                Ok(n) => info!(count = n, path = crl_path, "loaded initial CRL entries"),
+                Err(e) => warn!(error = %e, path = crl_path, "failed to parse initial CRL"),
+            },
+            Err(e) => warn!(error = %e, path = crl_path, "failed to read CRL file"),
+        }
+    }
+    let authenticator: Arc<dyn Authenticator> =
+        Arc::new(MtlsAuthenticator::with_crl_store(Arc::clone(&crl_store)));
     let initial_authorizer: Arc<dyn Authorizer> = cfg
         .build_authorizer()
         .with_context(|| "failed to build authorizer from configuration")?;
@@ -257,6 +269,8 @@ where
     let limits_manager = Arc::new(LimitsManager::new(
         cfg.network.max_bandwidth.as_deref(),
         cfg.network.max_connections,
+        cfg.network.max_connections_per_ip,
+        cfg.network.max_connections_unauth,
         &cfg.limits,
         Arc::clone(&stats),
     )?);
@@ -295,7 +309,7 @@ where
                 break;
             }
             _ = sighup_stream.recv() => {
-                info!("SIGHUP received, reloading configuration, limits, and authorization grants (`OPERATIONS.md` §3)");
+                info!("SIGHUP received, reloading configuration, limits, CRL, and authorization grants (`OPERATIONS.md` §3)");
                 match ServerConfig::load(config_path) {
                     Ok(new_cfg) => {
                         match new_cfg.build_authorizer() {
@@ -307,10 +321,25 @@ where
                                 warn!(error = %e, "failed to build authorizer during SIGHUP reload");
                             }
                         }
-                        if let Err(e) = limits_manager
-                            .reload(new_cfg.network.max_bandwidth.as_deref(), &new_cfg.limits)
-                        {
+                        if let Err(e) = limits_manager.reload(
+                            new_cfg.network.max_bandwidth.as_deref(),
+                            new_cfg.network.max_connections,
+                            new_cfg.network.max_connections_per_ip,
+                            new_cfg.network.max_connections_unauth,
+                            &new_cfg.limits,
+                        ) {
                             warn!(error = %e, "failed to reload limits during SIGHUP reload");
+                        }
+                        if let Some(ref crl_path) = new_cfg.security.crl {
+                            match std::fs::read(crl_path) {
+                                Ok(crl_bytes) => match crl_store.reload_crl_pem(&crl_bytes) {
+                                    Ok(n) => info!(count = n, path = crl_path, "reloaded CRL on SIGHUP"),
+                                    Err(e) => warn!(error = %e, path = crl_path, "failed to reload CRL on SIGHUP"),
+                                },
+                                Err(e) => warn!(error = %e, path = crl_path, "failed to read CRL file on SIGHUP"),
+                            }
+                        } else {
+                            crl_store.clear();
                         }
                     }
                     Err(e) => {
@@ -327,20 +356,27 @@ where
                     }
                 };
 
-                if let Err(reason) = limits_manager.check_connection_limit(stats.connections_active.load(std::sync::atomic::Ordering::Relaxed)) {
-                    warn!(reason = %reason, "rejecting incoming connection due to connection ceiling");
-                    continue;
-                }
+                let remote_addr = conn.quinn().remote_address();
+                let current_active = stats.connections_active.load(std::sync::atomic::Ordering::Relaxed);
+                let conn_guard = match limits_manager.check_connection_limits(remote_addr.ip(), current_active) {
+                    Ok(g) => Arc::new(g),
+                    Err(reason) => {
+                        warn!(reason = %reason, %remote_addr, "rejecting incoming connection due to connection limit");
+                        conn.close(ErrorCode::ResourceLimit.to_wire(), reason.as_bytes());
+                        continue;
+                    }
+                };
 
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let remote_addr = conn.quinn().remote_address();
                 let kill_rx = registry.register(id, remote_addr).await;
                 stats
                     .connections_active
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 let reg_auth: Arc<SessionRegistry> = Arc::clone(&registry);
+                let guard_auth = Arc::clone(&conn_guard);
                 let auth_notifier = Arc::new(move |conn_id: u64, ident: &str| {
+                    guard_auth.mark_authenticated();
                     let reg = Arc::clone(&reg_auth);
                     let ident = ident.to_string();
                     tokio::spawn(async move {
@@ -362,11 +398,14 @@ where
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))
-                .with_auth_notifier(Some(auth_notifier));
+                .with_auth_notifier(Some(auth_notifier))
+                .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3));
 
                 let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
                 let stats_clean = Arc::clone(&stats);
+                let task_guard = Arc::clone(&conn_guard);
                 tokio::spawn(async move {
+                    let _guard = task_guard;
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
                         Ok(state) => info!(conn_id = id, ?state, "connection finished"),
