@@ -322,7 +322,9 @@ async fn test_scanner_and_manifest_codec_with_links() {
     {
         assert!(entries.contains_key("hard_to_file1.txt"));
         let hard_entry = &entries["hard_to_file1.txt"];
+        let file1_entry = &entries["file1.txt"];
         assert_eq!(hard_entry.hardlink_target.as_deref(), Some("file1.txt"));
+        assert!(file1_entry.hardlink_target.is_none());
     }
 
     // Reconciliation diff planning
@@ -370,11 +372,21 @@ async fn test_quic_symlink_creation_and_escape_defense() {
     server_caps.set(Capability::CdcChunking);
     server_caps.set(Capability::Blake3);
     server_caps.set(Capability::Symlinks);
+
+    let tunables = TransportConfigTunables {
+        receive_window: 4 * 1024 * 1024,
+        stream_receive_window: 4 * 1024 * 1024,
+        max_concurrent_streams: 8,
+        idle_timeout: std::time::Duration::from_secs(10),
+        keepalive: std::time::Duration::from_secs(2),
+        initial_rtt: std::time::Duration::from_millis(50),
+    };
+
     let server_transport = ServerBuilder::new()
         .with_server_cert(server_cert.certs, server_cert.key)
         .with_client_ca_roots_pem(ca.cert_pem.as_bytes())
         .expect("client CA")
-        .with_tunables(TransportConfigTunables::default())
+        .with_tunables(tunables.clone())
         .build("127.0.0.1:0".parse().unwrap())
         .expect("server bind");
     let server_addr = server_transport.local_addr().unwrap();
@@ -386,29 +398,20 @@ async fn test_quic_symlink_creation_and_escape_defense() {
         permissions: PermSet::UPLOAD | PermSet::DOWNLOAD | PermSet::LIST,
     }]));
 
-    let _server_task = {
+    let server_task = {
         let backend = Arc::clone(&backend);
         let stats = Arc::clone(&stats);
         let authz = Arc::clone(&authz);
         tokio::spawn(async move {
-            for _ in 0..4 {
-                if let Ok(conn) = server_transport.accept().await {
-                    let b = Arc::clone(&backend);
-                    let s = Arc::clone(&stats);
-                    let az = Arc::clone(&authz);
-                    tokio::spawn(async move {
-                        let actor = ServerConn::with_state(
-                            server_caps,
-                            "velcruxd",
-                            s,
-                            b,
-                            None,
-                            None,
-                            Some(az),
-                        );
-                        let _ = actor.run(&conn).await;
-                    });
-                }
+            while let Ok(conn) = server_transport.accept().await {
+                let b = Arc::clone(&backend);
+                let s = Arc::clone(&stats);
+                let az = Arc::clone(&authz);
+                tokio::spawn(async move {
+                    let actor =
+                        ServerConn::with_state(server_caps, "velcruxd", s, b, None, None, Some(az));
+                    let _ = actor.run(&conn).await;
+                });
             }
         })
     };
@@ -418,6 +421,7 @@ async fn test_quic_symlink_creation_and_escape_defense() {
             .with_server_roots_pem(ca.cert_pem.as_bytes())
             .expect("client roots")
             .with_client_identity(client_identity)
+            .with_tunables(tunables)
             .build()
             .expect("client build"),
     );
@@ -455,6 +459,8 @@ async fn test_quic_symlink_creation_and_escape_defense() {
         assert!(meta.file_type().is_symlink());
         let target = tokio::fs::read_link(&sym_disk).await.unwrap();
         assert_eq!(target.to_string_lossy(), "../sibling.txt");
+
+        let _ = session.bye().await;
     }
 
     // CASE 2: Traversal escape symlink attempt (refused with InvalidPath)
@@ -487,6 +493,8 @@ async fn test_quic_symlink_creation_and_escape_defense() {
         // Verify symlink was NOT created
         let escape_disk = files_dir.join("data/escape_link.txt");
         assert!(!escape_disk.exists());
+
+        let _ = session.bye().await;
     }
 
     // CASE 3: Absolute symlink attempt (refused with InvalidPath)
@@ -518,8 +526,11 @@ async fn test_quic_symlink_creation_and_escape_defense() {
 
         let abs_disk = files_dir.join("data/abs_link.txt");
         assert!(!abs_disk.exists());
+
+        let _ = session.bye().await;
     }
 
+    server_task.abort();
     let _ = tokio::fs::remove_dir_all(&test_root).await;
 }
 
@@ -568,11 +579,21 @@ async fn test_quic_hardlink_creation_and_validation() {
     server_caps.set(Capability::CdcChunking);
     server_caps.set(Capability::Blake3);
     server_caps.set(Capability::Symlinks);
+
+    let tunables = TransportConfigTunables {
+        receive_window: 4 * 1024 * 1024,
+        stream_receive_window: 4 * 1024 * 1024,
+        max_concurrent_streams: 8,
+        idle_timeout: std::time::Duration::from_secs(10),
+        keepalive: std::time::Duration::from_secs(2),
+        initial_rtt: std::time::Duration::from_millis(50),
+    };
+
     let server_transport = ServerBuilder::new()
         .with_server_cert(server_cert.certs, server_cert.key)
         .with_client_ca_roots_pem(ca.cert_pem.as_bytes())
         .expect("client CA")
-        .with_tunables(TransportConfigTunables::default())
+        .with_tunables(tunables.clone())
         .build("127.0.0.1:0".parse().unwrap())
         .expect("server bind");
     let server_addr = server_transport.local_addr().unwrap();
@@ -584,29 +605,20 @@ async fn test_quic_hardlink_creation_and_validation() {
         permissions: PermSet::UPLOAD | PermSet::DOWNLOAD | PermSet::LIST,
     }]));
 
-    let _server_task = {
+    let server_task = {
         let backend = Arc::clone(&backend);
         let stats = Arc::clone(&stats);
         let authz = Arc::clone(&authz);
         tokio::spawn(async move {
-            for _ in 0..2 {
-                if let Ok(conn) = server_transport.accept().await {
-                    let b = Arc::clone(&backend);
-                    let s = Arc::clone(&stats);
-                    let az = Arc::clone(&authz);
-                    tokio::spawn(async move {
-                        let actor = ServerConn::with_state(
-                            server_caps,
-                            "velcruxd",
-                            s,
-                            b,
-                            None,
-                            None,
-                            Some(az),
-                        );
-                        let _ = actor.run(&conn).await;
-                    });
-                }
+            while let Ok(conn) = server_transport.accept().await {
+                let b = Arc::clone(&backend);
+                let s = Arc::clone(&stats);
+                let az = Arc::clone(&authz);
+                tokio::spawn(async move {
+                    let actor =
+                        ServerConn::with_state(server_caps, "velcruxd", s, b, None, None, Some(az));
+                    let _ = actor.run(&conn).await;
+                });
             }
         })
     };
@@ -616,6 +628,7 @@ async fn test_quic_hardlink_creation_and_validation() {
             .with_server_roots_pem(ca.cert_pem.as_bytes())
             .expect("client roots")
             .with_client_identity(client_identity)
+            .with_tunables(tunables)
             .build()
             .expect("client build"),
     );
@@ -661,6 +674,8 @@ async fn test_quic_hardlink_creation_and_validation() {
             assert_eq!(m_orig.ino(), m_hard.ino());
             assert_eq!(m_orig.nlink(), 2);
         }
+
+        let _ = session.bye().await;
     }
 
     // CASE 2: Hardlink to non-existent file rejected with FileNotFound
@@ -692,7 +707,10 @@ async fn test_quic_hardlink_creation_and_validation() {
 
         let bad_disk = files_dir.join("data/bad_hard.txt");
         assert!(!bad_disk.exists());
+
+        let _ = session.bye().await;
     }
 
+    server_task.abort();
     let _ = tokio::fs::remove_dir_all(&test_root).await;
 }

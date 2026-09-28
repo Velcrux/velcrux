@@ -419,11 +419,20 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
     server_caps.set(Capability::FixedChunking);
     server_caps.set(Capability::CdcChunking);
     server_caps.set(Capability::Blake3);
+    let tunables = TransportConfigTunables {
+        receive_window: 4 * 1024 * 1024,
+        stream_receive_window: 4 * 1024 * 1024,
+        max_concurrent_streams: 8,
+        idle_timeout: std::time::Duration::from_secs(10),
+        keepalive: std::time::Duration::from_secs(2),
+        initial_rtt: std::time::Duration::from_millis(50),
+    };
+
     let server_transport = ServerBuilder::new()
         .with_server_cert(server_cert.certs, server_cert.key)
         .with_client_ca_roots_pem(ca.cert_pem.as_bytes())
         .expect("client CA")
-        .with_tunables(TransportConfigTunables::default())
+        .with_tunables(tunables.clone())
         .build("127.0.0.1:0".parse().unwrap())
         .expect("server bind");
     let server_addr = server_transport.local_addr().unwrap();
@@ -445,29 +454,20 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
         },
     ]));
 
-    let _server_task = {
+    let server_task = {
         let backend = Arc::clone(&backend);
         let stats = Arc::clone(&stats);
         let authz = Arc::clone(&authz);
         tokio::spawn(async move {
-            for _ in 0..4 {
-                if let Ok(conn) = server_transport.accept().await {
-                    let b = Arc::clone(&backend);
-                    let s = Arc::clone(&stats);
-                    let az = Arc::clone(&authz);
-                    tokio::spawn(async move {
-                        let actor = ServerConn::with_state(
-                            server_caps,
-                            "velcruxd",
-                            s,
-                            b,
-                            None,
-                            None,
-                            Some(az),
-                        );
-                        let _ = actor.run(&conn).await;
-                    });
-                }
+            while let Ok(conn) = server_transport.accept().await {
+                let b = Arc::clone(&backend);
+                let s = Arc::clone(&stats);
+                let az = Arc::clone(&authz);
+                tokio::spawn(async move {
+                    let actor =
+                        ServerConn::with_state(server_caps, "velcruxd", s, b, None, None, Some(az));
+                    let _ = actor.run(&conn).await;
+                });
             }
         })
     };
@@ -477,6 +477,7 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
             .with_server_roots_pem(ca.cert_pem.as_bytes())
             .expect("client roots")
             .with_client_identity(standard_client_identity)
+            .with_tunables(tunables.clone())
             .build()
             .expect("client build"),
     );
@@ -486,6 +487,7 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
             .with_server_roots_pem(ca.cert_pem.as_bytes())
             .expect("client roots")
             .with_client_identity(admin_client_identity)
+            .with_tunables(tunables)
             .build()
             .expect("client build"),
     );
@@ -524,6 +526,8 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
         // Verify on server storage
         let read = backend.get_xattrs(&target_vpath).await.unwrap();
         assert_eq!(read, xattrs);
+
+        let _ = session.bye().await;
     }
 
     // CASE 2: Standard client attempts to inject privileged "security.capability" -> REJECTED
@@ -560,6 +564,8 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
         let err = ErrorMsg::decode(frame.payload).unwrap();
         assert_eq!(err.code, ErrorCode::InvalidPath);
         assert!(err.detail.0.contains("privileged xattr namespace"));
+
+        let _ = session.bye().await;
     }
 
     // CASE 3: Standard client attempts to set xattrs on non-existent file -> FILE_NOT_FOUND
@@ -592,6 +598,8 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
         assert_eq!(frame.type_byte, velcrux_core::protocol::message::ERROR);
         let err = ErrorMsg::decode(frame.payload).unwrap();
         assert_eq!(err.code, ErrorCode::FileNotFound);
+
+        let _ = session.bye().await;
     }
 
     // CASE 4: Admin client sets privileged "security.capability" -> SUCCESS
@@ -631,5 +639,9 @@ async fn test_quic_loopback_xattrs_and_security_boundary() {
         // Verify on server storage that privileged xattr was committed
         let read = backend.get_xattrs(&target_vpath).await.unwrap();
         assert_eq!(read, priv_xattrs);
+
+        let _ = session.bye().await;
     }
+
+    server_task.abort();
 }

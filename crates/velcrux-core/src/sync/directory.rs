@@ -250,10 +250,20 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
     #[cfg(unix)]
     let mut dev_ino_map = std::collections::HashMap::<(u64, u64), String>::new();
 
+    // First collect all non-ignored file/symlink paths recursively, sorted deterministically by relative path.
+    // This guarantees:
+    // 1. Filesystem scan order is independent of ext4 hash directory order or APFS creation order.
+    // 2. Hardlink primary vs secondary assignment is 100% deterministic (the lexicographically lowest path is primary).
+    let mut discovered = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
+        let mut dir_entries = Vec::new();
         for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
+            dir_entries.push(entry?);
+        }
+        dir_entries.sort_by_key(|e| e.file_name());
+
+        for entry in dir_entries {
             let path = entry.path();
             let file_type = entry.file_type()?;
 
@@ -268,37 +278,9 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                 continue;
             }
 
-            if file_type.is_symlink() {
-                // Symlinks are never followed for resolution/traversal (SECURITY.md §4, ARCHITECTURE.md §8)
-                let rel = path
-                    .strip_prefix(root)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                let rel_str = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                let target_path = std::fs::read_link(&path)?;
-                let target_str = target_path.to_string_lossy().to_string();
-                let sidecar = crate::storage::xattr_sidecar_path(&path);
-                let xattrs = if sidecar.exists() {
-                    match std::fs::read(&sidecar) {
-                        Ok(bytes) => {
-                            crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
-                        }
-                        Err(_) => Vec::new(),
-                    }
-                } else {
-                    Vec::new()
-                };
-                files.insert(
-                    rel_str,
-                    ScannedEntry::symlink(target_str).with_xattrs(xattrs),
-                );
-            } else if file_type.is_dir() {
+            if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file() {
+            } else {
                 let rel = path
                     .strip_prefix(root)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -307,46 +289,73 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                     .map(|c| c.as_os_str().to_string_lossy().to_string())
                     .collect::<Vec<_>>()
                     .join("/");
+                discovered.push((rel_str, path, file_type));
+            }
+        }
+    }
 
-                let metadata = entry.metadata()?;
-                let hash = compute_file_hash(&path)?;
-                let sidecar = crate::storage::xattr_sidecar_path(&path);
-                let xattrs = if sidecar.exists() {
-                    match std::fs::read(&sidecar) {
-                        Ok(bytes) => {
-                            crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
-                        }
-                        Err(_) => Vec::new(),
+    // Sort all discovered files and symlinks deterministically by canonical relative path
+    discovered.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (rel_str, path, file_type) in discovered {
+        if file_type.is_symlink() {
+            // Symlinks are never followed for resolution/traversal (SECURITY.md §4, ARCHITECTURE.md §8)
+            let target_path = std::fs::read_link(&path)?;
+            let target_str = target_path.to_string_lossy().to_string();
+            let sidecar = crate::storage::xattr_sidecar_path(&path);
+            let xattrs = if sidecar.exists() {
+                match std::fs::read(&sidecar) {
+                    Ok(bytes) => {
+                        crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
                     }
-                } else {
-                    Vec::new()
-                };
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            files.insert(
+                rel_str,
+                ScannedEntry::symlink(target_str).with_xattrs(xattrs),
+            );
+        } else if file_type.is_file() {
+            let metadata = std::fs::metadata(&path)?;
+            let hash = compute_file_hash(&path)?;
+            let sidecar = crate::storage::xattr_sidecar_path(&path);
+            let xattrs = if sidecar.exists() {
+                match std::fs::read(&sidecar) {
+                    Ok(bytes) => {
+                        crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
+                    }
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
 
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    let dev = metadata.dev();
-                    let ino = metadata.ino();
-                    let nlink = metadata.nlink();
-                    if nlink > 1 {
-                        if let Some(first_path) = dev_ino_map.get(&(dev, ino)) {
-                            files.insert(
-                                rel_str,
-                                ScannedEntry::hardlink(metadata.len(), hash, first_path.clone())
-                                    .with_xattrs(xattrs),
-                            );
-                            continue;
-                        } else {
-                            dev_ino_map.insert((dev, ino), rel_str.clone());
-                        }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let dev = metadata.dev();
+                let ino = metadata.ino();
+                let nlink = metadata.nlink();
+                if nlink > 1 {
+                    if let Some(first_path) = dev_ino_map.get(&(dev, ino)) {
+                        files.insert(
+                            rel_str,
+                            ScannedEntry::hardlink(metadata.len(), hash, first_path.clone())
+                                .with_xattrs(xattrs),
+                        );
+                        continue;
+                    } else {
+                        dev_ino_map.insert((dev, ino), rel_str.clone());
                     }
                 }
-
-                files.insert(
-                    rel_str,
-                    ScannedEntry::file(metadata.len(), hash).with_xattrs(xattrs),
-                );
             }
+
+            files.insert(
+                rel_str,
+                ScannedEntry::file(metadata.len(), hash).with_xattrs(xattrs),
+            );
         }
     }
 
