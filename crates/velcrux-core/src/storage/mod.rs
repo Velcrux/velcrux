@@ -348,6 +348,22 @@ pub trait StorageBackend: Send + Sync {
     /// Create a hard link at `dest` pointing to `src`.
     async fn create_hardlink(&self, dest: &VPath, src: &VPath) -> Result<(), VelcruxError>;
 
+    /// Retrieve extended attributes for a file or directory.
+    async fn get_xattrs(&self, p: &VPath) -> Result<Vec<(String, Vec<u8>)>, VelcruxError> {
+        let _ = p;
+        Ok(Vec::new())
+    }
+
+    /// Set extended attributes for a file or directory.
+    async fn set_xattrs(
+        &self,
+        p: &VPath,
+        xattrs: &[(String, Vec<u8>)],
+    ) -> Result<(), VelcruxError> {
+        let _ = (p, xattrs);
+        Ok(())
+    }
+
     /// Storage root absolute path.
     fn root(&self) -> &Path;
 }
@@ -618,11 +634,44 @@ impl StorageBackend for LocalFilesystemBackend {
             return Err(VelcruxError::Protocol(ProtocolError::InvalidPath));
         }
         let path = self.resolve(p);
+        let sidecar = xattr_sidecar_path(&path);
+        let _ = tokio::fs::remove_file(&sidecar).await;
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    async fn get_xattrs(&self, p: &VPath) -> Result<Vec<(String, Vec<u8>)>, VelcruxError> {
+        let path = self.resolve(p);
+        let sidecar = xattr_sidecar_path(&path);
+        match tokio::fs::read(&sidecar).await {
+            Ok(bytes) => decode_xattrs_canonical(&bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn set_xattrs(
+        &self,
+        p: &VPath,
+        xattrs: &[(String, Vec<u8>)],
+    ) -> Result<(), VelcruxError> {
+        let path = self.resolve(p);
+        let sidecar = xattr_sidecar_path(&path);
+        if xattrs.is_empty() {
+            let _ = tokio::fs::remove_file(&sidecar).await;
+            return Ok(());
+        }
+        if let Some(parent) = sidecar.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let raw = encode_xattrs_canonical(xattrs);
+        let tmp = PathBuf::from(format!("{}.tmp-xattr", sidecar.to_string_lossy()));
+        tokio::fs::write(&tmp, &raw).await?;
+        tokio::fs::rename(&tmp, &sidecar).await?;
+        Ok(())
     }
 
     async fn create_symlink(&self, dest: &VPath, target: &str) -> Result<(), VelcruxError> {
@@ -699,6 +748,75 @@ impl AsyncRandomRead for TokioRandomRead {
         Ok(n)
     }
 }
+
+/// Helper to construct the xattr sidecar path for a file.
+pub fn xattr_sidecar_path(file_path: &Path) -> PathBuf {
+    let mut s = file_path.as_os_str().to_os_string();
+    s.push(".velcrux-xattr");
+    PathBuf::from(s)
+}
+
+/// Helper to serialize xattrs to a canonical binary buffer.
+pub fn encode_xattrs_canonical(xattrs: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut vbuf = [0u8; 10];
+    let n = crate::protocol::varint::encode_varint(xattrs.len() as u64, &mut vbuf);
+    out.extend_from_slice(&vbuf[..n]);
+    for (name, val) in xattrs {
+        let n = crate::protocol::varint::encode_varint(name.len() as u64, &mut vbuf);
+        out.extend_from_slice(&vbuf[..n]);
+        out.extend_from_slice(name.as_bytes());
+
+        let n = crate::protocol::varint::encode_varint(val.len() as u64, &mut vbuf);
+        out.extend_from_slice(&vbuf[..n]);
+        out.extend_from_slice(val);
+    }
+    out
+}
+
+/// Helper to deserialize xattrs from a canonical binary buffer.
+pub fn decode_xattrs_canonical(buf: &[u8]) -> Result<Vec<(String, Vec<u8>)>, VelcruxError> {
+    if buf.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut offset = 0;
+    let (count, c) =
+        crate::protocol::varint::decode_varint(buf).map_err(|e| VelcruxError::Protocol(e))?;
+    offset += c;
+    let mut xattrs = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let (nlen, c) = crate::protocol::varint::decode_varint(&buf[offset..])
+            .map_err(|e| VelcruxError::Protocol(e))?;
+        offset += c;
+        let nlen = nlen as usize;
+        if buf.len() < offset + nlen {
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "truncated xattr sidecar name",
+            )));
+        }
+        let name = std::str::from_utf8(&buf[offset..offset + nlen])
+            .map_err(|_| {
+                VelcruxError::Protocol(ProtocolError::Malformed("xattr sidecar name not UTF-8"))
+            })?
+            .to_string();
+        offset += nlen;
+
+        let (vlen, c) = crate::protocol::varint::decode_varint(&buf[offset..])
+            .map_err(|e| VelcruxError::Protocol(e))?;
+        offset += c;
+        let vlen = vlen as usize;
+        if buf.len() < offset + vlen {
+            return Err(VelcruxError::Protocol(ProtocolError::Malformed(
+                "truncated xattr sidecar val",
+            )));
+        }
+        let val = buf[offset..offset + vlen].to_vec();
+        offset += vlen;
+        xattrs.push((name, val));
+    }
+    Ok(xattrs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

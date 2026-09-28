@@ -687,6 +687,8 @@ pub enum TransferOp {
     Symlink = 6,
     /// Hard link creation.
     Hardlink = 7,
+    /// Extended attributes set.
+    SetXattr = 8,
 }
 
 impl TransferOp {
@@ -700,6 +702,7 @@ impl TransferOp {
             5 => Ok(Self::Delete),
             6 => Ok(Self::Symlink),
             7 => Ok(Self::Hardlink),
+            8 => Ok(Self::SetXattr),
             _ => Err(ProtocolError::Malformed("TRANSFER_CREATE: unknown op")),
         }
     }
@@ -744,7 +747,7 @@ impl TransferCreate {
         let sp = self.src_path.as_bytes();
         let dp = self.dst_path.as_bytes();
         let id = self.idempotency_key.as_bytes();
-        if sp.len() > u16::MAX as usize
+        if sp.len() > crate::protocol::limits::MAX_MESSAGE_SIZE as usize
             || dp.len() > u16::MAX as usize
             || id.len() > u16::MAX as usize
         {

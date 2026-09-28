@@ -6,7 +6,10 @@
 
 use crate::error::ProtocolError;
 use crate::manifest::entry::{ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType};
-use crate::protocol::limits::{MAX_CHUNK_SIZE, MAX_PATH_TOTAL};
+use crate::protocol::limits::{
+    MAX_CHUNK_SIZE, MAX_PATH_TOTAL, MAX_TOTAL_XATTR_BYTES, MAX_XATTR_COUNT, MAX_XATTR_NAME_LEN,
+    MAX_XATTR_VALUE_LEN,
+};
 use crate::protocol::varint::{decode_varint, encode_varint};
 use crate::storage::VPath;
 use crate::util::Hash;
@@ -60,6 +63,22 @@ pub fn encode_file_entry(entry: &FileEntry, out: &mut Vec<u8>) {
         let n = encode_varint(target_bytes.len() as u64, &mut vbuf);
         out.extend_from_slice(&vbuf[..n]);
         out.extend_from_slice(target_bytes);
+    }
+
+    // 11. Optional extended attributes (PROTOCOL.md §4, when FILE_FLAG_HAS_XATTRS is set)
+    if entry.flags.has_xattrs() {
+        let n = encode_varint(entry.xattrs.len() as u64, &mut vbuf);
+        out.extend_from_slice(&vbuf[..n]);
+        for (name, val) in &entry.xattrs {
+            let name_bytes = name.as_bytes();
+            let n = encode_varint(name_bytes.len() as u64, &mut vbuf);
+            out.extend_from_slice(&vbuf[..n]);
+            out.extend_from_slice(name_bytes);
+
+            let n = encode_varint(val.len() as u64, &mut vbuf);
+            out.extend_from_slice(&vbuf[..n]);
+            out.extend_from_slice(val);
+        }
     }
 }
 
@@ -229,6 +248,83 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
         None
     };
 
+    let mut xattrs = Vec::new();
+    if flags.has_xattrs() {
+        if offset >= buf.len() {
+            return Err(ProtocolError::Malformed(
+                "FILE_ENTRY: truncated xattr count",
+            ));
+        }
+        let (xattr_count, c) = decode_varint(&buf[offset..])?;
+        offset += c;
+        if xattr_count as usize > MAX_XATTR_COUNT {
+            return Err(ProtocolError::InvalidManifest(format!(
+                "xattr count {xattr_count} exceeds MAX_XATTR_COUNT {MAX_XATTR_COUNT}"
+            )));
+        }
+        let mut total_xattr_bytes: usize = 0;
+        for _ in 0..xattr_count {
+            if offset >= buf.len() {
+                return Err(ProtocolError::Malformed(
+                    "FILE_ENTRY: truncated xattr name length",
+                ));
+            }
+            let (name_len, c) = decode_varint(&buf[offset..])?;
+            offset += c;
+            if name_len as usize > MAX_XATTR_NAME_LEN {
+                return Err(ProtocolError::InvalidManifest(format!(
+                    "xattr name length {name_len} exceeds MAX_XATTR_NAME_LEN {MAX_XATTR_NAME_LEN}"
+                )));
+            }
+            let name_len_us = name_len as usize;
+            if buf.len() < offset + name_len_us {
+                return Err(ProtocolError::Malformed("FILE_ENTRY: truncated xattr name"));
+            }
+            let name_str = std::str::from_utf8(&buf[offset..offset + name_len_us])
+                .map_err(|_| ProtocolError::Malformed("FILE_ENTRY: xattr name not valid UTF-8"))?;
+            if name_str.is_empty() || name_str.chars().any(|c| c.is_control()) {
+                return Err(ProtocolError::InvalidManifest(format!(
+                    "invalid xattr name: {name_str:?}"
+                )));
+            }
+            offset += name_len_us;
+
+            if offset >= buf.len() {
+                return Err(ProtocolError::Malformed(
+                    "FILE_ENTRY: truncated xattr value length",
+                ));
+            }
+            let (val_len, c) = decode_varint(&buf[offset..])?;
+            offset += c;
+            if val_len as usize > MAX_XATTR_VALUE_LEN {
+                return Err(ProtocolError::InvalidManifest(format!(
+                    "xattr value length {val_len} exceeds MAX_XATTR_VALUE_LEN {MAX_XATTR_VALUE_LEN}"
+                )));
+            }
+            let val_len_us = val_len as usize;
+            if buf.len() < offset + val_len_us {
+                return Err(ProtocolError::Malformed(
+                    "FILE_ENTRY: truncated xattr value",
+                ));
+            }
+            let val_bytes = buf[offset..offset + val_len_us].to_vec();
+            offset += val_len_us;
+
+            total_xattr_bytes = total_xattr_bytes
+                .checked_add(name_len_us + val_len_us)
+                .ok_or_else(|| {
+                    ProtocolError::InvalidManifest("xattr byte count overflow".into())
+                })?;
+            if total_xattr_bytes > MAX_TOTAL_XATTR_BYTES {
+                return Err(ProtocolError::InvalidManifest(format!(
+                    "total xattr bytes {total_xattr_bytes} exceeds MAX_TOTAL_XATTR_BYTES {MAX_TOTAL_XATTR_BYTES}"
+                )));
+            }
+
+            xattrs.push((name_str.to_string(), val_bytes));
+        }
+    }
+
     let entry = FileEntry {
         flags,
         path,
@@ -240,9 +336,31 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
         chunks,
         symlink_target,
         hardlink_target,
+        xattrs,
     };
 
     Ok((entry, offset))
+}
+
+/// Returns true if the attribute is in a privileged namespace (`security.*`, `trusted.*`, `system.posix_acl*`, `system.*`).
+pub fn is_privileged_xattr(name: &str) -> bool {
+    name.starts_with("security.") || name.starts_with("trusted.") || name.starts_with("system.")
+}
+
+/// Validate that extended attributes do not violate security namespace boundaries (`SECURITY.md` §4).
+/// Untrusted/standard clients cannot set privileged attributes without admin grant.
+pub fn validate_xattrs_security(
+    xattrs: &[(String, Vec<u8>)],
+    is_admin: bool,
+) -> Result<(), ProtocolError> {
+    for (name, _) in xattrs {
+        if !is_admin && is_privileged_xattr(name) {
+            return Err(ProtocolError::InvalidManifest(format!(
+                "permission denied: privileged xattr namespace '{name}' requires admin grant"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Decode a single [`ChunkDesc`] from `buf`. Returns `(ChunkDesc, bytes_consumed)`.
@@ -304,6 +422,7 @@ mod tests {
             chunks: vec![chunk1, chunk2, chunk3],
             symlink_target: None,
             hardlink_target: None,
+            xattrs: Vec::new(),
         };
 
         let mut out = Vec::new();
@@ -312,6 +431,35 @@ mod tests {
         let (decoded, consumed) = decode_file_entry(&out).unwrap();
         assert_eq!(consumed, out.len());
         assert_eq!(entry, decoded);
+    }
+
+    #[test]
+    fn file_entry_xattrs_roundtrip() {
+        let chunk = ChunkDesc::new(100, Hash::from_bytes(&[1u8; 32]).unwrap());
+        let xattrs = vec![
+            ("user.checksum".to_string(), b"sha256:abcd".to_vec()),
+            ("user.author".to_string(), b"Alice".to_vec()),
+            ("com.apple.provenance".to_string(), vec![0x01, 0x02, 0x03]),
+        ];
+        let entry = FileEntry::regular(
+            VPath::validate("data.bin").unwrap(),
+            100,
+            0o644,
+            1700000000,
+            0,
+            Hash::from_bytes(&[2u8; 32]).unwrap(),
+            vec![chunk],
+        )
+        .with_xattrs(xattrs.clone());
+
+        assert!(entry.flags.has_xattrs());
+        let mut out = Vec::new();
+        encode_file_entry(&entry, &mut out);
+
+        let (decoded, consumed) = decode_file_entry(&out).unwrap();
+        assert_eq!(consumed, out.len());
+        assert_eq!(entry, decoded);
+        assert_eq!(decoded.xattrs, xattrs);
     }
 
     #[test]

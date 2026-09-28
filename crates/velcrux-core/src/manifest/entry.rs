@@ -187,6 +187,8 @@ pub struct FileEntry {
     pub symlink_target: Option<String>,
     /// Hardlink target string (if entry is a hardlink).
     pub hardlink_target: Option<String>,
+    /// Extended attributes (name, value pairs).
+    pub xattrs: Vec<(String, Vec<u8>)>,
 }
 
 impl FileEntry {
@@ -217,6 +219,7 @@ impl FileEntry {
             chunks,
             symlink_target: None,
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -233,6 +236,7 @@ impl FileEntry {
             chunks: Vec::new(),
             symlink_target: None,
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -255,6 +259,7 @@ impl FileEntry {
             chunks: Vec::new(),
             symlink_target: None,
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -279,6 +284,7 @@ impl FileEntry {
             chunks: Vec::new(),
             symlink_target: Some(target),
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -295,7 +301,20 @@ impl FileEntry {
             chunks: Vec::new(),
             symlink_target: None,
             hardlink_target: Some(target),
+            xattrs: Vec::new(),
         }
+    }
+
+    /// Attach extended attributes to this entry, updating `flags.has_xattrs()`.
+    pub fn with_xattrs(mut self, xattrs: Vec<(String, Vec<u8>)>) -> Self {
+        if !xattrs.is_empty() {
+            self.flags = self.flags.with_xattrs(true);
+            self.xattrs = xattrs;
+        } else {
+            self.flags = self.flags.with_xattrs(false);
+            self.xattrs = Vec::new();
+        }
+        self
     }
 
     /// Total sum of all chunk lengths in this entry.

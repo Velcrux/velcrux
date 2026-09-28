@@ -187,7 +187,7 @@ struct ScannedFile {
     size: u64,
 }
 
-/// Scanned directory entry with size, whole-file BLAKE3 hash, and link metadata.
+/// Scanned directory entry with size, whole-file BLAKE3 hash, link metadata, and xattrs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedEntry {
     pub size: u64,
@@ -195,6 +195,7 @@ pub struct ScannedEntry {
     pub is_symlink: bool,
     pub symlink_target: Option<String>,
     pub hardlink_target: Option<String>,
+    pub xattrs: Vec<(String, Vec<u8>)>,
 }
 
 impl ScannedEntry {
@@ -205,6 +206,7 @@ impl ScannedEntry {
             is_symlink: false,
             symlink_target: None,
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -217,6 +219,7 @@ impl ScannedEntry {
             is_symlink: true,
             symlink_target: Some(target),
             hardlink_target: None,
+            xattrs: Vec::new(),
         }
     }
 
@@ -227,7 +230,13 @@ impl ScannedEntry {
             is_symlink: false,
             symlink_target: None,
             hardlink_target: Some(target),
+            xattrs: Vec::new(),
         }
+    }
+
+    pub fn with_xattrs(mut self, xattrs: Vec<(String, Vec<u8>)>) -> Self {
+        self.xattrs = xattrs;
+        self
     }
 }
 
@@ -250,10 +259,11 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
 
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
-            // Skip staging, chunk store, and partial files
+            // Skip staging, chunk store, partial files, and xattr sidecars
             if name_str.starts_with(".velcrux-staging")
                 || name_str.starts_with(".velcrux-chunks")
                 || name_str.ends_with(".velcrux-partial")
+                || name_str.ends_with(".velcrux-xattr")
             {
                 continue;
             }
@@ -271,7 +281,21 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
 
                 let target_path = std::fs::read_link(&path)?;
                 let target_str = target_path.to_string_lossy().to_string();
-                files.insert(rel_str, ScannedEntry::symlink(target_str));
+                let sidecar = crate::storage::xattr_sidecar_path(&path);
+                let xattrs = if sidecar.exists() {
+                    match std::fs::read(&sidecar) {
+                        Ok(bytes) => {
+                            crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
+                        }
+                        Err(_) => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
+                files.insert(
+                    rel_str,
+                    ScannedEntry::symlink(target_str).with_xattrs(xattrs),
+                );
             } else if file_type.is_dir() {
                 stack.push(path);
             } else if file_type.is_file() {
@@ -286,6 +310,17 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
 
                 let metadata = entry.metadata()?;
                 let hash = compute_file_hash(&path)?;
+                let sidecar = crate::storage::xattr_sidecar_path(&path);
+                let xattrs = if sidecar.exists() {
+                    match std::fs::read(&sidecar) {
+                        Ok(bytes) => {
+                            crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default()
+                        }
+                        Err(_) => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
 
                 #[cfg(unix)]
                 {
@@ -297,7 +332,8 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                         if let Some(first_path) = dev_ino_map.get(&(dev, ino)) {
                             files.insert(
                                 rel_str,
-                                ScannedEntry::hardlink(metadata.len(), hash, first_path.clone()),
+                                ScannedEntry::hardlink(metadata.len(), hash, first_path.clone())
+                                    .with_xattrs(xattrs),
                             );
                             continue;
                         } else {
@@ -306,7 +342,10 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                     }
                 }
 
-                files.insert(rel_str, ScannedEntry::file(metadata.len(), hash));
+                files.insert(
+                    rel_str,
+                    ScannedEntry::file(metadata.len(), hash).with_xattrs(xattrs),
+                );
             }
         }
     }
@@ -410,7 +449,8 @@ pub fn plan_directory_diff(
                 let is_same = sf.is_symlink == df.is_symlink
                     && sf.symlink_target == df.symlink_target
                     && sf.size == df.size
-                    && sf.hash == df.hash;
+                    && sf.hash == df.hash
+                    && sf.xattrs == df.xattrs;
                 if is_same {
                     files_unchanged += 1;
                     data_present += sf.size;
@@ -533,6 +573,7 @@ pub async fn send_directory_manifest(
             }
             FileEntry::regular(vpath, entry.size, 0o644, 0, 0, entry.hash, chunks)
         };
+        let fe = fe.with_xattrs(entry.xattrs.clone());
         let mut buf = Vec::new();
         encode_file_entry(&fe, &mut buf);
         manifest_hasher.update(&buf);
@@ -617,6 +658,7 @@ pub async fn recv_directory_manifest(
                 } else {
                     ScannedEntry::file(fe.size, fe.file_hash)
                 };
+                let scanned = scanned.with_xattrs(fe.xattrs);
                 entries.insert(fe.path.as_str().to_string(), scanned);
             }
         } else if frame.type_byte == crate::protocol::message::MANIFEST_END {

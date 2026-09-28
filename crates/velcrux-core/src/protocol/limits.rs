@@ -85,6 +85,18 @@ pub const MAX_AUTH_TOKEN: usize = 4096;
 /// Bounded in the `AUTH_OK` decoder before allocation.
 pub const MAX_IDENTITY_LEN: usize = 255;
 
+/// Maximum length of an extended attribute name (`SECURITY.md` §4, Linux/POSIX standard).
+pub const MAX_XATTR_NAME_LEN: usize = 255;
+
+/// Maximum size of an individual extended attribute value (`SECURITY.md` §4, Linux standard 64 KiB).
+pub const MAX_XATTR_VALUE_LEN: usize = 64 * 1024;
+
+/// Maximum number of extended attributes allowed on a single file entry (`SECURITY.md` §4).
+pub const MAX_XATTR_COUNT: usize = 256;
+
+/// Maximum total size of all extended attribute names and values for a single file entry (`SECURITY.md` §4).
+pub const MAX_TOTAL_XATTR_BYTES: usize = 256 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;

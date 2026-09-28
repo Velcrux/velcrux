@@ -1042,6 +1042,83 @@ async fn handle_transfer_create(
         return Ok(());
     }
 
+    if create.op == TransferOp::SetXattr {
+        let dst = match authorizer.check(identity, Op::Upload, &create.dst_path) {
+            Ok(p) => p,
+            Err(_) => {
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        // Parse xattrs from src_path (which carries the JSON serialized list of (name, value))
+        let xattrs: Vec<(String, Vec<u8>)> = match serde_json::from_str(&create.src_path) {
+            Ok(x) => x,
+            Err(e) => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::InvalidPath,
+                    format!("malformed xattrs payload: {e}"),
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        // Security boundary sanitization (SECURITY.md §4)
+        // Untrusted clients without admin grant cannot set privileged namespaces (security.*, trusted.*, system.*)
+        let is_admin = authorizer
+            .granted_permissions(identity)
+            .has(crate::auth::PermSet::ADMIN);
+        if let Err(e) = crate::manifest::codec::validate_xattrs_security(&xattrs, is_admin) {
+            stats
+                .authz_denials
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::InvalidPath,
+                e.to_string(),
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+
+        // Target file must exist
+        match backend.stat(&dst).await {
+            Ok(Some(_)) => {}
+            _ => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "target file not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        }
+
+        let transfer_id = TransferId::generate();
+        if let Err(e) = backend.set_xattrs(&dst, &xattrs).await {
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::InternalError,
+                format!("failed to set xattrs: {e}"),
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+
+        let committed = Committed {
+            transfer_id,
+            files: 1,
+        };
+        write_frame(send, &Message::Committed(committed), 0).await?;
+        return Ok(());
+    }
+
     if create.op == TransferOp::SyncUpload || create.op == TransferOp::SyncDownload {
         let target_path = if create.op == TransferOp::SyncUpload {
             &create.dst_path
