@@ -20,6 +20,8 @@ pub const FILE_TYPE_SYMLINK: u64 = 0x02;
 pub const FILE_FLAG_SPARSE: u64 = 0x04;
 /// Has extended attributes flag (bit 3).
 pub const FILE_FLAG_HAS_XATTRS: u64 = 0x08;
+/// Hard link flag (bit 4).
+pub const FILE_FLAG_HARDLINK: u64 = 0x10;
 
 /// File type discriminator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,6 +89,21 @@ impl FileFlags {
             self.0 |= FILE_FLAG_HAS_XATTRS;
         } else {
             self.0 &= !FILE_FLAG_HAS_XATTRS;
+        }
+        self
+    }
+
+    /// True if marked as a hard link.
+    pub fn is_hardlink(&self) -> bool {
+        (self.0 & FILE_FLAG_HARDLINK) != 0
+    }
+
+    /// Set or clear hardlink flag.
+    pub fn with_hardlink(mut self, hardlink: bool) -> Self {
+        if hardlink {
+            self.0 |= FILE_FLAG_HARDLINK;
+        } else {
+            self.0 &= !FILE_FLAG_HARDLINK;
         }
         self
     }
@@ -166,6 +183,10 @@ pub struct FileEntry {
     pub file_hash: Hash,
     /// Ordered list of chunk descriptors. Offsets are the running sum of lengths.
     pub chunks: Vec<ChunkDesc>,
+    /// Symlink target string (if entry is a symlink).
+    pub symlink_target: Option<String>,
+    /// Hardlink target string (if entry is a hardlink).
+    pub hardlink_target: Option<String>,
 }
 
 impl FileEntry {
@@ -194,6 +215,8 @@ impl FileEntry {
             mtime_nsec,
             file_hash,
             chunks,
+            symlink_target: None,
+            hardlink_target: None,
         }
     }
 
@@ -208,6 +231,8 @@ impl FileEntry {
             mtime_nsec,
             file_hash: Hash::ZERO,
             chunks: Vec::new(),
+            symlink_target: None,
+            hardlink_target: None,
         }
     }
 
@@ -228,6 +253,48 @@ impl FileEntry {
             mtime_nsec,
             file_hash: target_hash,
             chunks: Vec::new(),
+            symlink_target: None,
+            hardlink_target: None,
+        }
+    }
+
+    /// Create a symlink entry with target string.
+    pub fn symlink_with_target(
+        path: VPath,
+        mode: u32,
+        mtime_sec: i64,
+        mtime_nsec: u32,
+        target: String,
+    ) -> Self {
+        let digest = blake3::hash(target.as_bytes());
+        let target_hash = Hash::from_bytes(digest.as_bytes()).expect("hash");
+        Self {
+            flags: FileFlags::symlink(),
+            path,
+            size: target.len() as u64,
+            mode,
+            mtime_sec,
+            mtime_nsec,
+            file_hash: target_hash,
+            chunks: Vec::new(),
+            symlink_target: Some(target),
+            hardlink_target: None,
+        }
+    }
+
+    /// Create a hard link entry referencing an already transferred file.
+    pub fn hardlink(path: VPath, target: String, size: u64, file_hash: Hash) -> Self {
+        Self {
+            flags: FileFlags::regular().with_hardlink(true),
+            path,
+            size,
+            mode: 0o644,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            file_hash,
+            chunks: Vec::new(),
+            symlink_target: None,
+            hardlink_target: Some(target),
         }
     }
 

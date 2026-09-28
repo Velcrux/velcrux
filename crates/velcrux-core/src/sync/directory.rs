@@ -187,11 +187,48 @@ struct ScannedFile {
     size: u64,
 }
 
-/// Scanned directory entry with size and whole-file BLAKE3 hash.
+/// Scanned directory entry with size, whole-file BLAKE3 hash, and link metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedEntry {
     pub size: u64,
     pub hash: Hash,
+    pub is_symlink: bool,
+    pub symlink_target: Option<String>,
+    pub hardlink_target: Option<String>,
+}
+
+impl ScannedEntry {
+    pub fn file(size: u64, hash: Hash) -> Self {
+        Self {
+            size,
+            hash,
+            is_symlink: false,
+            symlink_target: None,
+            hardlink_target: None,
+        }
+    }
+
+    pub fn symlink(target: String) -> Self {
+        let digest = blake3::hash(target.as_bytes());
+        let hash = Hash::from_bytes(digest.as_bytes()).expect("hash");
+        Self {
+            size: target.len() as u64,
+            hash,
+            is_symlink: true,
+            symlink_target: Some(target),
+            hardlink_target: None,
+        }
+    }
+
+    pub fn hardlink(size: u64, hash: Hash, target: String) -> Self {
+        Self {
+            size,
+            hash,
+            is_symlink: false,
+            symlink_target: None,
+            hardlink_target: Some(target),
+        }
+    }
 }
 
 /// Recursively scan all files in a directory root and compute their size and whole-file hash.
@@ -200,6 +237,9 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
     if !root.exists() {
         return Ok(files);
     }
+
+    #[cfg(unix)]
+    let mut dev_ino_map = std::collections::HashMap::<(u64, u64), String>::new();
 
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -218,7 +258,21 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                 continue;
             }
 
-            if file_type.is_dir() {
+            if file_type.is_symlink() {
+                // Symlinks are never followed for resolution/traversal (SECURITY.md §4, ARCHITECTURE.md §8)
+                let rel = path
+                    .strip_prefix(root)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                let rel_str = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join("/");
+
+                let target_path = std::fs::read_link(&path)?;
+                let target_str = target_path.to_string_lossy().to_string();
+                files.insert(rel_str, ScannedEntry::symlink(target_str));
+            } else if file_type.is_dir() {
                 stack.push(path);
             } else if file_type.is_file() {
                 let rel = path
@@ -232,13 +286,27 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
 
                 let metadata = entry.metadata()?;
                 let hash = compute_file_hash(&path)?;
-                files.insert(
-                    rel_str,
-                    ScannedEntry {
-                        size: metadata.len(),
-                        hash,
-                    },
-                );
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let dev = metadata.dev();
+                    let ino = metadata.ino();
+                    let nlink = metadata.nlink();
+                    if nlink > 1 {
+                        if let Some(first_path) = dev_ino_map.get(&(dev, ino)) {
+                            files.insert(
+                                rel_str,
+                                ScannedEntry::hardlink(metadata.len(), hash, first_path.clone()),
+                            );
+                            continue;
+                        } else {
+                            dev_ino_map.insert((dev, ino), rel_str.clone());
+                        }
+                    }
+                }
+
+                files.insert(rel_str, ScannedEntry::file(metadata.len(), hash));
             }
         }
     }
@@ -339,7 +407,11 @@ pub fn plan_directory_diff(
     for (rel_path, (sf_opt, df_opt)) in all_paths {
         match (sf_opt, df_opt) {
             (Some(sf), Some(df)) => {
-                if sf.size == df.size && sf.hash == df.hash {
+                let is_same = sf.is_symlink == df.is_symlink
+                    && sf.symlink_target == df.symlink_target
+                    && sf.size == df.size
+                    && sf.hash == df.hash;
+                if is_same {
                     files_unchanged += 1;
                     data_present += sf.size;
                     actions.push(FileAction {
@@ -439,16 +511,28 @@ pub async fn send_directory_manifest(
                 e.to_string(),
             ))
         })?;
-        let mut chunks = Vec::new();
-        let mut remaining = entry.size;
-        while remaining > 0 {
-            let chunk_len = remaining.min(crate::protocol::limits::MAX_CHUNK_SIZE);
-            chunks.push(crate::manifest::entry::ChunkDesc::new(
-                chunk_len, entry.hash,
-            ));
-            remaining -= chunk_len;
-        }
-        let fe = FileEntry::regular(vpath, entry.size, 0o644, 0, 0, entry.hash, chunks);
+        let fe = if entry.is_symlink {
+            FileEntry::symlink_with_target(
+                vpath,
+                0o777,
+                0,
+                0,
+                entry.symlink_target.clone().unwrap_or_default(),
+            )
+        } else if let Some(ref hard_target) = entry.hardlink_target {
+            FileEntry::hardlink(vpath, hard_target.clone(), entry.size, entry.hash)
+        } else {
+            let mut chunks = Vec::new();
+            let mut remaining = entry.size;
+            while remaining > 0 {
+                let chunk_len = remaining.min(crate::protocol::limits::MAX_CHUNK_SIZE);
+                chunks.push(crate::manifest::entry::ChunkDesc::new(
+                    chunk_len, entry.hash,
+                ));
+                remaining -= chunk_len;
+            }
+            FileEntry::regular(vpath, entry.size, 0o644, 0, 0, entry.hash, chunks)
+        };
         let mut buf = Vec::new();
         encode_file_entry(&fe, &mut buf);
         manifest_hasher.update(&buf);
@@ -522,13 +606,18 @@ pub async fn recv_directory_manifest(
             let batch = crate::protocol::message::ManifestBatch::decode(&frame.payload)?;
             let file_entries = decoder.decode_batch(&batch)?;
             for fe in file_entries {
-                entries.insert(
-                    fe.path.as_str().to_string(),
-                    ScannedEntry {
-                        size: fe.size,
-                        hash: fe.file_hash,
-                    },
-                );
+                let scanned = if fe.flags.file_type() == crate::manifest::entry::FileType::Symlink {
+                    ScannedEntry::symlink(fe.symlink_target.unwrap_or_default())
+                } else if fe.flags.is_hardlink() {
+                    ScannedEntry::hardlink(
+                        fe.size,
+                        fe.file_hash,
+                        fe.hardlink_target.unwrap_or_default(),
+                    )
+                } else {
+                    ScannedEntry::file(fe.size, fe.file_hash)
+                };
+                entries.insert(fe.path.as_str().to_string(), scanned);
             }
         } else if frame.type_byte == crate::protocol::message::MANIFEST_END {
             let end = crate::protocol::message::ManifestEnd::decode(&frame.payload)?;
@@ -1114,54 +1203,18 @@ mod tests {
         let h3 = Hash::from_bytes(&[3u8; 32]).unwrap();
 
         // 1. Unchanged
-        src.insert(
-            "unchanged.txt".into(),
-            ScannedEntry {
-                size: 100,
-                hash: h1,
-            },
-        );
-        dst.insert(
-            "unchanged.txt".into(),
-            ScannedEntry {
-                size: 100,
-                hash: h1,
-            },
-        );
+        src.insert("unchanged.txt".into(), ScannedEntry::file(100, h1));
+        dst.insert("unchanged.txt".into(), ScannedEntry::file(100, h1));
 
         // 2. Modified
-        src.insert(
-            "modified.txt".into(),
-            ScannedEntry {
-                size: 200,
-                hash: h2,
-            },
-        );
-        dst.insert(
-            "modified.txt".into(),
-            ScannedEntry {
-                size: 200,
-                hash: h1,
-            },
-        );
+        src.insert("modified.txt".into(), ScannedEntry::file(200, h2));
+        dst.insert("modified.txt".into(), ScannedEntry::file(200, h1));
 
         // 3. Added
-        src.insert(
-            "added.txt".into(),
-            ScannedEntry {
-                size: 300,
-                hash: h3,
-            },
-        );
+        src.insert("added.txt".into(), ScannedEntry::file(300, h3));
 
         // 4. Deleted
-        dst.insert(
-            "deleted.txt".into(),
-            ScannedEntry {
-                size: 400,
-                hash: h2,
-            },
-        );
+        dst.insert("deleted.txt".into(), ScannedEntry::file(400, h2));
 
         let plan = plan_directory_diff(&src, &dst);
         assert_eq!(plan.summary.files_unchanged, 1);
@@ -1170,5 +1223,42 @@ mod tests {
         assert_eq!(plan.summary.files_deleted, 1);
         assert_eq!(plan.summary.data_present, 100);
         assert_eq!(plan.summary.data_to_transfer, 500); // modified (200) + added (300)
+    }
+
+    #[test]
+    fn test_plan_directory_diff_symlinks_and_hardlinks() {
+        let mut src = BTreeMap::new();
+        let mut dst = BTreeMap::new();
+
+        // 1. Identical symlink
+        src.insert(
+            "link_same.txt".into(),
+            ScannedEntry::symlink("../target1.txt".into()),
+        );
+        dst.insert(
+            "link_same.txt".into(),
+            ScannedEntry::symlink("../target1.txt".into()),
+        );
+
+        // 2. Modified symlink (target changed)
+        src.insert(
+            "link_changed.txt".into(),
+            ScannedEntry::symlink("../target2_new.txt".into()),
+        );
+        dst.insert(
+            "link_changed.txt".into(),
+            ScannedEntry::symlink("../target2_old.txt".into()),
+        );
+
+        // 3. New symlink
+        src.insert(
+            "link_new.txt".into(),
+            ScannedEntry::symlink("target3.txt".into()),
+        );
+
+        let plan = plan_directory_diff(&src, &dst);
+        assert_eq!(plan.summary.files_unchanged, 1);
+        assert_eq!(plan.summary.files_modified, 1);
+        assert_eq!(plan.summary.files_added, 1);
     }
 }

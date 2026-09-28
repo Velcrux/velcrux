@@ -683,6 +683,10 @@ pub enum TransferOp {
     SyncDownload = 4,
     /// File deletion.
     Delete = 5,
+    /// Symbolic link creation.
+    Symlink = 6,
+    /// Hard link creation.
+    Hardlink = 7,
 }
 
 impl TransferOp {
@@ -694,6 +698,8 @@ impl TransferOp {
             3 => Ok(Self::SyncUpload),
             4 => Ok(Self::SyncDownload),
             5 => Ok(Self::Delete),
+            6 => Ok(Self::Symlink),
+            7 => Ok(Self::Hardlink),
             _ => Err(ProtocolError::Malformed("TRANSFER_CREATE: unknown op")),
         }
     }
@@ -2146,6 +2152,8 @@ mod tests {
         assert_eq!(TransferOp::from_wire(3).unwrap(), TransferOp::SyncUpload);
         assert_eq!(TransferOp::from_wire(4).unwrap(), TransferOp::SyncDownload);
         assert_eq!(TransferOp::from_wire(5).unwrap(), TransferOp::Delete);
+        assert_eq!(TransferOp::from_wire(6).unwrap(), TransferOp::Symlink);
+        assert_eq!(TransferOp::from_wire(7).unwrap(), TransferOp::Hardlink);
         assert!(TransferOp::from_wire(0).is_err());
         assert!(TransferOp::from_wire(99).is_err());
     }

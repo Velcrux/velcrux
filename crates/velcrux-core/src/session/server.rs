@@ -932,6 +932,116 @@ async fn handle_transfer_create(
         return Ok(());
     }
 
+    if create.op == TransferOp::Symlink {
+        let dst = match authorizer.check(identity, Op::Upload, &create.dst_path) {
+            Ok(p) => p,
+            Err(_) => {
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        // Validate symlink target lexical containment (SECURITY.md §4, §5)
+        // Must stay inside virtual root, never silently rewritten.
+        if let Err(e) = crate::storage::VPath::validate_symlink_target(&dst, &create.src_path) {
+            stats
+                .authz_denials
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::InvalidPath,
+                format!("symlink target escapes root: {e}"),
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+
+        let transfer_id = TransferId::generate();
+        if let Err(e) = backend.create_symlink(&dst, &create.src_path).await {
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::InternalError,
+                format!("failed to create symlink: {e}"),
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+
+        let committed = Committed {
+            transfer_id,
+            files: 1,
+        };
+        write_frame(send, &Message::Committed(committed), 0).await?;
+        return Ok(());
+    }
+
+    if create.op == TransferOp::Hardlink {
+        let src = match authorizer.check(identity, Op::Upload, &create.src_path) {
+            Ok(p) => p,
+            Err(_) => {
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        let dst = match authorizer.check(identity, Op::Upload, &create.dst_path) {
+            Ok(p) => p,
+            Err(_) => {
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        };
+
+        // Source file must exist (must already be committed in this session/root)
+        match backend.stat(&src).await {
+            Ok(Some(_)) => {}
+            _ => {
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::FileNotFound,
+                    "hardlink source target not found",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        }
+
+        let transfer_id = TransferId::generate();
+        if let Err(e) = backend.create_hardlink(&dst, &src).await {
+            let err = crate::protocol::message::ErrorMsg::new(
+                crate::protocol::error::ErrorCode::InternalError,
+                format!("failed to create hardlink: {e}"),
+            );
+            write_frame(send, &Message::Error(err), 0).await?;
+            return Ok(());
+        }
+
+        let committed = Committed {
+            transfer_id,
+            files: 1,
+        };
+        write_frame(send, &Message::Committed(committed), 0).await?;
+        return Ok(());
+    }
+
     if create.op == TransferOp::SyncUpload || create.op == TransferOp::SyncDownload {
         let target_path = if create.op == TransferOp::SyncUpload {
             &create.dst_path

@@ -47,6 +47,20 @@ pub fn encode_file_entry(entry: &FileEntry, out: &mut Vec<u8>) {
     for chunk in &entry.chunks {
         encode_chunk_desc(chunk, out);
     }
+
+    // 10. Optional link targets
+    if entry.flags.file_type() == FileType::Symlink {
+        let target_bytes = entry.symlink_target.as_deref().unwrap_or("").as_bytes();
+        let n = encode_varint(target_bytes.len() as u64, &mut vbuf);
+        out.extend_from_slice(&vbuf[..n]);
+        out.extend_from_slice(target_bytes);
+    }
+    if entry.flags.is_hardlink() {
+        let target_bytes = entry.hardlink_target.as_deref().unwrap_or("").as_bytes();
+        let n = encode_varint(target_bytes.len() as u64, &mut vbuf);
+        out.extend_from_slice(&vbuf[..n]);
+        out.extend_from_slice(target_bytes);
+    }
 }
 
 /// Encode a single [`ChunkDesc`] into `out`.
@@ -164,12 +178,56 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
     }
 
     // Consistency check: for regular files, sum of chunk lengths must equal size
-    if flags.file_type() == FileType::Regular && running_sum != size {
+    if flags.file_type() == FileType::Regular && !flags.is_hardlink() && running_sum != size {
         return Err(ProtocolError::InvalidManifest(format!(
             "declared size ({size}) does not match sum of chunk lengths ({running_sum}) for {}",
             path.as_str()
         )));
     }
+
+    let symlink_target = if flags.file_type() == FileType::Symlink {
+        if offset < buf.len() {
+            let (target_len, c) = decode_varint(&buf[offset..])?;
+            offset += c;
+            let target_len_us = target_len as usize;
+            if buf.len() < offset + target_len_us {
+                return Err(ProtocolError::Malformed(
+                    "FILE_ENTRY: truncated symlink target",
+                ));
+            }
+            let target_str = std::str::from_utf8(&buf[offset..offset + target_len_us])
+                .map_err(|_| ProtocolError::Malformed("FILE_ENTRY: symlink target is not UTF-8"))?;
+            offset += target_len_us;
+            Some(target_str.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let hardlink_target = if flags.is_hardlink() {
+        if offset < buf.len() {
+            let (target_len, c) = decode_varint(&buf[offset..])?;
+            offset += c;
+            let target_len_us = target_len as usize;
+            if buf.len() < offset + target_len_us {
+                return Err(ProtocolError::Malformed(
+                    "FILE_ENTRY: truncated hardlink target",
+                ));
+            }
+            let target_str =
+                std::str::from_utf8(&buf[offset..offset + target_len_us]).map_err(|_| {
+                    ProtocolError::Malformed("FILE_ENTRY: hardlink target is not UTF-8")
+                })?;
+            offset += target_len_us;
+            Some(target_str.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let entry = FileEntry {
         flags,
@@ -180,6 +238,8 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
         mtime_nsec,
         file_hash,
         chunks,
+        symlink_target,
+        hardlink_target,
     };
 
     Ok((entry, offset))
@@ -242,6 +302,8 @@ mod tests {
             mtime_nsec: 123456,
             file_hash: Hash::from_bytes(&[3u8; 32]).unwrap(),
             chunks: vec![chunk1, chunk2, chunk3],
+            symlink_target: None,
+            hardlink_target: None,
         };
 
         let mut out = Vec::new();
@@ -291,5 +353,44 @@ mod tests {
 
         let err = decode_file_entry(&out).unwrap_err();
         assert!(matches!(err, ProtocolError::InvalidManifest(_)));
+    }
+
+    #[test]
+    fn symlink_entry_roundtrip() {
+        let entry = FileEntry::symlink_with_target(
+            VPath::validate("links/mylink").unwrap(),
+            0o777,
+            1700000000,
+            0,
+            "../target/file.txt".to_string(),
+        );
+        let mut out = Vec::new();
+        encode_file_entry(&entry, &mut out);
+
+        let (decoded, consumed) = decode_file_entry(&out).unwrap();
+        assert_eq!(consumed, out.len());
+        assert_eq!(entry, decoded);
+        assert_eq!(
+            decoded.symlink_target.as_deref(),
+            Some("../target/file.txt")
+        );
+    }
+
+    #[test]
+    fn hardlink_entry_roundtrip() {
+        let entry = FileEntry::hardlink(
+            VPath::validate("copies/duplicate.txt").unwrap(),
+            "orig/file.txt".to_string(),
+            1024,
+            Hash::from_bytes(&[5u8; 32]).unwrap(),
+        );
+        let mut out = Vec::new();
+        encode_file_entry(&entry, &mut out);
+
+        let (decoded, consumed) = decode_file_entry(&out).unwrap();
+        assert_eq!(consumed, out.len());
+        assert_eq!(entry, decoded);
+        assert_eq!(decoded.hardlink_target.as_deref(), Some("orig/file.txt"));
+        assert!(decoded.flags.is_hardlink());
     }
 }

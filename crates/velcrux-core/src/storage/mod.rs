@@ -149,6 +149,101 @@ impl VPath {
         self.0.is_empty()
     }
 
+    /// Return the parent `VPath`, or `None` if this is root or a top-level path.
+    pub fn parent(&self) -> Option<Self> {
+        let p = self.as_path().parent()?;
+        let s = p.to_string_lossy().to_string();
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
+    }
+
+    /// Lexically validate that a symlink placed at `link_path` with target `raw_target`
+    /// does not escape the virtual root (`SECURITY.md` §4, §5).
+    ///
+    /// The target is evaluated relative to the parent directory of `link_path`.
+    /// Traversal attempts (`..`) above the virtual root are strictly rejected with
+    /// `VPathError::SymlinkEscape`. Absolute paths (leading `/`, `\\`, or Windows drive letters)
+    /// are also rejected with `VPathError::SymlinkEscape`.
+    ///
+    /// Never silently rewrites targets.
+    pub fn validate_symlink_target(
+        link_path: &VPath,
+        raw_target: &str,
+    ) -> Result<VPath, VPathError> {
+        if raw_target.is_empty() {
+            return Err(VPathError::Empty);
+        }
+        if raw_target.contains('\0') {
+            return Err(VPathError::ForbiddenChar);
+        }
+        for b in raw_target.bytes() {
+            if b < 0x20 || b == 0x7f {
+                return Err(VPathError::ForbiddenChar);
+            }
+        }
+        // Absolute targets are disallowed as they point outside the virtual root
+        if raw_target.starts_with('/') || raw_target.starts_with('\\') {
+            return Err(VPathError::SymlinkEscape);
+        }
+        // Check for Windows drive prefix (e.g. "C:")
+        if raw_target.len() >= 2 && raw_target.as_bytes()[1] == b':' {
+            return Err(VPathError::SymlinkEscape);
+        }
+
+        let mut stack: Vec<&str> = Vec::new();
+        // Start with the parent directory components of link_path
+        let parent_str = link_path
+            .as_path()
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+        for comp in parent_str.split('/') {
+            let comp = comp.trim();
+            if !comp.is_empty() && comp != "." {
+                stack.push(comp);
+            }
+        }
+
+        // Process raw_target components
+        for comp in raw_target.split(|c| c == '/' || c == '\\') {
+            let comp = comp.trim();
+            if comp.is_empty() || comp == "." {
+                continue;
+            }
+            if comp == ".." {
+                if stack.pop().is_none() {
+                    // Traversed above virtual root!
+                    return Err(VPathError::SymlinkEscape);
+                }
+            } else {
+                if comp.len() > MAX_PATH_COMPONENT {
+                    return Err(VPathError::ComponentTooLong {
+                        len: comp.len(),
+                        limit: MAX_PATH_COMPONENT,
+                    });
+                }
+                stack.push(comp);
+            }
+        }
+
+        if stack.is_empty() {
+            // Points to the virtual root itself
+            Ok(VPath::root())
+        } else {
+            let resolved = stack.join("/");
+            if resolved.len() > MAX_PATH_TOTAL {
+                return Err(VPathError::TooLong {
+                    len: resolved.len(),
+                    limit: MAX_PATH_TOTAL,
+                });
+            }
+            Ok(VPath(resolved))
+        }
+    }
+
     /// Construct a `VPath` from a string already known to be valid. The
     /// only public caller is the storage backend resolving relative paths.
     #[allow(dead_code)]
@@ -246,6 +341,12 @@ pub trait StorageBackend: Send + Sync {
 
     /// Remove a file.
     async fn remove(&self, p: &VPath) -> Result<(), VelcruxError>;
+
+    /// Create a symbolic link at `dest` pointing to `target`.
+    async fn create_symlink(&self, dest: &VPath, target: &str) -> Result<(), VelcruxError>;
+
+    /// Create a hard link at `dest` pointing to `src`.
+    async fn create_hardlink(&self, dest: &VPath, src: &VPath) -> Result<(), VelcruxError>;
 
     /// Storage root absolute path.
     fn root(&self) -> &Path;
@@ -523,6 +624,61 @@ impl StorageBackend for LocalFilesystemBackend {
             Err(e) => Err(e.into()),
         }
     }
+
+    async fn create_symlink(&self, dest: &VPath, target: &str) -> Result<(), VelcruxError> {
+        if dest.is_root() {
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidPath));
+        }
+        let dest_path = self.resolve(dest);
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Ok(_) = tokio::fs::symlink_metadata(&dest_path).await {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+        }
+
+        #[cfg(unix)]
+        {
+            let target = target.to_string();
+            let dest_p = dest_path.clone();
+            tokio::task::spawn_blocking(move || std::os::unix::fs::symlink(target, dest_p))
+                .await
+                .map_err(|e| VelcruxError::Internal(e.to_string()))??;
+        }
+        #[cfg(windows)]
+        {
+            let target = target.to_string();
+            let dest_p = dest_path.clone();
+            tokio::task::spawn_blocking(move || std::os::windows::fs::symlink_file(target, dest_p))
+                .await
+                .map_err(|e| VelcruxError::Internal(e.to_string()))??;
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (dest_path, target);
+            return Err(VelcruxError::Internal(
+                "symlinks not supported on this platform".into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn create_hardlink(&self, dest: &VPath, src: &VPath) -> Result<(), VelcruxError> {
+        if dest.is_root() || src.is_root() {
+            return Err(VelcruxError::Protocol(ProtocolError::InvalidPath));
+        }
+        let dest_path = self.resolve(dest);
+        let src_path = self.resolve(src);
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Ok(_) = tokio::fs::symlink_metadata(&dest_path).await {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+        }
+        tokio::fs::hard_link(&src_path, &dest_path).await?;
+        Ok(())
+    }
 }
 
 struct TokioRandomRead {
@@ -704,6 +860,109 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(backend.stat(&dest).await.unwrap().unwrap().size, 7);
+    }
+
+    #[test]
+    fn vpath_validate_symlink_target_contained() {
+        let link_path = VPath::validate("sub/dir/link.txt").unwrap();
+        // Points to sibling
+        let res = VPath::validate_symlink_target(&link_path, "target.txt").unwrap();
+        assert_eq!(res.as_str(), "sub/dir/target.txt");
+
+        // Points up one level
+        let res = VPath::validate_symlink_target(&link_path, "../sibling.txt").unwrap();
+        assert_eq!(res.as_str(), "sub/sibling.txt");
+
+        // Points up two levels to root file
+        let res = VPath::validate_symlink_target(&link_path, "../../root_file.txt").unwrap();
+        assert_eq!(res.as_str(), "root_file.txt");
+    }
+
+    #[test]
+    fn vpath_validate_symlink_target_escapes_rejected() {
+        let link_path = VPath::validate("sub/link.txt").unwrap();
+        // Escapes above root
+        assert_eq!(
+            VPath::validate_symlink_target(&link_path, "../../etc/passwd"),
+            Err(VPathError::SymlinkEscape)
+        );
+
+        // Absolute target
+        assert_eq!(
+            VPath::validate_symlink_target(&link_path, "/etc/passwd"),
+            Err(VPathError::SymlinkEscape)
+        );
+
+        // Windows drive target
+        assert_eq!(
+            VPath::validate_symlink_target(&link_path, "C:\\Windows"),
+            Err(VPathError::SymlinkEscape)
+        );
+
+        // Top level link escaping
+        let top_link = VPath::validate("link.txt").unwrap();
+        assert_eq!(
+            VPath::validate_symlink_target(&top_link, "../outside"),
+            Err(VPathError::SymlinkEscape)
+        );
+
+        // Empty and control chars
+        assert_eq!(
+            VPath::validate_symlink_target(&link_path, ""),
+            Err(VPathError::Empty)
+        );
+        assert_eq!(
+            VPath::validate_symlink_target(&link_path, "foo\0bar"),
+            Err(VPathError::ForbiddenChar)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_backend_symlink_and_hardlink_creation() {
+        let tmp = tempdir_in_target();
+        let root = tmp.join("root");
+        let staging = tmp.join("stage");
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        tokio::fs::create_dir_all(&staging).await.unwrap();
+        let backend = LocalFilesystemBackend::new(root.clone(), staging.clone())
+            .await
+            .unwrap();
+
+        // Create original file
+        let orig = VPath::validate("orig.txt").unwrap();
+        let mut w = backend.open_staging("t1", &orig, 5).await.unwrap();
+        w.write_at(0, b"hello").await.unwrap();
+        w.fsync().await.unwrap();
+        backend
+            .commit(
+                "t1",
+                w.into_staging(),
+                &orig,
+                &FileMeta::new(5, Hash::of(b"hello")),
+            )
+            .await
+            .unwrap();
+
+        // Create symlink
+        let sym = VPath::validate("sym.txt").unwrap();
+        backend.create_symlink(&sym, "orig.txt").await.unwrap();
+        let meta = tokio::fs::symlink_metadata(root.join("sym.txt"))
+            .await
+            .unwrap();
+        assert!(meta.file_type().is_symlink());
+
+        // Create hard link
+        let hard = VPath::validate("hard.txt").unwrap();
+        backend.create_hardlink(&hard, &orig).await.unwrap();
+        let meta = tokio::fs::metadata(root.join("hard.txt")).await.unwrap();
+        assert_eq!(meta.len(), 5);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let orig_meta = tokio::fs::metadata(root.join("orig.txt")).await.unwrap();
+            assert_eq!(meta.ino(), orig_meta.ino());
+            assert_eq!(meta.nlink(), 2);
+        }
     }
 }
 

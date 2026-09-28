@@ -1474,6 +1474,82 @@ async fn delete_remote_file(session: &mut ClientSession, remote_path: &str) -> a
     Ok(())
 }
 
+async fn create_remote_symlink(
+    session: &mut ClientSession,
+    target: &str,
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Committed, Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let create = TransferCreate {
+        op: TransferOp::Symlink,
+        src_path: target.to_string(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: target.len() as u64,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::COMMITTED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!(
+                "remote symlink creation failed: code={:?} detail={:?}",
+                err.code,
+                err.detail
+            );
+        }
+        anyhow::bail!(
+            "expected COMMITTED for symlink, got 0x{:02x}",
+            frame.type_byte
+        );
+    }
+    let _committed = Committed::decode(frame.payload)?;
+    Ok(())
+}
+
+async fn create_remote_hardlink(
+    session: &mut ClientSession,
+    src_file: &str,
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{Committed, Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let create = TransferCreate {
+        op: TransferOp::Hardlink,
+        src_path: src_file.trim_start_matches('/').to_string(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::COMMITTED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!(
+                "remote hardlink creation failed: code={:?} detail={:?}",
+                err.code,
+                err.detail
+            );
+        }
+        anyhow::bail!(
+            "expected COMMITTED for hardlink, got 0x{:02x}",
+            frame.type_byte
+        );
+    }
+    let _committed = Committed::decode(frame.payload)?;
+    Ok(())
+}
+
 async fn run_download(
     cli: &Cli,
     conn: &dyn velcrux_core::transport::Connection,
@@ -1617,6 +1693,27 @@ async fn run_remote_upload_sync(
                 } else {
                     format!("{}/{}", vpath.trim_end_matches('/'), item.rel_path)
                 };
+
+                if let Some(src_entry) = src_files.get(&item.rel_path) {
+                    if src_entry.is_symlink {
+                        let target = src_entry.symlink_target.as_deref().unwrap_or("");
+                        create_remote_symlink(&mut session, target, &remote_file).await?;
+                        files_transferred += 1;
+                        files_committed += 1;
+                        continue;
+                    } else if let Some(ref hard_target) = src_entry.hardlink_target {
+                        let remote_src = if vpath.is_empty() {
+                            hard_target.clone()
+                        } else {
+                            format!("{}/{}", vpath.trim_end_matches('/'), hard_target)
+                        };
+                        create_remote_hardlink(&mut session, &remote_src, &remote_file).await?;
+                        files_transferred += 1;
+                        files_committed += 1;
+                        continue;
+                    }
+                }
+
                 let (_tid, _hash, size) = upload_file_stream(
                     &conn,
                     &mut session,
@@ -1789,6 +1886,39 @@ async fn run_remote_download_sync(
                 if let Some(parent) = local_file.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
+
+                if let Some(src_entry) = src_files.get(&item.rel_path) {
+                    if src_entry.is_symlink {
+                        let link_vpath = velcrux_core::storage::VPath::validate(&item.rel_path)?;
+                        let target = src_entry.symlink_target.as_deref().unwrap_or("");
+                        velcrux_core::storage::VPath::validate_symlink_target(&link_vpath, target)?;
+
+                        if let Ok(_) = std::fs::symlink_metadata(&local_file) {
+                            let _ = std::fs::remove_file(&local_file);
+                        }
+                        #[cfg(unix)]
+                        {
+                            std::os::unix::fs::symlink(target, &local_file)?;
+                        }
+                        #[cfg(windows)]
+                        {
+                            std::os::windows::fs::symlink_file(target, &local_file)?;
+                        }
+                        files_transferred += 1;
+                        files_committed += 1;
+                        continue;
+                    } else if let Some(ref hard_target) = src_entry.hardlink_target {
+                        let local_src = dst_dir.join(hard_target);
+                        if let Ok(_) = std::fs::symlink_metadata(&local_file) {
+                            let _ = std::fs::remove_file(&local_file);
+                        }
+                        std::fs::hard_link(&local_src, &local_file)?;
+                        files_transferred += 1;
+                        files_committed += 1;
+                        continue;
+                    }
+                }
+
                 let (_tid, _hash, size) = download_file_stream(
                     &conn,
                     &mut session,
