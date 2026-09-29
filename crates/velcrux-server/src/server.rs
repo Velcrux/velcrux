@@ -417,7 +417,22 @@ where
                     let conn: QuicConnection = conn;
                     match actor.run(&conn).await {
                         Ok(state) => info!(conn_id = id, ?state, "connection finished"),
-                        Err(e) => warn!(conn_id = id, error = %e, "connection error"),
+                        Err(e) => {
+                            warn!(conn_id = id, error = %e, "connection error");
+                            let code = match &e {
+                                VelcruxError::Protocol(velcrux_core::error::ProtocolError::InvalidStateTransition(_))
+                                | VelcruxError::Protocol(velcrux_core::error::ProtocolError::UnsupportedMessage(_))
+                                | VelcruxError::Protocol(velcrux_core::error::ProtocolError::NonCanonicalVarint)
+                                | VelcruxError::Protocol(velcrux_core::error::ProtocolError::VarintOverflow)
+                                | VelcruxError::Protocol(velcrux_core::error::ProtocolError::FrameTooLarge { .. })
+                                | VelcruxError::Protocol(velcrux_core::error::ProtocolError::Malformed(_)) => {
+                                    ErrorCode::ProtocolViolation.to_wire()
+                                }
+                                VelcruxError::Protocol(_) => ErrorCode::ProtocolViolation.to_wire(),
+                                _ => ErrorCode::InternalError.to_wire(),
+                            };
+                            conn.close(code, e.to_string().as_bytes());
+                        }
                     }
                     reg_clean.unregister(id).await;
                     stats_clean

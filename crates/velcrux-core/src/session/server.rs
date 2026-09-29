@@ -123,6 +123,8 @@ pub struct ServerStats {
     pub resource_limit_hits_quota: AtomicU64,
     /// Total disk full / margin reservation rejection events.
     pub disk_full_errors: AtomicU64,
+    /// Total protocol violations and illegal state transitions.
+    pub protocol_violations: AtomicU64,
     /// Total connection ceiling rejection events.
     pub resource_limit_hits_connections: AtomicU64,
     /// Total checksum verification mismatches.
@@ -187,6 +189,7 @@ impl Default for ServerStats {
             resource_limit_hits_bandwidth: Arc::new(AtomicU64::new(0)),
             resource_limit_hits_quota: AtomicU64::new(0),
             disk_full_errors: AtomicU64::new(0),
+            protocol_violations: AtomicU64::new(0),
             resource_limit_hits_connections: AtomicU64::new(0),
             checksum_mismatches: AtomicU64::new(0),
             checksum_mismatches_server: AtomicU64::new(0),
@@ -510,6 +513,22 @@ impl ServerConn {
                             state = ServerState::AwaitAuth;
                         }
                         _other => {
+                            self.stats
+                                .protocol_violations
+                                .fetch_add(1, Ordering::Relaxed);
+                            let err = crate::protocol::message::ErrorMsg::new(
+                                crate::protocol::error::ErrorCode::ProtocolViolation,
+                                "protocol violation: expected HELLO",
+                            );
+                            let _ =
+                                write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
+                                    .await;
+                            let _ = send.finish().await;
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                            conn.close(
+                                crate::protocol::error::ErrorCode::ProtocolViolation.to_wire(),
+                                b"protocol violation: expected HELLO",
+                            );
                             return Err(VelcruxError::Protocol(
                                 crate::error::ProtocolError::InvalidStateTransition(
                                     "expected HELLO",
@@ -722,6 +741,22 @@ impl ServerConn {
                             state = ServerState::Serving;
                         }
                         _other => {
+                            self.stats
+                                .protocol_violations
+                                .fetch_add(1, Ordering::Relaxed);
+                            let err = crate::protocol::message::ErrorMsg::new(
+                                crate::protocol::error::ErrorCode::ProtocolViolation,
+                                "protocol violation: expected AUTH",
+                            );
+                            let _ =
+                                write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
+                                    .await;
+                            let _ = send.finish().await;
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                            conn.close(
+                                crate::protocol::error::ErrorCode::ProtocolViolation.to_wire(),
+                                b"protocol violation: expected AUTH",
+                            );
                             return Err(VelcruxError::Protocol(
                                 crate::error::ProtocolError::InvalidStateTransition(
                                     "expected AUTH",
@@ -843,23 +878,91 @@ impl ServerConn {
                             )
                             .await;
                         }
-                        other => {
+                        x if x == crate::protocol::message::HELLO
+                            || x == crate::protocol::message::AUTH =>
+                        {
+                            self.stats
+                                .protocol_violations
+                                .fetch_add(1, Ordering::Relaxed);
                             let err = crate::protocol::message::ErrorMsg::new(
-                                crate::protocol::error::ErrorCode::UnsupportedMessage,
-                                "unsupported",
+                                crate::protocol::error::ErrorCode::ProtocolViolation,
+                                "protocol violation: duplicate handshake in SERVING state",
                             );
                             let _ =
                                 write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
                                     .await;
+                            let _ = send.finish().await;
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                            conn.close(
+                                crate::protocol::error::ErrorCode::ProtocolViolation.to_wire(),
+                                b"protocol violation: duplicate handshake in SERVING state",
+                            );
+                            return Err(VelcruxError::Protocol(
+                                crate::error::ProtocolError::InvalidStateTransition(
+                                    "duplicate handshake in SERVING state",
+                                ),
+                            ));
+                        }
+                        x if x == crate::protocol::message::COMMIT
+                            || x == crate::protocol::message::TRANSFER_BEGIN
+                            || x == crate::protocol::message::CHECKPOINT
+                            || x == crate::protocol::message::VERIFY
+                            || x == crate::protocol::message::MANIFEST_BEGIN =>
+                        {
+                            self.stats
+                                .protocol_violations
+                                .fetch_add(1, Ordering::Relaxed);
+                            let err = crate::protocol::message::ErrorMsg::new(
+                                crate::protocol::error::ErrorCode::ProtocolViolation,
+                                "protocol violation: transfer message without active transfer context",
+                            );
+                            let _ =
+                                write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
+                                    .await;
+                            let _ = send.finish().await;
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                            conn.close(
+                                crate::protocol::error::ErrorCode::ProtocolViolation.to_wire(),
+                                b"protocol violation: unexpected transfer message",
+                            );
+                            return Err(VelcruxError::Protocol(
+                                crate::error::ProtocolError::InvalidStateTransition(
+                                    "unexpected transfer message in SERVING state",
+                                ),
+                            ));
+                        }
+                        other => {
+                            self.stats
+                                .protocol_violations
+                                .fetch_add(1, Ordering::Relaxed);
+                            let err = crate::protocol::message::ErrorMsg::new(
+                                crate::protocol::error::ErrorCode::UnsupportedMessage,
+                                "unsupported message",
+                            );
+                            let _ =
+                                write_frame(send.as_mut(), &Message::Error(err), frame.request_id)
+                                    .await;
+                            let _ = send.finish().await;
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                            conn.close(
+                                crate::protocol::error::ErrorCode::UnsupportedMessage.to_wire(),
+                                b"unsupported message",
+                            );
                             tracing::debug!(
                                 state = state.name(),
                                 "unsupported message 0x{other:02x}"
                             );
+                            return Err(VelcruxError::Protocol(
+                                crate::error::ProtocolError::UnsupportedMessage(other),
+                            ));
                         }
                     }
                 }
                 ServerState::Closed => break,
                 ServerState::Accepted | ServerState::TlsHandshake | ServerState::Draining => {
+                    self.stats
+                        .protocol_violations
+                        .fetch_add(1, Ordering::Relaxed);
                     return Err(VelcruxError::Protocol(
                         crate::error::ProtocolError::InvalidStateTransition(state.name()),
                     ));

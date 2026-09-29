@@ -81,6 +81,7 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let res_bandwidth = stats.resource_limit_hits_bandwidth.load(Ordering::Relaxed);
     let res_quota = stats.resource_limit_hits_quota.load(Ordering::Relaxed);
     let res_disk_full = stats.disk_full_errors.load(Ordering::Relaxed);
+    let res_proto_violation = stats.protocol_violations.load(Ordering::Relaxed);
     let res_conns = stats
         .resource_limit_hits_connections
         .load(Ordering::Relaxed);
@@ -218,10 +219,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\
          velcrux_resource_limit_hits_total{{limit=\"quota\"}} {res_quota}\n\
          velcrux_resource_limit_hits_total{{limit=\"connections\"}} {res_conns}\n\
-         velcrux_resource_limit_hits_total{{limit=\"disk_full\"}} {res_disk_full}\n\n\
+         velcrux_resource_limit_hits_total{{limit=\"disk_full\"}} {res_disk_full}\n\
+         velcrux_resource_limit_hits_total{{limit=\"protocol_violation\"}} {res_proto_violation}\n\n\
          # HELP velcrux_disk_full_total Total disk space exhaustion rejection events\n\
          # TYPE velcrux_disk_full_total counter\n\
          velcrux_disk_full_total {res_disk_full}\n\n\
+         # HELP velcrux_protocol_violations_total Total protocol violations and illegal state transitions\n\
+         # TYPE velcrux_protocol_violations_total counter\n\
+         velcrux_protocol_violations_total {res_proto_violation}\n\n\
          # HELP velcrux_disk_read_bps Disk read throughput in bytes per second\n\
          # TYPE velcrux_disk_read_bps gauge\n\
          velcrux_disk_read_bps {disk_read_bps}\n\n\
