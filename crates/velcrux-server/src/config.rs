@@ -173,6 +173,10 @@ pub struct StorageCfg {
     pub state_db: Option<String>,
     #[serde(default)]
     pub chunk_store: Option<String>,
+    #[serde(default)]
+    pub min_free_space: Option<String>,
+    #[serde(default)]
+    pub preallocate: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -360,6 +364,12 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_CHUNK_STORE") {
             self.storage.chunk_store = Some(val);
         }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_MIN_FREE_SPACE") {
+            self.storage.min_free_space = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_PREALLOCATE") {
+            self.storage.preallocate = Some(val == "true" || val == "1");
+        }
 
         // Telemetry
         if let Ok(val) = std::env::var("VELCRUX_TELEMETRY_METRICS_LISTEN") {
@@ -450,7 +460,13 @@ impl ServerConfig {
             }
         }
 
-        // 5. Validate hash algorithm if specified
+        // 5. Validate storage min_free_space if specified (SECURITY.md §6)
+        if let Some(ref mfs) = self.storage.min_free_space {
+            parse_size_bytes(mfs)
+                .with_context(|| format!("invalid storage.min_free_space: {mfs}"))?;
+        }
+
+        // 6. Validate hash algorithm if specified
         if let Some(ref algo) = self.hash.algorithm {
             if algo != "blake3" && algo != "sha256" {
                 anyhow::bail!("invalid hash.algorithm: {algo} (must be 'blake3' or 'sha256')");

@@ -41,10 +41,12 @@ client_ca   = "/etc/velcrux/clients-ca.crt"
 grants      = "/etc/velcrux/grants.toml"
 
 [storage]
-root        = "/data/velcrux/files"
-staging     = "/data/velcrux/files/.velcrux-staging"
-state_db    = "/var/lib/velcrux/state.db"
-chunk_store = "/data/velcrux/chunks"
+root           = "/data/velcrux/files"
+staging        = "/data/velcrux/files/.velcrux-staging"
+state_db       = "/var/lib/velcrux/state.db"
+chunk_store    = "/data/velcrux/chunks"
+min_free_space = "1GiB"
+preallocate    = true
 
 [telemetry]
 metrics_listen = "127.0.0.1:9443"

@@ -113,6 +113,10 @@ pub enum ProtocolError {
     /// A compressed frame or payload exceeded the expansion limit (decompression bomb defense).
     #[error("decompression bomb detected: {0}")]
     DecompressionBomb(String),
+
+    /// Storage volume has insufficient free space or reached reservation margin.
+    #[error("disk full: {0}")]
+    DiskFull(String),
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

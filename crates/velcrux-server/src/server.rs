@@ -146,6 +146,12 @@ where
         None
     };
 
+    let min_free_space_bytes = match &cfg.storage.min_free_space {
+        Some(s) => crate::config::parse_size_bytes(s)?,
+        None => 0,
+    };
+    let preallocate = cfg.storage.preallocate.unwrap_or(true);
+
     // Construct the storage backend. M2 enforces same-filesystem for atomic commit (OPERATIONS.md §2).
     let backend = velcrux_core::storage::LocalFilesystemBackend::new(
         std::path::PathBuf::from(&cfg.storage.root),
@@ -157,7 +163,8 @@ where
             "storage backend init failed (root={}, staging={})",
             cfg.storage.root, cfg.storage.staging
         )
-    })?;
+    })?
+    .with_preallocation(preallocate, min_free_space_bytes);
     let backend = Arc::new(backend);
 
     // Optional LocalChunkStore for deduplication (Option D)

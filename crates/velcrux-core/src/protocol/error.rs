@@ -177,6 +177,7 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::ResourceLimitExceeded(_) => "resource limit exceeded",
             ProtocolError::QuotaExceeded(_) => "quota exceeded",
             ProtocolError::DecompressionBomb(_) => "decompression limit exceeded",
+            ProtocolError::DiskFull(_) => "disk full",
         };
         Self::new(s)
     }

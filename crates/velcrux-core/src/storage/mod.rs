@@ -286,6 +286,7 @@ impl FileMeta {
 }
 /// A handle to an in-progress staged write. The file is at
 /// `<root>/<staging>/<transfer_id>/<name>.velcrux-partial` until commit.
+#[derive(Debug)]
 pub struct Staging {
     /// Absolute path to the staged file.
     path: PathBuf,
@@ -297,6 +298,11 @@ impl Staging {
     /// been resumed across processes.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    /// Absolute path to the staged file.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 }
 
@@ -364,6 +370,21 @@ pub trait StorageBackend: Send + Sync {
         Ok(())
     }
 
+    /// Return the available space in bytes on the storage volume.
+    async fn available_space(&self) -> Result<u64, VelcruxError> {
+        Ok(u64::MAX)
+    }
+
+    /// Return the configured minimum free disk space reservation margin in bytes.
+    fn min_free_space(&self) -> u64 {
+        0
+    }
+
+    /// Return whether physical preallocation (`fallocate`) is enabled.
+    fn preallocate_enabled(&self) -> bool {
+        false
+    }
+
     /// Storage root absolute path.
     fn root(&self) -> &Path;
 }
@@ -383,6 +404,7 @@ pub trait AsyncRandomRead: Send {
 }
 
 /// A writer into a staged file.
+#[derive(Debug)]
 pub struct StagingWriter {
     staging: Staging,
     file: tokio::fs::File,
@@ -427,6 +449,11 @@ impl StagingWriter {
         Ok(())
     }
 
+    /// Absolute path to the staged file.
+    pub fn path(&self) -> &std::path::Path {
+        self.staging.path()
+    }
+
     /// Consume the writer and return the inner `Staging` for commit.
     pub fn into_staging(self) -> Staging {
         self.staging
@@ -436,6 +463,8 @@ impl StagingWriter {
 pub struct LocalFilesystemBackend {
     root: PathBuf,
     staging: PathBuf,
+    min_free_space: u64,
+    preallocate: bool,
 }
 
 impl LocalFilesystemBackend {
@@ -450,6 +479,16 @@ impl LocalFilesystemBackend {
     /// Both must exist and be directories; both must be on the same
     /// filesystem (so atomic `rename` is possible).
     pub async fn new(root: PathBuf, staging: PathBuf) -> Result<Self, VelcruxError> {
+        Self::new_with_options(root, staging, 0, false).await
+    }
+
+    /// Construct a backend with explicit disk reservation margin and preallocation flag.
+    pub async fn new_with_options(
+        root: PathBuf,
+        staging: PathBuf,
+        min_free_space: u64,
+        preallocate: bool,
+    ) -> Result<Self, VelcruxError> {
         let m1 = tokio::fs::metadata(&root).await?;
         if !m1.is_dir() {
             return Err(VelcruxError::Config(format!(
@@ -477,7 +516,25 @@ impl LocalFilesystemBackend {
                 d2
             )));
         }
-        Ok(Self { root, staging })
+        Ok(Self {
+            root,
+            staging,
+            min_free_space,
+            preallocate,
+        })
+    }
+
+    /// Builder helper to set preallocation and disk reservation margin.
+    pub fn with_preallocation(mut self, preallocate: bool, min_free_space: u64) -> Self {
+        self.preallocate = preallocate;
+        self.min_free_space = min_free_space;
+        self
+    }
+
+    /// Builder helper to set minimum free space margin in bytes.
+    pub fn with_min_free_space(mut self, margin: u64) -> Self {
+        self.min_free_space = margin;
+        self
     }
 
     fn resolve(&self, p: &VPath) -> PathBuf {
@@ -563,6 +620,23 @@ impl StorageBackend for LocalFilesystemBackend {
         }))
     }
 
+    async fn available_space(&self) -> Result<u64, VelcruxError> {
+        let staging_dir = self.staging.clone();
+        tokio::task::spawn_blocking(move || {
+            fs4::available_space(&staging_dir).map_err(VelcruxError::Io)
+        })
+        .await
+        .map_err(|e| VelcruxError::Internal(e.to_string()))?
+    }
+
+    fn min_free_space(&self) -> u64 {
+        self.min_free_space
+    }
+
+    fn preallocate_enabled(&self) -> bool {
+        self.preallocate
+    }
+
     async fn open_staging(
         &self,
         transfer_id: &str,
@@ -577,9 +651,24 @@ impl StorageBackend for LocalFilesystemBackend {
         &self,
         transfer_id: &str,
         p: &VPath,
-        _size_hint: u64,
+        size_hint: u64,
         resumed: bool,
     ) -> Result<StagingWriter, VelcruxError> {
+        // Enforce free disk space reservation check if configured (SECURITY.md §6)
+        if (self.min_free_space > 0 || self.preallocate) && size_hint > 0 {
+            if let Ok(avail) = self.available_space().await {
+                let required = size_hint.saturating_add(self.min_free_space);
+                if avail < required {
+                    return Err(VelcruxError::Protocol(
+                        crate::error::ProtocolError::DiskFull(format!(
+                            "insufficient disk space: available {avail} B < required {required} B (size_hint {size_hint} B + min_free_space {} B)",
+                            self.min_free_space
+                        )),
+                    ));
+                }
+            }
+        }
+
         let path = self.staging_path(transfer_id, p);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -592,6 +681,26 @@ impl StorageBackend for LocalFilesystemBackend {
             .truncate(truncate)
             .open(&path)
             .await?;
+
+        // Physical block preallocation via fallocate (SECURITY.md §6)
+        if self.preallocate && size_hint > 0 {
+            use fs4::tokio::AsyncFileExt;
+            match file.allocate(size_hint).await {
+                Ok(_) => {}
+                Err(e) if e.raw_os_error() == Some(28) || e.kind() == std::io::ErrorKind::Other => {
+                    return Err(VelcruxError::Protocol(
+                        crate::error::ProtocolError::DiskFull(format!(
+                            "preallocation fallocate failed: {e}"
+                        )),
+                    ));
+                }
+                Err(_) => {
+                    // Filesystem may not support fallocate; fall back to set_len
+                    let _ = file.set_len(size_hint).await;
+                }
+            }
+        }
+
         let written = if resumed && existed {
             tokio::fs::metadata(&path)
                 .await

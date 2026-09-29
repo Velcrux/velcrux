@@ -1893,7 +1893,7 @@ async fn run_remote_download_sync(
                         let target = src_entry.symlink_target.as_deref().unwrap_or("");
                         velcrux_core::storage::VPath::validate_symlink_target(&link_vpath, target)?;
 
-                        if let Ok(_) = std::fs::symlink_metadata(&local_file) {
+                        if std::fs::symlink_metadata(&local_file).is_ok() {
                             let _ = std::fs::remove_file(&local_file);
                         }
                         #[cfg(unix)]
@@ -1909,7 +1909,7 @@ async fn run_remote_download_sync(
                         continue;
                     } else if let Some(ref hard_target) = src_entry.hardlink_target {
                         let local_src = dst_dir.join(hard_target);
-                        if let Ok(_) = std::fs::symlink_metadata(&local_file) {
+                        if std::fs::symlink_metadata(&local_file).is_ok() {
                             let _ = std::fs::remove_file(&local_file);
                         }
                         std::fs::hard_link(&local_src, &local_file)?;

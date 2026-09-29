@@ -121,6 +121,8 @@ pub struct ServerStats {
     pub resource_limit_hits_bandwidth: Arc<AtomicU64>,
     /// Total quota limit exhaustion events.
     pub resource_limit_hits_quota: AtomicU64,
+    /// Total disk full / margin reservation rejection events.
+    pub disk_full_errors: AtomicU64,
     /// Total connection ceiling rejection events.
     pub resource_limit_hits_connections: AtomicU64,
     /// Total checksum verification mismatches.
@@ -184,6 +186,7 @@ impl Default for ServerStats {
             resource_limit_hits: AtomicU64::new(0),
             resource_limit_hits_bandwidth: Arc::new(AtomicU64::new(0)),
             resource_limit_hits_quota: AtomicU64::new(0),
+            disk_full_errors: AtomicU64::new(0),
             resource_limit_hits_connections: AtomicU64::new(0),
             checksum_mismatches: AtomicU64::new(0),
             checksum_mismatches_server: AtomicU64::new(0),
@@ -1234,6 +1237,27 @@ async fn handle_transfer_create(
         }
     }
 
+    // Disk space reservation margin check before staging (SECURITY.md §6)
+    if create.op == TransferOp::Upload && bytes_total > 0 {
+        if let Ok(avail) = backend.available_space().await {
+            let required = bytes_total.saturating_add(backend.min_free_space());
+            if avail < required {
+                stats
+                    .disk_full_errors
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .resource_limit_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::DiskFull,
+                    format!("insufficient disk space: available {avail} B < required {required} B"),
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+        }
+    }
+
     let rate_limiter = limits_provider
         .as_ref()
         .and_then(|lp| lp.get_rate_limiter(Some(&identity.name)));
@@ -1851,9 +1875,29 @@ async fn handle_transfer_create(
             _ => {}
         }
     } else {
-        stats
-            .checksum_mismatches
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Err(ref e) = res {
+            if let VelcruxError::Protocol(crate::error::ProtocolError::DiskFull(ref msg)) = e {
+                stats
+                    .disk_full_errors
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .resource_limit_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::DiskFull,
+                    msg.clone(),
+                );
+                let _ = write_frame(send, &Message::Error(err), 0).await;
+            } else {
+                stats
+                    .checksum_mismatches
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        } else {
+            stats
+                .checksum_mismatches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     res
