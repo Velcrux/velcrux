@@ -97,6 +97,9 @@ pub const MAX_XATTR_COUNT: usize = 256;
 /// Maximum total size of all extended attribute names and values for a single file entry (`SECURITY.md` §4).
 pub const MAX_TOTAL_XATTR_BYTES: usize = 256 * 1024;
 
+/// Maximum component depth for validated virtual paths (`SECURITY.md` §6).
+pub const MAX_PATH_DEPTH: usize = 128;
+
 #[cfg(test)]
 mod tests {
     use super::*;

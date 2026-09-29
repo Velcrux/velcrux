@@ -97,18 +97,74 @@ impl VPath {
         if raw.starts_with('/') {
             return Err(VPathError::Absolute);
         }
+        if raw.contains('\\') || raw.contains(':') {
+            return Err(VPathError::Traversal);
+        }
         if raw.chars().any(|c| c.is_control()) {
             return Err(VPathError::ForbiddenChar);
         }
         let mut normalised = String::with_capacity(raw.len());
         let mut first = true;
+        let mut depth = 0;
         let trailing_slash = raw.ends_with('/');
         for component in raw.split('/') {
+            depth += 1;
+            if depth > crate::protocol::limits::MAX_PATH_DEPTH {
+                return Err(VPathError::TooLong {
+                    len: depth,
+                    limit: crate::protocol::limits::MAX_PATH_DEPTH,
+                });
+            }
             if component.is_empty() {
                 return Err(VPathError::Traversal);
             }
             if component == "." || component == ".." {
                 return Err(VPathError::Traversal);
+            }
+            let decoded_dots = component.replace("%2e", ".").replace("%2E", ".");
+            if decoded_dots == "."
+                || decoded_dots == ".."
+                || decoded_dots.starts_with("..")
+                || decoded_dots.ends_with("..")
+                || decoded_dots.contains("/..")
+                || decoded_dots.contains("../")
+            {
+                return Err(VPathError::Traversal);
+            }
+            if component.to_ascii_lowercase().contains("%2f") {
+                return Err(VPathError::Traversal);
+            }
+            if component.ends_with('.') || component.ends_with(' ') {
+                return Err(VPathError::Traversal);
+            }
+            let upper = component.to_ascii_uppercase();
+            let stem = upper.split('.').next().unwrap_or(&upper);
+            if matches!(
+                stem,
+                "CON"
+                    | "PRN"
+                    | "AUX"
+                    | "NUL"
+                    | "COM1"
+                    | "COM2"
+                    | "COM3"
+                    | "COM4"
+                    | "COM5"
+                    | "COM6"
+                    | "COM7"
+                    | "COM8"
+                    | "COM9"
+                    | "LPT1"
+                    | "LPT2"
+                    | "LPT3"
+                    | "LPT4"
+                    | "LPT5"
+                    | "LPT6"
+                    | "LPT7"
+                    | "LPT8"
+                    | "LPT9"
+            ) {
+                return Err(VPathError::ForbiddenChar);
             }
             if component.len() > MAX_PATH_COMPONENT {
                 return Err(VPathError::ComponentTooLong {

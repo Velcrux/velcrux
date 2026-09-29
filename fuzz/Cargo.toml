@@ -1,0 +1,46 @@
+[package]
+name = "velcrux-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+velcrux-core = { path = "../crates/velcrux-core" }
+velcrux-server = { path = "../crates/velcrux-server" }
+tokio = { version = "1.40", features = ["rt", "macros"] }
+rustls = "0.21"
+toml = "0.8"
+
+[[bin]]
+name = "frame_decoder"
+path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest_decoder"
+path = "fuzz_targets/manifest_decoder.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "path_validator"
+path = "fuzz_targets/path_validator.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "config_parser"
+path = "fuzz_targets/config_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "cert_identity"
+path = "fuzz_targets/cert_identity.rs"
+test = false
+doc = false
