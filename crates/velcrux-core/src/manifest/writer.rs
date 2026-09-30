@@ -184,4 +184,9 @@ impl ManifestWriter {
     pub fn total_bytes(&self) -> u64 {
         self.total_bytes
     }
+
+    /// Return the destination spill path.
+    pub fn spill_path(&self) -> &Path {
+        &self.path
+    }
 }

@@ -50,8 +50,36 @@ pub fn scan_single_file_with_mode(
     let vpath = VPath::validate(vpath_str)
         .map_err(|e| VelcruxError::Protocol(ProtocolError::InvalidManifest(e.to_string())))?;
 
-    if metadata.is_dir() {
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
         let entry = FileEntry::directory(vpath, 0o755, 0, 0);
+        writer.add_entry(entry)?;
+        return Ok(());
+    }
+
+    let (mtime_sec, mtime_nsec) = match metadata.modified() {
+        Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => (d.as_secs() as i64, d.subsec_nanos()),
+            Err(_) => (0, 0),
+        },
+        Err(_) => (0, 0),
+    };
+
+    let sidecar = crate::storage::xattr_sidecar_path(&full_path);
+    let xattrs = if sidecar.exists() {
+        match std::fs::read(&sidecar) {
+            Ok(bytes) => crate::storage::decode_xattrs_canonical(&bytes).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    if file_type.is_symlink() {
+        let target = std::fs::read_link(&full_path)?;
+        let target_str = target.to_string_lossy().to_string();
+        let entry = FileEntry::symlink_with_target(vpath, 0o777, mtime_sec, mtime_nsec, target_str)
+            .with_xattrs(xattrs);
         writer.add_entry(entry)?;
         return Ok(());
     }
@@ -64,14 +92,6 @@ pub fn scan_single_file_with_mode(
     };
     #[cfg(not(unix))]
     let mode = 0o644;
-
-    let (mtime_sec, mtime_nsec) = match metadata.modified() {
-        Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
-            Ok(d) => (d.as_secs() as i64, d.subsec_nanos()),
-            Err(_) => (0, 0),
-        },
-        Err(_) => (0, 0),
-    };
 
     let file = File::open(&full_path)?;
     let mut chunks = Vec::new();
@@ -88,7 +108,8 @@ pub fn scan_single_file_with_mode(
 
     let entry = FileEntry::regular(
         vpath, file_size, mode, mtime_sec, mtime_nsec, file_hash, chunks,
-    );
+    )
+    .with_xattrs(xattrs);
 
     writer.add_entry(entry)?;
     Ok(())
@@ -107,29 +128,50 @@ pub fn scan_directory_tree_with_mode(
     params: ChunkParams,
 ) -> Result<()> {
     let root = root.as_ref();
-    let mut stack = vec![root.to_path_buf()];
+    scan_dir_recursive(root, root, writer, chunk_mode, params)
+}
 
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let rel = path
-                .strip_prefix(root)
-                .map_err(|_| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
+fn scan_dir_recursive(
+    root: &Path,
+    dir: &Path,
+    writer: &mut ManifestWriter,
+    chunk_mode: ChunkMode,
+    params: ChunkParams,
+) -> Result<()> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if name_str.starts_with(".velcrux-staging")
+            || name_str.starts_with(".velcrux-chunks")
+            || name_str.ends_with(".velcrux-partial")
+            || name_str.ends_with(".velcrux-xattr")
+        {
+            continue;
+        }
+        entries.push(entry);
+    }
+    entries.sort_by_key(|e| e.file_name());
 
-            let file_type = entry.file_type()?;
-            if file_type.is_dir() {
-                let vpath_str = rel
-                    .to_str()
-                    .ok_or_else(|| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
-                let vpath = VPath::validate(vpath_str).map_err(|e| {
-                    VelcruxError::Protocol(ProtocolError::InvalidManifest(e.to_string()))
-                })?;
-                writer.add_entry(FileEntry::directory(vpath, 0o755, 0, 0))?;
-                stack.push(path);
-            } else if file_type.is_file() {
-                scan_single_file_with_mode(root, rel, writer, chunk_mode, params)?;
-            }
+    for entry in entries {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(root)
+            .map_err(|_| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
+
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let vpath_str = rel
+                .to_str()
+                .ok_or_else(|| VelcruxError::Protocol(ProtocolError::InvalidPath))?;
+            let vpath = VPath::validate(vpath_str).map_err(|e| {
+                VelcruxError::Protocol(ProtocolError::InvalidManifest(e.to_string()))
+            })?;
+            writer.add_entry(FileEntry::directory(vpath, 0o755, 0, 0))?;
+            scan_dir_recursive(root, &path, writer, chunk_mode, params)?;
+        } else {
+            scan_single_file_with_mode(root, rel, writer, chunk_mode, params)?;
         }
     }
 

@@ -692,6 +692,385 @@ pub async fn recv_directory_manifest(
     Ok(entries)
 }
 
+/// Stream a manifest from an existing spill file over a bi-directional send stream without buffering in RAM.
+pub async fn send_streaming_manifest_from_spill(
+    send: &mut dyn crate::transport::BiSendStream,
+    spill_path: impl AsRef<Path>,
+    begin: &crate::protocol::message::ManifestBegin,
+) -> crate::error::Result<crate::protocol::message::ManifestEnd> {
+    use crate::manifest::writer::{SPILL_MAGIC, SPILL_VERSION};
+    use crate::protocol::message::{ManifestBatch, Message};
+    use crate::session::write_frame;
+    use std::fs::File;
+    use std::io::Read;
+
+    // Send MANIFEST_BEGIN
+    write_frame(send, &Message::ManifestBegin(begin.clone()), 0).await?;
+
+    let file = File::open(spill_path.as_ref())?;
+    let mut reader = std::io::BufReader::new(file);
+
+    // Verify spill header
+    let mut magic = [0u8; 4];
+    reader.read_exact(&mut magic)?;
+    if magic != SPILL_MAGIC {
+        return Err(crate::error::VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidManifest("invalid spill file magic".into()),
+        ));
+    }
+    let mut version = [0u8; 1];
+    reader.read_exact(&mut version)?;
+    if version[0] != SPILL_VERSION {
+        return Err(crate::error::VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidManifest(format!(
+                "unsupported spill file version {}",
+                version[0]
+            )),
+        ));
+    }
+
+    // Stream batches
+    loop {
+        let mut header = [0u8; 16]; // batch_index (8) + entry_count (4) + comp_len (4)
+        match reader.read_exact(&mut header) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(crate::error::VelcruxError::Io(e)),
+        }
+        let batch_index = u64::from_le_bytes(header[0..8].try_into().unwrap());
+        let entry_count = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let comp_len = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+
+        let mut compressed = vec![0u8; comp_len];
+        reader.read_exact(&mut compressed)?;
+
+        let batch = ManifestBatch {
+            batch_index,
+            entry_count,
+            compressed_payload: bytes::Bytes::from(compressed),
+        };
+        write_frame(send, &Message::ManifestBatch(batch), 0).await?;
+    }
+
+    let end = crate::protocol::message::ManifestEnd {
+        manifest_hash: begin.manifest_hash,
+    };
+    write_frame(send, &Message::ManifestEnd(end.clone()), 0).await?;
+
+    Ok(end)
+}
+
+/// Receive a streaming manifest from a bi-directional receive stream and save directly to a spill file with bounded RAM.
+pub async fn recv_streaming_manifest_to_spill(
+    recv: &mut dyn crate::transport::BiRecvStream,
+    spill_path: impl AsRef<Path>,
+) -> crate::error::Result<(
+    crate::protocol::message::ManifestBegin,
+    crate::protocol::message::ManifestEnd,
+)> {
+    use crate::manifest::codec::decode_file_entry;
+    use crate::manifest::reader::decompress_batch;
+    use crate::manifest::writer::{SPILL_MAGIC, SPILL_VERSION};
+    use crate::protocol::limits::{MAX_MANIFEST_BYTES, MAX_MANIFEST_ENTRIES};
+    use crate::protocol::message::{
+        ManifestBatch, ManifestBegin, ManifestEnd, MANIFEST_BATCH, MANIFEST_BEGIN, MANIFEST_END,
+    };
+    use crate::session::read_frame;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let frame = read_frame(recv)
+        .await?
+        .ok_or_else(|| crate::error::VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+
+    if frame.type_byte != MANIFEST_BEGIN {
+        return Err(crate::error::VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition("expected MANIFEST_BEGIN"),
+        ));
+    }
+    let begin = ManifestBegin::decode(&frame.payload)?;
+
+    let path = spill_path.as_ref().to_path_buf();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)?;
+    let mut writer = std::io::BufWriter::new(file);
+
+    writer.write_all(&SPILL_MAGIC)?;
+    writer.write_all(&[SPILL_VERSION])?;
+
+    let mut hasher = blake3::Hasher::new();
+    let mut total_entries = 0u64;
+    let mut total_manifest_bytes = 0u64;
+
+    let end = loop {
+        let frame = read_frame(recv).await?.ok_or_else(|| {
+            crate::error::VelcruxError::Protocol(crate::error::ProtocolError::Empty)
+        })?;
+
+        if frame.type_byte == MANIFEST_BATCH {
+            let batch = ManifestBatch::decode(&frame.payload)?;
+
+            // Decompress to validate entries and compute running hash
+            let decompressed = decompress_batch(&batch.compressed_payload)?;
+            total_manifest_bytes += decompressed.len() as u64;
+            if total_manifest_bytes > MAX_MANIFEST_BYTES {
+                return Err(crate::error::VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidManifest(format!(
+                        "manifest raw bytes exceeded limit {MAX_MANIFEST_BYTES}"
+                    )),
+                ));
+            }
+
+            let mut cursor = 0;
+            for _ in 0..batch.entry_count {
+                if cursor >= decompressed.len() {
+                    return Err(crate::error::VelcruxError::Protocol(
+                        crate::error::ProtocolError::Malformed(
+                            "MANIFEST_BATCH: truncated decompressed entries",
+                        ),
+                    ));
+                }
+                let slice = &decompressed[cursor..];
+                let (_entry, consumed) =
+                    decode_file_entry(slice).map_err(crate::error::VelcruxError::Protocol)?;
+                hasher.update(&slice[..consumed]);
+                cursor += consumed;
+                total_entries += 1;
+            }
+
+            if total_entries > MAX_MANIFEST_ENTRIES {
+                return Err(crate::error::VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidManifest(format!(
+                        "manifest entries exceeded limit {MAX_MANIFEST_ENTRIES}"
+                    )),
+                ));
+            }
+
+            // Write batch directly to spill file:
+            // [batch_index: 8B LE][entry_count: 4B LE][comp_len: 4B LE][compressed_payload]
+            writer.write_all(&batch.batch_index.to_le_bytes())?;
+            writer.write_all(&batch.entry_count.to_le_bytes())?;
+            let comp_len = batch.compressed_payload.len() as u32;
+            writer.write_all(&comp_len.to_le_bytes())?;
+            writer.write_all(&batch.compressed_payload)?;
+        } else if frame.type_byte == MANIFEST_END {
+            let end = ManifestEnd::decode(&frame.payload)?;
+            if end.manifest_hash != begin.manifest_hash {
+                return Err(crate::error::VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidManifest(
+                        "manifest hash mismatch at MANIFEST_END".into(),
+                    ),
+                ));
+            }
+            let computed = hasher.finalize();
+            if computed.as_bytes() != begin.manifest_hash.as_bytes() {
+                return Err(crate::error::VelcruxError::Protocol(
+                    crate::error::ProtocolError::InvalidManifest(format!(
+                        "manifest content hash mismatch: computed {}, expected {}",
+                        Hash::from_bytes(computed.as_bytes()).unwrap(),
+                        begin.manifest_hash
+                    )),
+                ));
+            }
+            break end;
+        } else {
+            return Err(crate::error::VelcruxError::Protocol(
+                crate::error::ProtocolError::InvalidStateTransition(
+                    "expected MANIFEST_BATCH or MANIFEST_END",
+                ),
+            ));
+        }
+    };
+
+    writer.flush()?;
+
+    Ok((begin, end))
+}
+
+/// Stream-diff two manifest readers in lockstep lexicographical order.
+///
+/// Computes file actions (Unchanged, Modify, Add, Delete) and aggregates metrics
+/// with strictly bounded RSS O(1) memory, regardless of directory size.
+pub fn diff_manifest_readers<F>(
+    src_reader: &mut crate::manifest::ManifestReader,
+    dst_reader: &mut crate::manifest::ManifestReader,
+    mut on_action: F,
+) -> crate::error::Result<DirectoryDiffSummary>
+where
+    F: FnMut(FileAction),
+{
+    let mut files_unchanged = 0usize;
+    let mut files_modified = 0usize;
+    let mut files_added = 0usize;
+    let mut files_deleted = 0usize;
+    let mut data_present = 0u64;
+    let mut data_to_transfer = 0u64;
+
+    let mut cur_src = src_reader.next_entry()?;
+    let mut cur_dst = dst_reader.next_entry()?;
+
+    while cur_src.is_some() || cur_dst.is_some() {
+        match (&cur_src, &cur_dst) {
+            (Some(sf), Some(df)) => match sf.path.as_str().cmp(df.path.as_str()) {
+                std::cmp::Ordering::Equal => {
+                    let is_same = sf.flags == df.flags
+                        && sf.size == df.size
+                        && sf.file_hash == df.file_hash
+                        && sf.xattrs == df.xattrs
+                        && sf.symlink_target == df.symlink_target
+                        && sf.hardlink_target == df.hardlink_target;
+                    if is_same {
+                        files_unchanged += 1;
+                        data_present += sf.size;
+                        on_action(FileAction {
+                            rel_path: sf.path.as_str().to_string(),
+                            action: FileActionType::Unchanged,
+                            src_size: sf.size,
+                            dst_size: df.size,
+                            src_hash: Some(sf.file_hash),
+                            bytes_to_transfer: 0,
+                            bytes_reusable: sf.size,
+                        });
+                    } else {
+                        files_modified += 1;
+                        data_to_transfer += sf.size;
+                        on_action(FileAction {
+                            rel_path: sf.path.as_str().to_string(),
+                            action: FileActionType::Modify,
+                            src_size: sf.size,
+                            dst_size: df.size,
+                            src_hash: Some(sf.file_hash),
+                            bytes_to_transfer: sf.size,
+                            bytes_reusable: 0,
+                        });
+                    }
+                    cur_src = src_reader.next_entry()?;
+                    cur_dst = dst_reader.next_entry()?;
+                }
+                std::cmp::Ordering::Less => {
+                    files_added += 1;
+                    data_to_transfer += sf.size;
+                    on_action(FileAction {
+                        rel_path: sf.path.as_str().to_string(),
+                        action: FileActionType::Add,
+                        src_size: sf.size,
+                        dst_size: 0,
+                        src_hash: Some(sf.file_hash),
+                        bytes_to_transfer: sf.size,
+                        bytes_reusable: 0,
+                    });
+                    cur_src = src_reader.next_entry()?;
+                }
+                std::cmp::Ordering::Greater => {
+                    files_deleted += 1;
+                    on_action(FileAction {
+                        rel_path: df.path.as_str().to_string(),
+                        action: FileActionType::Delete,
+                        src_size: 0,
+                        dst_size: df.size,
+                        src_hash: None,
+                        bytes_to_transfer: 0,
+                        bytes_reusable: 0,
+                    });
+                    cur_dst = dst_reader.next_entry()?;
+                }
+            },
+            (Some(sf), None) => {
+                files_added += 1;
+                data_to_transfer += sf.size;
+                on_action(FileAction {
+                    rel_path: sf.path.as_str().to_string(),
+                    action: FileActionType::Add,
+                    src_size: sf.size,
+                    dst_size: 0,
+                    src_hash: Some(sf.file_hash),
+                    bytes_to_transfer: sf.size,
+                    bytes_reusable: 0,
+                });
+                cur_src = src_reader.next_entry()?;
+            }
+            (None, Some(df)) => {
+                files_deleted += 1;
+                on_action(FileAction {
+                    rel_path: df.path.as_str().to_string(),
+                    action: FileActionType::Delete,
+                    src_size: 0,
+                    dst_size: df.size,
+                    src_hash: None,
+                    bytes_to_transfer: 0,
+                    bytes_reusable: 0,
+                });
+                cur_dst = dst_reader.next_entry()?;
+            }
+            (None, None) => break,
+        }
+    }
+
+    let total_data = data_present + data_to_transfer;
+    let estimated_reduction = if total_data > 0 {
+        (data_present as f64 / total_data as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(DirectoryDiffSummary {
+        files_unchanged,
+        files_modified,
+        files_added,
+        files_deleted,
+        data_present,
+        data_to_transfer,
+        estimated_reduction,
+    })
+}
+
+/// Convenience function to diff two manifest spill files without loading them into memory.
+pub fn diff_manifest_spill_files<F>(
+    src_spill: impl AsRef<Path>,
+    src_hash: Hash,
+    dst_spill: impl AsRef<Path>,
+    dst_hash: Hash,
+    on_action: F,
+) -> crate::error::Result<DirectoryDiffSummary>
+where
+    F: FnMut(FileAction),
+{
+    let mut src_reader = crate::manifest::ManifestReader::open(src_spill, src_hash)?;
+    let mut dst_reader = crate::manifest::ManifestReader::open(dst_spill, dst_hash)?;
+    diff_manifest_readers(&mut src_reader, &mut dst_reader, on_action)
+}
+
+/// Scan a local directory tree into a temporary spill file and diff it against a remote manifest reader.
+pub fn diff_local_dir_with_manifest<F>(
+    local_dir: impl AsRef<Path>,
+    spill_dir: impl AsRef<Path>,
+    remote_reader: &mut crate::manifest::ManifestReader,
+    chunk_params: ChunkParams,
+    on_action: F,
+) -> crate::error::Result<DirectoryDiffSummary>
+where
+    F: FnMut(FileAction),
+{
+    let temp_spill = spill_dir.as_ref().join(format!(
+        "local_scan_{}.spill",
+        crate::util::TransferId::generate()
+    ));
+    let mut writer = crate::manifest::ManifestWriter::new(&temp_spill, chunk_params)?;
+    crate::manifest::scanner::scan_directory_tree(local_dir, &mut writer)?;
+    let (begin, _, spill_path) = writer.finish()?;
+
+    let mut local_reader = crate::manifest::ManifestReader::open(&spill_path, begin.manifest_hash)?;
+    let summary = diff_manifest_readers(&mut local_reader, remote_reader, on_action);
+    let _ = std::fs::remove_file(spill_path);
+    summary
+}
+
 /// Compute a directory sync plan by scanning source and destination directories.
 pub fn plan_directory_sync(
     src_dir: &Path,
@@ -1311,5 +1690,110 @@ mod tests {
         assert_eq!(plan.summary.files_unchanged, 1);
         assert_eq!(plan.summary.files_modified, 1);
         assert_eq!(plan.summary.files_added, 1);
+    }
+
+    #[test]
+    fn test_diff_manifest_readers_streaming_reconciliation() {
+        use crate::chunking::ChunkParams;
+        use crate::manifest::entry::{ChunkDesc, FileEntry};
+        use crate::manifest::writer::ManifestWriter;
+        use crate::storage::VPath;
+        use tempfile::tempdir;
+
+        let td = tempdir().unwrap();
+        let src_spill = td.path().join("src.spill");
+        let dst_spill = td.path().join("dst.spill");
+
+        let mut src_writer = ManifestWriter::new(&src_spill, ChunkParams::default()).unwrap();
+        let mut dst_writer = ManifestWriter::new(&dst_spill, ChunkParams::default()).unwrap();
+
+        let h1 = Hash::from_bytes(&[1u8; 32]).unwrap();
+        let h2 = Hash::from_bytes(&[2u8; 32]).unwrap();
+        let h3 = Hash::from_bytes(&[3u8; 32]).unwrap();
+
+        // 1. Unchanged: "a_unchanged.dat" (size 100, h1)
+        let c1 = ChunkDesc::new(100, h1);
+        let e_unc = FileEntry::regular(
+            VPath::validate("a_unchanged.dat").unwrap(),
+            100,
+            0o644,
+            1000,
+            0,
+            h1,
+            vec![c1],
+        );
+        src_writer.add_entry(e_unc.clone()).unwrap();
+        dst_writer.add_entry(e_unc).unwrap();
+
+        // 2. Added on src: "b_added.dat" (size 250, h2)
+        let c2 = ChunkDesc::new(250, h2);
+        let e_add = FileEntry::regular(
+            VPath::validate("b_added.dat").unwrap(),
+            250,
+            0o644,
+            1000,
+            0,
+            h2,
+            vec![c2],
+        );
+        src_writer.add_entry(e_add).unwrap();
+
+        // 3. Modified: "c_modified.dat" (src size 300, h3; dst size 300, h1)
+        let c3_src = ChunkDesc::new(300, h3);
+        let e_mod_src = FileEntry::regular(
+            VPath::validate("c_modified.dat").unwrap(),
+            300,
+            0o644,
+            1000,
+            0,
+            h3,
+            vec![c3_src],
+        );
+        let c3_dst = ChunkDesc::new(300, h1);
+        let e_mod_dst = FileEntry::regular(
+            VPath::validate("c_modified.dat").unwrap(),
+            300,
+            0o644,
+            1000,
+            0,
+            h1,
+            vec![c3_dst],
+        );
+        src_writer.add_entry(e_mod_src).unwrap();
+        dst_writer.add_entry(e_mod_dst).unwrap();
+
+        // 4. Deleted on dst: "d_deleted.dat" (size 400, h2)
+        let c4 = ChunkDesc::new(400, h2);
+        let e_del = FileEntry::regular(
+            VPath::validate("d_deleted.dat").unwrap(),
+            400,
+            0o644,
+            1000,
+            0,
+            h2,
+            vec![c4],
+        );
+        dst_writer.add_entry(e_del).unwrap();
+
+        let (src_begin, _, src_path) = src_writer.finish().unwrap();
+        let (dst_begin, _, dst_path) = dst_writer.finish().unwrap();
+
+        let mut actions = Vec::new();
+        let summary = diff_manifest_spill_files(
+            &src_path,
+            src_begin.manifest_hash,
+            &dst_path,
+            dst_begin.manifest_hash,
+            |act| actions.push(act),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_unchanged, 1);
+        assert_eq!(summary.files_added, 1);
+        assert_eq!(summary.files_modified, 1);
+        assert_eq!(summary.files_deleted, 1);
+        assert_eq!(summary.data_present, 100);
+        assert_eq!(summary.data_to_transfer, 550); // added (250) + modified (300)
+        assert_eq!(actions.len(), 4);
     }
 }
