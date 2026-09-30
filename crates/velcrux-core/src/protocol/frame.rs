@@ -180,6 +180,8 @@ pub struct DataFrameFlags(pub u16);
 
 impl DataFrameFlags {
     pub const NONE: Self = Self(0);
+    /// Bit 0: chunk is a declared sparse hole (payload length 0, logical length as given) (PROTOCOL.md §3).
+    pub const HOLE: Self = Self(0x0001);
     /// Bit 1: payload is zstd-compressed (PROTOCOL.md §3).
     pub const COMPRESSED: Self = Self(0x0002);
 
@@ -191,6 +193,9 @@ impl DataFrameFlags {
     }
     pub const fn compressed(self) -> bool {
         (self.0 & 0x0002) != 0
+    }
+    pub const fn is_hole(self) -> bool {
+        (self.0 & 0x0001) != 0
     }
 }
 
@@ -362,6 +367,12 @@ pub fn encode_data_frame(
     chunk_hash: &crate::util::Hash,
     payload: &[u8],
 ) -> Vec<u8> {
+    if flags.is_hole() {
+        let mut out = Vec::with_capacity(DATA_FRAME_HEADER_LEN);
+        out.resize(DATA_FRAME_HEADER_LEN, 0);
+        encode_data_frame_header(&mut out, chunk_offset, chunk_len, flags, chunk_hash);
+        return out;
+    }
     debug_assert_eq!(
         payload.len() as u64,
         chunk_len as u64,

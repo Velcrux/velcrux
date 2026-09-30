@@ -23,8 +23,10 @@ use std::path::{Path, PathBuf};
 
 pub mod chunk_store;
 pub mod gc;
+pub mod sparse;
 pub use chunk_store::{ChunkStore, LocalChunkStore};
 pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
+pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
 use crate::error::{ProtocolError, VelcruxError};
 use crate::protocol::limits::{MAX_PATH_COMPONENT, MAX_PATH_TOTAL};
@@ -755,6 +757,9 @@ impl StorageBackend for LocalFilesystemBackend {
                     let _ = file.set_len(size_hint).await;
                 }
             }
+        } else if size_hint > 0 && !resumed {
+            // Allocate logical sparse length without physical block preallocation (REQUIREMENTS.md §33)
+            let _ = file.set_len(size_hint).await;
         }
 
         let written = if resumed && existed {

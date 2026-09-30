@@ -94,6 +94,20 @@ impl Hash {
         Self::from_blake3(blake3::hash(bytes))
     }
 
+    /// Efficiently compute the BLAKE3 hash of `len` consecutive zero bytes
+    /// using a fixed 64 KiB zero buffer without allocating a `len`-sized vector.
+    pub fn of_zeros(len: u64) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        static ZERO_BUF: [u8; 64 * 1024] = [0u8; 64 * 1024];
+        let mut remaining = len;
+        while remaining > 0 {
+            let chunk = remaining.min(ZERO_BUF.len() as u64) as usize;
+            hasher.update(&ZERO_BUF[..chunk]);
+            remaining -= chunk as u64;
+        }
+        Self::from_blake3(hasher.finalize())
+    }
+
     fn from_blake3(h: blake3::Hash) -> Self {
         let bytes = *h.as_bytes();
         debug_assert_eq!(bytes.len(), CHUNK_HASH_BYTES);
@@ -231,5 +245,15 @@ mod tests {
     fn algo_name_is_stable() {
         assert_eq!(HashAlgorithm::Blake3.name(), "blake3");
         assert_eq!(format!("{}", HashAlgorithm::Blake3), "blake3");
+    }
+
+    #[test]
+    fn of_zeros_matches_full_vector() {
+        let size = 128 * 1024 + 37;
+        let zeros = vec![0u8; size];
+        let full_hash = Hash::of(&zeros);
+        let zeros_hash = Hash::of_zeros(size as u64);
+        assert_eq!(full_hash, zeros_hash);
+        assert_eq!(Hash::of_zeros(0), Hash::of(&[]));
     }
 }

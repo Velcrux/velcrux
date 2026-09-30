@@ -927,25 +927,35 @@ pub async fn server_upload_session_with_limits(
                         None => break,
                     };
                     let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
-                    let payload_len = hdr.chunk_len as usize;
-                    let payload = match data_recv.read_exact(payload_len).await? {
-                        Some(b) => b,
-                        None => {
-                            return Err(protocol_violation(
-                                "upload: chunk payload shorter than declared (stream EOF)",
-                            ));
+                    let is_hole = hdr.flags.is_hole();
+                    let payload_len = if is_hole { 0 } else { hdr.chunk_len as usize };
+                    let payload = if payload_len > 0 {
+                        match data_recv.read_exact(payload_len).await? {
+                            Some(b) => b,
+                            None => {
+                                return Err(protocol_violation(
+                                    "upload: chunk payload shorter than declared (stream EOF)",
+                                ));
+                            }
                         }
-                    };
-                    let chunk_data = if hdr.flags.compressed() {
-                        crate::protocol::compression::decompress_payload_bounded(
-                            &payload,
-                            MAX_CHUNK_SIZE as usize,
-                            Some(500),
-                        )?
                     } else {
-                        payload.to_vec()
+                        bytes::Bytes::new()
                     };
-                    let computed = hash_bytes(&chunk_data);
+                    let (chunk_data, computed) = if is_hole {
+                        (Vec::new(), Hash::of_zeros(hdr.chunk_len as u64))
+                    } else {
+                        let data = if hdr.flags.compressed() {
+                            crate::protocol::compression::decompress_payload_bounded(
+                                &payload,
+                                MAX_CHUNK_SIZE as usize,
+                                Some(500),
+                            )?
+                        } else {
+                            payload.to_vec()
+                        };
+                        let h = hash_bytes(&data);
+                        (data, h)
+                    };
                     if computed != hdr.chunk_hash {
                         return Err(VelcruxError::Protocol(
                             crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
@@ -954,9 +964,11 @@ pub async fn server_upload_session_with_limits(
                     let chunk_index = hdr.chunk_offset / chunk_size;
                     let mut bm = shared_bitmap.lock().await;
                     if !bm.contains(chunk_index) {
-                        let mut w = writer.lock().await;
-                        w.write_at(hdr.chunk_offset, &chunk_data).await?;
-                        bm.mark_complete(chunk_index, chunk_data.len() as u64);
+                        if !is_hole {
+                            let mut w = writer.lock().await;
+                            w.write_at(hdr.chunk_offset, &chunk_data).await?;
+                        }
+                        bm.mark_complete(chunk_index, hdr.chunk_len as u64);
                     }
                     drop(bm);
                     if let Some(ref lim) = limiter_clone {
@@ -1007,25 +1019,35 @@ pub async fn server_upload_session_with_limits(
                 None => break,
             };
             let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
-            let payload_len = hdr.chunk_len as usize;
-            let payload = match data_recv.read_exact(payload_len).await? {
-                Some(b) => b,
-                None => {
-                    return Err(protocol_violation(
-                        "upload: chunk payload shorter than declared (stream EOF)",
-                    ));
+            let is_hole = hdr.flags.is_hole();
+            let payload_len = if is_hole { 0 } else { hdr.chunk_len as usize };
+            let payload = if payload_len > 0 {
+                match data_recv.read_exact(payload_len).await? {
+                    Some(b) => b,
+                    None => {
+                        return Err(protocol_violation(
+                            "upload: chunk payload shorter than declared (stream EOF)",
+                        ));
+                    }
                 }
-            };
-            let chunk_data = if hdr.flags.compressed() {
-                crate::protocol::compression::decompress_payload_bounded(
-                    &payload,
-                    MAX_CHUNK_SIZE as usize,
-                    Some(500),
-                )?
             } else {
-                payload.to_vec()
+                bytes::Bytes::new()
             };
-            let computed = hash_bytes(&chunk_data);
+            let (chunk_data, computed) = if is_hole {
+                (Vec::new(), Hash::of_zeros(hdr.chunk_len as u64))
+            } else {
+                let data = if hdr.flags.compressed() {
+                    crate::protocol::compression::decompress_payload_bounded(
+                        &payload,
+                        MAX_CHUNK_SIZE as usize,
+                        Some(500),
+                    )?
+                } else {
+                    payload.to_vec()
+                };
+                let h = hash_bytes(&data);
+                (data, h)
+            };
             if computed != hdr.chunk_hash {
                 return Err(VelcruxError::Protocol(
                     crate::error::ProtocolError::Malformed("upload: chunk hash mismatch"),
@@ -1033,9 +1055,11 @@ pub async fn server_upload_session_with_limits(
             }
             let chunk_index = hdr.chunk_offset / chunk_size;
             if !bitmap.contains(chunk_index) {
-                writer.write_at(hdr.chunk_offset, &chunk_data).await?;
-                bitmap.mark_complete(chunk_index, chunk_data.len() as u64);
-                bytes_received = bytes_received.saturating_add(chunk_data.len() as u64);
+                if !is_hole {
+                    writer.write_at(hdr.chunk_offset, &chunk_data).await?;
+                }
+                bitmap.mark_complete(chunk_index, hdr.chunk_len as u64);
+                bytes_received = bytes_received.saturating_add(hdr.chunk_len as u64);
             }
             if let Some(ref lim) = rate_limiter {
                 lim.acquire(payload_len).await;
