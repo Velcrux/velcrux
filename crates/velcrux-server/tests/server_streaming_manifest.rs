@@ -265,8 +265,7 @@ async fn test_streaming_manifest_live_quic_transfer() {
                     .unwrap();
 
                 let a_frame = read_frame(recv.as_mut()).await.unwrap().unwrap();
-                let _auth =
-                    velcrux_core::protocol::message::Auth::decode(a_frame.payload).unwrap();
+                let _auth = velcrux_core::protocol::message::Auth::decode(a_frame.payload).unwrap();
                 let ack_auth = velcrux_core::protocol::message::AuthOk {
                     identity: "manifest-client".into(),
                     permissions: 0xFF,
