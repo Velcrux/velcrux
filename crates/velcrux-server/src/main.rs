@@ -113,6 +113,18 @@ enum Cmd {
         #[arg(long)]
         conn_id: Option<u64>,
     },
+    /// Export the canonical Grafana dashboard JSON (deploy/grafana/velcrux-overview.json).
+    ExportDashboard {
+        /// Optional file path to write to (defaults to stdout).
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+    /// Export the canonical Prometheus alert rules YAML (deploy/prometheus/alerts.yml).
+    ExportAlerts {
+        /// Optional file path to write to (defaults to stdout).
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -334,6 +346,33 @@ async fn main() -> anyhow::Result<()> {
                 println!("Successfully terminated {} active session(s).", resp.killed);
             } else {
                 println!("No matching active sessions found.");
+            }
+        }
+        Cmd::ExportDashboard { out } => {
+            let json = metrics::grafana_dashboard_json();
+            if let Some(path) = out {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(&path, json)
+                    .with_context(|| format!("failed to write dashboard to {}", path.display()))?;
+                println!("Exported Grafana dashboard to {}", path.display());
+            } else {
+                print!("{json}");
+            }
+        }
+        Cmd::ExportAlerts { out } => {
+            let yaml = metrics::prometheus_alerts_yaml();
+            if let Some(path) = out {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(&path, yaml).with_context(|| {
+                    format!("failed to write alert rules to {}", path.display())
+                })?;
+                println!("Exported Prometheus alert rules to {}", path.display());
+            } else {
+                print!("{yaml}");
             }
         }
     }

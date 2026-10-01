@@ -1,0 +1,62 @@
+groups:
+  - name: velcrux-alerts
+    rules:
+      - alert: VelcruxChecksumMismatch
+        expr: increase(velcrux_checksum_mismatch_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          tier: storage
+        annotations:
+          summary: "Cryptographic hash mismatch detected on {{ $labels.instance }}"
+          description: "Velcrux detected a cryptographic hash mismatch (side={{ $labels.side }}) on {{ $labels.instance }}. Immediate investigation required for bit-rot, storage corruption, or transmission tampering."
+
+      - alert: VelcruxAuthzDenialSpike
+        expr: rate(velcrux_authz_denials_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          tier: security
+        annotations:
+          summary: "Spike in authorization denials on {{ $labels.instance }}"
+          description: "Velcrux is rejecting unauthorized transfer requests at a rate of {{ $value | humanize }} denials/sec on {{ $labels.instance }}."
+
+      - alert: VelcruxDiskSpaceExhausted
+        expr: increase(velcrux_disk_full_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          tier: storage
+        annotations:
+          summary: "Velcrux transfers failing due to ENOSPC disk-full condition on {{ $labels.instance }}"
+          description: "Available disk space is insufficient to honor the configured free space reservation threshold. Clean up unreferenced chunks or expand volume capacity."
+
+      - alert: VelcruxHighPacketLoss
+        expr: velcrux_quic_loss_ratio > 0.05
+        for: 3m
+        labels:
+          severity: warning
+          tier: network
+        annotations:
+          summary: "Sustained high QUIC packet loss on {{ $labels.instance }}"
+          description: "QUIC packet loss ratio is {{ $value | humanizePercentage }} on {{ $labels.instance }}, exceeding the 5% threshold."
+
+      - alert: VelcruxResourceLimitSaturation
+        expr: rate(velcrux_resource_limit_hits_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          tier: system
+        annotations:
+          summary: "Sustained resource limit hits on {{ $labels.instance }}"
+          description: "Resource limit enforcement (limit={{ $labels.limit }}) is triggering frequently on {{ $labels.instance }}."
+
+      - alert: VelcruxProcessHighMemory
+        expr: velcrux_process_resident_bytes > 8589934592
+        for: 5m
+        labels:
+          severity: warning
+          tier: system
+        annotations:
+          summary: "High memory consumption on {{ $labels.instance }}"
+          description: "Velcrux resident set size has exceeded 8 GiB on {{ $labels.instance }}."

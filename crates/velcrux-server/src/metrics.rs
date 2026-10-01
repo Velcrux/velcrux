@@ -402,3 +402,13 @@ pub async fn start_metrics_server_with_registry(
 
     Ok((local_addr, shutdown_tx))
 }
+
+/// Returns the canonical Grafana dashboard definition as a JSON string (`deploy/grafana/velcrux-overview.json`).
+pub fn grafana_dashboard_json() -> &'static str {
+    include_str!("../../../deploy/grafana/velcrux-overview.json")
+}
+
+/// Returns the canonical Prometheus alert rules as a YAML string (`deploy/prometheus/alerts.yml`).
+pub fn prometheus_alerts_yaml() -> &'static str {
+    include_str!("../../../deploy/prometheus/alerts.yml")
+}

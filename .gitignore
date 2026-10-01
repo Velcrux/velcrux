@@ -28,10 +28,11 @@ benches/results/
 # Fuzz corpora — they grow without bound
 fuzz/corpus/
 
-# Hide all markdown files except README.md and CLAUDE.md
+# Hide all markdown files except README.md, CLAUDE.md, and docs/METRICS.md
 *.md
 **/*.md
 !README.md
 !CLAUDE.md
+!docs/METRICS.md
 
 
