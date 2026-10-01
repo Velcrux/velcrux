@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy dependency manifests and source tree
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY deploy ./deploy
 
 # Build release binaries for client and server
 RUN cargo build --release -p velcrux-server -p velcrux-client
