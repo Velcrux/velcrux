@@ -323,7 +323,7 @@ storage volumes must persist across container restarts or resume stops working.
 ## 11. Documented limitations
 
 - Whole-directory commit is not atomic. Per-file commit is.
-- No xattr or ACL transfer.
+- POSIX metadata: Extended Attributes (`xattr`) are supported via canonical binary serialization (`.velcrux-xattr` sidecars and `TransferOp::SetXattr` with namespace security validation); symbolic link replication preserves relative link targets with strict lexical containment defense; POSIX permissions (`mode`) and timestamps (`mtime`) are preserved on destination files. Windows ACL inheritance remains OS-managed.
 - No Windows server.
 - CRL-based revocation only; no OCSP.
 - Server must be directly reachable on UDP; no NAT traversal.

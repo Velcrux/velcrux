@@ -1550,6 +1550,48 @@ async fn create_remote_hardlink(
     Ok(())
 }
 
+async fn set_remote_xattrs(
+    session: &mut ClientSession,
+    xattrs: &[(String, Vec<u8>)],
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    if xattrs.is_empty() {
+        return Ok(());
+    }
+    use velcrux_core::protocol::message::{Committed, Message, TransferCreate, TransferOp};
+    use velcrux_core::session::encode_message;
+
+    let payload = serde_json::to_string(xattrs)?;
+    let create = TransferCreate {
+        op: TransferOp::SetXattr,
+        src_path: payload,
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::COMMITTED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!(
+                "remote set_xattrs failed: code={:?} detail={:?}",
+                err.code,
+                err.detail
+            );
+        }
+        anyhow::bail!(
+            "expected COMMITTED for set_xattrs, got 0x{:02x}",
+            frame.type_byte
+        );
+    }
+    let _committed = Committed::decode(frame.payload)?;
+    Ok(())
+}
+
 async fn run_download(
     cli: &Cli,
     conn: &dyn velcrux_core::transport::Connection,
@@ -1698,6 +1740,11 @@ async fn run_remote_upload_sync(
                     if src_entry.is_symlink {
                         let target = src_entry.symlink_target.as_deref().unwrap_or("");
                         create_remote_symlink(&mut session, target, &remote_file).await?;
+                        if !src_entry.xattrs.is_empty() {
+                            let _ =
+                                set_remote_xattrs(&mut session, &src_entry.xattrs, &remote_file)
+                                    .await;
+                        }
                         files_transferred += 1;
                         files_committed += 1;
                         continue;
@@ -1708,6 +1755,11 @@ async fn run_remote_upload_sync(
                             format!("{}/{}", vpath.trim_end_matches('/'), hard_target)
                         };
                         create_remote_hardlink(&mut session, &remote_src, &remote_file).await?;
+                        if !src_entry.xattrs.is_empty() {
+                            let _ =
+                                set_remote_xattrs(&mut session, &src_entry.xattrs, &remote_file)
+                                    .await;
+                        }
                         files_transferred += 1;
                         files_committed += 1;
                         continue;
@@ -1724,6 +1776,12 @@ async fn run_remote_upload_sync(
                     cli,
                 )
                 .await?;
+                if let Some(src_entry) = src_files.get(&item.rel_path) {
+                    if !src_entry.xattrs.is_empty() {
+                        let _ =
+                            set_remote_xattrs(&mut session, &src_entry.xattrs, &remote_file).await;
+                    }
+                }
                 files_transferred += 1;
                 files_committed += 1;
                 wire_bytes += size;
@@ -1904,6 +1962,14 @@ async fn run_remote_download_sync(
                         {
                             std::os::windows::fs::symlink_file(target, &local_file)?;
                         }
+
+                        if !src_entry.xattrs.is_empty() {
+                            let sidecar = velcrux_core::storage::xattr_sidecar_path(&local_file);
+                            let raw =
+                                velcrux_core::storage::encode_xattrs_canonical(&src_entry.xattrs);
+                            let _ = std::fs::write(&sidecar, raw);
+                        }
+
                         files_transferred += 1;
                         files_committed += 1;
                         continue;
@@ -1913,6 +1979,14 @@ async fn run_remote_download_sync(
                             let _ = std::fs::remove_file(&local_file);
                         }
                         std::fs::hard_link(&local_src, &local_file)?;
+
+                        if !src_entry.xattrs.is_empty() {
+                            let sidecar = velcrux_core::storage::xattr_sidecar_path(&local_file);
+                            let raw =
+                                velcrux_core::storage::encode_xattrs_canonical(&src_entry.xattrs);
+                            let _ = std::fs::write(&sidecar, raw);
+                        }
+
                         files_transferred += 1;
                         files_committed += 1;
                         continue;
@@ -1928,6 +2002,36 @@ async fn run_remote_download_sync(
                     cli,
                 )
                 .await?;
+
+                if let Some(src_entry) = src_files.get(&item.rel_path) {
+                    if !src_entry.xattrs.is_empty() {
+                        let sidecar = velcrux_core::storage::xattr_sidecar_path(&local_file);
+                        let raw = velcrux_core::storage::encode_xattrs_canonical(&src_entry.xattrs);
+                        let _ = std::fs::write(&sidecar, raw);
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if src_entry.mode != 0 {
+                            let _ = std::fs::set_permissions(
+                                &local_file,
+                                std::fs::Permissions::from_mode(src_entry.mode),
+                            );
+                        }
+                    }
+                    if src_entry.mtime_sec != 0 {
+                        let duration = std::time::Duration::new(
+                            src_entry.mtime_sec as u64,
+                            src_entry.mtime_nsec,
+                        );
+                        if let Ok(f) = std::fs::File::open(&local_file) {
+                            let times = std::fs::FileTimes::new()
+                                .set_modified(std::time::UNIX_EPOCH + duration);
+                            let _ = f.set_times(times);
+                        }
+                    }
+                }
+
                 files_transferred += 1;
                 files_committed += 1;
                 wire_bytes += size;
@@ -1935,8 +2039,12 @@ async fn run_remote_download_sync(
             velcrux_core::sync::FileActionType::Delete => {
                 if delete_after {
                     let local_file = dst_dir.join(&item.rel_path);
-                    if local_file.exists() {
-                        std::fs::remove_file(&local_file)?;
+                    if local_file.symlink_metadata().is_ok() {
+                        let _ = std::fs::remove_file(&local_file);
+                        let sidecar = velcrux_core::storage::xattr_sidecar_path(&local_file);
+                        if sidecar.symlink_metadata().is_ok() {
+                            let _ = std::fs::remove_file(&sidecar);
+                        }
                         files_deleted += 1;
                     }
                 }

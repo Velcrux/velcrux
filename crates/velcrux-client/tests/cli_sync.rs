@@ -587,3 +587,71 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
         b"child content"
     );
 }
+
+#[test]
+fn test_cli_sync_posix_metadata_and_symlinks() {
+    let temp = tempdir().unwrap();
+    let src = temp.path().join("source");
+    let dst = temp.path().join("destination");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+
+    let target_file = src.join("data.txt");
+    std::fs::write(&target_file, b"data content").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&target_file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink("data.txt", src.join("data_link.txt")).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file("data.txt", src.join("data_link.txt")).unwrap();
+    }
+
+    let sidecar = velcrux_core::storage::xattr_sidecar_path(&target_file);
+    let xattrs = vec![("user.tag".to_string(), b"verified".to_vec())];
+    std::fs::write(
+        &sidecar,
+        velcrux_core::storage::encode_xattrs_canonical(&xattrs),
+    )
+    .unwrap();
+
+    let output = Command::new(velcrux_bin())
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to execute velcrux sync");
+
+    assert!(output.status.success());
+
+    // Verify destination file, symlink, and xattr sidecar
+    let dst_target = dst.join("data.txt");
+    let dst_link = dst.join("data_link.txt");
+    let dst_sidecar = velcrux_core::storage::xattr_sidecar_path(&dst_target);
+
+    assert!(dst_target.exists());
+    assert!(dst_link
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        std::fs::read_link(&dst_link).unwrap().to_string_lossy(),
+        "data.txt"
+    );
+
+    assert!(dst_sidecar.exists());
+    let raw = std::fs::read(&dst_sidecar).unwrap();
+    let decoded = velcrux_core::storage::decode_xattrs_canonical(&raw).unwrap();
+    assert_eq!(decoded, xattrs);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&dst_target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+}

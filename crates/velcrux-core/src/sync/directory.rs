@@ -181,13 +181,7 @@ pub struct DirectorySyncResult {
     pub store_bytes_reused: u64,
 }
 
-/// Helper representing scanned file metadata.
-#[derive(Debug, Clone)]
-struct ScannedFile {
-    size: u64,
-}
-
-/// Scanned directory entry with size, whole-file BLAKE3 hash, link metadata, and xattrs.
+/// Scanned directory entry with size, whole-file BLAKE3 hash, link metadata, mode, mtime, and xattrs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedEntry {
     pub size: u64,
@@ -196,6 +190,9 @@ pub struct ScannedEntry {
     pub symlink_target: Option<String>,
     pub hardlink_target: Option<String>,
     pub xattrs: Vec<(String, Vec<u8>)>,
+    pub mode: u32,
+    pub mtime_sec: i64,
+    pub mtime_nsec: u32,
 }
 
 impl ScannedEntry {
@@ -207,6 +204,9 @@ impl ScannedEntry {
             symlink_target: None,
             hardlink_target: None,
             xattrs: Vec::new(),
+            mode: 0o644,
+            mtime_sec: 0,
+            mtime_nsec: 0,
         }
     }
 
@@ -220,6 +220,9 @@ impl ScannedEntry {
             symlink_target: Some(target),
             hardlink_target: None,
             xattrs: Vec::new(),
+            mode: 0o777,
+            mtime_sec: 0,
+            mtime_nsec: 0,
         }
     }
 
@@ -231,11 +234,25 @@ impl ScannedEntry {
             symlink_target: None,
             hardlink_target: Some(target),
             xattrs: Vec::new(),
+            mode: 0o644,
+            mtime_sec: 0,
+            mtime_nsec: 0,
         }
     }
 
     pub fn with_xattrs(mut self, xattrs: Vec<(String, Vec<u8>)>) -> Self {
         self.xattrs = xattrs;
+        self
+    }
+
+    pub fn with_mode(mut self, mode: u32) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn with_mtime(mut self, mtime_sec: i64, mtime_nsec: u32) -> Self {
+        self.mtime_sec = mtime_sec;
+        self.mtime_nsec = mtime_nsec;
         self
     }
 }
@@ -302,6 +319,23 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
             // Symlinks are never followed for resolution/traversal (SECURITY.md §4, ARCHITECTURE.md §8)
             let target_path = std::fs::read_link(&path)?;
             let target_str = target_path.to_string_lossy().to_string();
+            let sym_meta = std::fs::symlink_metadata(&path)?;
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                sym_meta.permissions().mode()
+            };
+            #[cfg(not(unix))]
+            let mode = 0o777;
+
+            let (mtime_sec, mtime_nsec) = match sym_meta.modified() {
+                Ok(t) => {
+                    let d = t.duration_since(UNIX_EPOCH).unwrap_or_default();
+                    (d.as_secs() as i64, d.subsec_nanos())
+                }
+                Err(_) => (0, 0),
+            };
+
             let sidecar = crate::storage::xattr_sidecar_path(&path);
             let xattrs = if sidecar.exists() {
                 match std::fs::read(&sidecar) {
@@ -315,11 +349,30 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
             };
             files.insert(
                 rel_str,
-                ScannedEntry::symlink(target_str).with_xattrs(xattrs),
+                ScannedEntry::symlink(target_str)
+                    .with_xattrs(xattrs)
+                    .with_mode(mode)
+                    .with_mtime(mtime_sec, mtime_nsec),
             );
         } else if file_type.is_file() {
             let metadata = std::fs::metadata(&path)?;
             let hash = compute_file_hash(&path)?;
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode()
+            };
+            #[cfg(not(unix))]
+            let mode = 0o644;
+
+            let (mtime_sec, mtime_nsec) = match metadata.modified() {
+                Ok(t) => {
+                    let d = t.duration_since(UNIX_EPOCH).unwrap_or_default();
+                    (d.as_secs() as i64, d.subsec_nanos())
+                }
+                Err(_) => (0, 0),
+            };
+
             let sidecar = crate::storage::xattr_sidecar_path(&path);
             let xattrs = if sidecar.exists() {
                 match std::fs::read(&sidecar) {
@@ -343,7 +396,9 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                         files.insert(
                             rel_str,
                             ScannedEntry::hardlink(metadata.len(), hash, first_path.clone())
-                                .with_xattrs(xattrs),
+                                .with_xattrs(xattrs)
+                                .with_mode(mode)
+                                .with_mtime(mtime_sec, mtime_nsec),
                         );
                         continue;
                     } else {
@@ -354,58 +409,11 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
 
             files.insert(
                 rel_str,
-                ScannedEntry::file(metadata.len(), hash).with_xattrs(xattrs),
+                ScannedEntry::file(metadata.len(), hash)
+                    .with_xattrs(xattrs)
+                    .with_mode(mode)
+                    .with_mtime(mtime_sec, mtime_nsec),
             );
-        }
-    }
-
-    Ok(files)
-}
-
-fn scan_dir_files(root: &Path) -> std::io::Result<BTreeMap<String, ScannedFile>> {
-    let mut files = BTreeMap::new();
-    if !root.exists() {
-        return Ok(files);
-    }
-
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let file_type = entry.file_type()?;
-
-            let file_name = entry.file_name();
-            let name_str = file_name.to_string_lossy();
-            // Skip staging and partial files
-            if name_str.starts_with(".velcrux-staging")
-                || name_str.starts_with(".velcrux-chunks")
-                || name_str.ends_with(".velcrux-partial")
-            {
-                continue;
-            }
-
-            if file_type.is_dir() {
-                stack.push(path);
-            } else if file_type.is_file() {
-                let rel = path
-                    .strip_prefix(root)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-                let rel_str = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                let metadata = entry.metadata()?;
-
-                files.insert(
-                    rel_str,
-                    ScannedFile {
-                        size: metadata.len(),
-                    },
-                );
-            }
         }
     }
 
@@ -457,9 +465,11 @@ pub fn plan_directory_diff(
             (Some(sf), Some(df)) => {
                 let is_same = sf.is_symlink == df.is_symlink
                     && sf.symlink_target == df.symlink_target
+                    && sf.hardlink_target == df.hardlink_target
                     && sf.size == df.size
                     && sf.hash == df.hash
-                    && sf.xattrs == df.xattrs;
+                    && sf.xattrs == df.xattrs
+                    && (sf.mode == 0 || df.mode == 0 || (sf.mode & 0o777) == (df.mode & 0o777));
                 if is_same {
                     files_unchanged += 1;
                     data_present += sf.size;
@@ -563,13 +573,17 @@ pub async fn send_directory_manifest(
         let fe = if entry.is_symlink {
             FileEntry::symlink_with_target(
                 vpath,
-                0o777,
-                0,
-                0,
+                entry.mode,
+                entry.mtime_sec,
+                entry.mtime_nsec,
                 entry.symlink_target.clone().unwrap_or_default(),
             )
         } else if let Some(ref hard_target) = entry.hardlink_target {
-            FileEntry::hardlink(vpath, hard_target.clone(), entry.size, entry.hash)
+            let mut hfe = FileEntry::hardlink(vpath, hard_target.clone(), entry.size, entry.hash);
+            hfe.mode = entry.mode;
+            hfe.mtime_sec = entry.mtime_sec;
+            hfe.mtime_nsec = entry.mtime_nsec;
+            hfe
         } else {
             let mut chunks = Vec::new();
             let mut remaining = entry.size;
@@ -580,7 +594,15 @@ pub async fn send_directory_manifest(
                 ));
                 remaining -= chunk_len;
             }
-            FileEntry::regular(vpath, entry.size, 0o644, 0, 0, entry.hash, chunks)
+            FileEntry::regular(
+                vpath,
+                entry.size,
+                entry.mode,
+                entry.mtime_sec,
+                entry.mtime_nsec,
+                entry.hash,
+                chunks,
+            )
         };
         let fe = fe.with_xattrs(entry.xattrs.clone());
         let mut buf = Vec::new();
@@ -658,14 +680,20 @@ pub async fn recv_directory_manifest(
             for fe in file_entries {
                 let scanned = if fe.flags.file_type() == crate::manifest::entry::FileType::Symlink {
                     ScannedEntry::symlink(fe.symlink_target.unwrap_or_default())
+                        .with_mode(fe.mode)
+                        .with_mtime(fe.mtime_sec, fe.mtime_nsec)
                 } else if fe.flags.is_hardlink() {
                     ScannedEntry::hardlink(
                         fe.size,
                         fe.file_hash,
                         fe.hardlink_target.unwrap_or_default(),
                     )
+                    .with_mode(fe.mode)
+                    .with_mtime(fe.mtime_sec, fe.mtime_nsec)
                 } else {
                     ScannedEntry::file(fe.size, fe.file_hash)
+                        .with_mode(fe.mode)
+                        .with_mtime(fe.mtime_sec, fe.mtime_nsec)
                 };
                 let scanned = scanned.with_xattrs(fe.xattrs);
                 entries.insert(fe.path.as_str().to_string(), scanned);
@@ -1078,8 +1106,8 @@ pub fn plan_directory_sync(
     options: &DirectorySyncOptions,
     chunk_store: Option<&LocalChunkStore>,
 ) -> Result<DirectoryPlan, SyncError> {
-    let src_files = scan_dir_files(src_dir)?;
-    let dst_files = scan_dir_files(dst_dir)?;
+    let src_files = scan_dir_entries(src_dir)?;
+    let dst_files = scan_dir_entries(dst_dir)?;
 
     let mut actions = Vec::new();
     let mut files_unchanged = 0usize;
@@ -1104,18 +1132,60 @@ pub fn plan_directory_sync(
     for (rel_path, (sf_opt, df_opt)) in all_paths {
         match (sf_opt, df_opt) {
             (Some(sf), Some(df)) => {
+                if sf.is_symlink {
+                    let is_same = df.is_symlink
+                        && sf.symlink_target == df.symlink_target
+                        && sf.xattrs == df.xattrs;
+                    if is_same {
+                        files_unchanged += 1;
+                        data_present += sf.size;
+                        actions.push(FileAction {
+                            rel_path,
+                            action: FileActionType::Unchanged,
+                            src_size: sf.size,
+                            dst_size: df.size,
+                            src_hash: Some(sf.hash),
+                            bytes_to_transfer: 0,
+                            bytes_reusable: sf.size,
+                        });
+                    } else {
+                        files_modified += 1;
+                        data_to_transfer += sf.size;
+                        actions.push(FileAction {
+                            rel_path,
+                            action: FileActionType::Modify,
+                            src_size: sf.size,
+                            dst_size: df.size,
+                            src_hash: Some(sf.hash),
+                            bytes_to_transfer: sf.size,
+                            bytes_reusable: 0,
+                        });
+                    }
+                    continue;
+                }
+
+                if df.is_symlink {
+                    files_modified += 1;
+                    data_to_transfer += sf.size;
+                    actions.push(FileAction {
+                        rel_path,
+                        action: FileActionType::Modify,
+                        src_size: sf.size,
+                        dst_size: df.size,
+                        src_hash: Some(sf.hash),
+                        bytes_to_transfer: sf.size,
+                        bytes_reusable: 0,
+                    });
+                    continue;
+                }
+
                 let src_full = src_dir.join(&rel_path);
                 let dst_full = dst_dir.join(&rel_path);
 
-                // Quick metadata check: if size matches, check content hash
-                let (is_same, src_hash) = if sf.size == df.size {
-                    let sh = compute_file_hash(&src_full)?;
-                    let dh = compute_file_hash(&dst_full)?;
-                    (sh == dh, Some(sh))
-                } else {
-                    let sh = compute_file_hash(&src_full)?;
-                    (false, Some(sh))
-                };
+                let is_same = sf.size == df.size
+                    && sf.hash == df.hash
+                    && sf.xattrs == df.xattrs
+                    && (sf.mode == 0 || df.mode == 0 || (sf.mode & 0o777) == (df.mode & 0o777));
 
                 if is_same {
                     files_unchanged += 1;
@@ -1125,7 +1195,7 @@ pub fn plan_directory_sync(
                         action: FileActionType::Unchanged,
                         src_size: sf.size,
                         dst_size: df.size,
-                        src_hash,
+                        src_hash: Some(sf.hash),
                         bytes_to_transfer: 0,
                         bytes_reusable: sf.size,
                     });
@@ -1178,7 +1248,7 @@ pub fn plan_directory_sync(
                         action: FileActionType::Modify,
                         src_size: sf.size,
                         dst_size: df.size,
-                        src_hash,
+                        src_hash: Some(sf.hash),
                         bytes_to_transfer: needed,
                         bytes_reusable: reusable,
                     });
@@ -1186,8 +1256,22 @@ pub fn plan_directory_sync(
             }
             (Some(sf), None) => {
                 files_added += 1;
+                if sf.is_symlink {
+                    data_to_transfer += sf.size;
+                    actions.push(FileAction {
+                        rel_path,
+                        action: FileActionType::Add,
+                        src_size: sf.size,
+                        dst_size: 0,
+                        src_hash: Some(sf.hash),
+                        bytes_to_transfer: sf.size,
+                        bytes_reusable: 0,
+                    });
+                    continue;
+                }
+
                 let src_full = src_dir.join(&rel_path);
-                let sh = compute_file_hash(&src_full)?;
+                let sh = sf.hash;
 
                 let mut reusable = 0u64;
                 let mut needed = 0u64;
@@ -1322,6 +1406,38 @@ pub fn execute_directory_sync(
             std::fs::create_dir_all(parent)?;
         }
 
+        let is_src_symlink = match std::fs::symlink_metadata(&src_file) {
+            Ok(m) => m.file_type().is_symlink(),
+            Err(_) => false,
+        };
+
+        if is_src_symlink {
+            let target_path = std::fs::read_link(&src_file)?;
+            let target_str = target_path.to_string_lossy().to_string();
+            let vpath = crate::storage::VPath::validate(&action.rel_path)
+                .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+            crate::storage::VPath::validate_symlink_target(&vpath, &target_str)
+                .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+
+            if staged_file.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&staged_file);
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target_path, &staged_file)?;
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_file(&target_path, &staged_file)?;
+
+            let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
+            if src_sidecar.symlink_metadata().is_ok() {
+                let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+                let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
+            }
+
+            staged_files.push((file_idx as u64, action.rel_path.clone(), staged_file));
+            total_wire_bytes += action.src_size;
+            continue;
+        }
+
         let src_size = action.src_size;
         let src_hash = action.src_hash.expect("src hash present for Add/Modify");
 
@@ -1438,6 +1554,24 @@ pub fn execute_directory_sync(
 
         // Verify hash in staging
         reconstructor.verify_and_commit()?;
+
+        let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
+        if src_sidecar.symlink_metadata().is_ok() {
+            let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+            let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
+        }
+
+        if let Ok(src_meta) = std::fs::metadata(&src_file) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &staged_file,
+                    std::fs::Permissions::from_mode(src_meta.permissions().mode()),
+                );
+            }
+        }
+
         staged_files.push((file_idx as u64, action.rel_path.clone(), staged_file));
     }
 
@@ -1486,8 +1620,44 @@ pub fn execute_directory_sync(
                 .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
         }
 
+        // If target file or symlink exists at final destination, remove before rename
+        if final_dst.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(&final_dst);
+        }
+
         // Atomic rename
         std::fs::rename(staged_file, &final_dst)?;
+
+        // If staged xattr sidecar exists, rename it into final location
+        let staged_sidecar = crate::storage::xattr_sidecar_path(staged_file);
+        if staged_sidecar.symlink_metadata().is_ok() {
+            let final_sidecar = crate::storage::xattr_sidecar_path(&final_dst);
+            if final_sidecar.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&final_sidecar);
+            }
+            let _ = std::fs::rename(&staged_sidecar, &final_sidecar);
+        }
+
+        // Apply mode permissions and mtime if regular file
+        let src_file = src_dir.join(rel_path);
+        if let Ok(src_meta) = std::fs::symlink_metadata(&src_file) {
+            if !src_meta.file_type().is_symlink() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &final_dst,
+                        std::fs::Permissions::from_mode(src_meta.permissions().mode()),
+                    );
+                }
+                if let Ok(modified_time) = src_meta.modified() {
+                    if let Ok(f) = std::fs::File::open(&final_dst) {
+                        let times = std::fs::FileTimes::new().set_modified(modified_time);
+                        let _ = f.set_times(times);
+                    }
+                }
+            }
+        }
 
         if let Some(store) = state_store {
             store
@@ -1504,8 +1674,12 @@ pub fn execute_directory_sync(
         for action in &plan.actions {
             if action.action == FileActionType::Delete {
                 let target = dst_dir.join(&action.rel_path);
-                if target.exists() {
-                    let _ = std::fs::remove_file(target);
+                if target.symlink_metadata().is_ok() {
+                    let _ = std::fs::remove_file(&target);
+                    let sidecar = crate::storage::xattr_sidecar_path(&target);
+                    if sidecar.symlink_metadata().is_ok() {
+                        let _ = std::fs::remove_file(&sidecar);
+                    }
                     files_deleted += 1;
                 }
             }
