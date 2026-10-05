@@ -5,6 +5,7 @@
 //! with bounded memory and atomic commit (`ARCHITECTURE.md` §7, §12).
 
 pub mod bloom;
+pub mod cost;
 pub mod directory;
 pub mod estimator;
 pub mod inventory;
@@ -12,6 +13,9 @@ pub mod reconstruct;
 pub mod rle;
 
 pub use bloom::BloomFilter;
+pub use cost::{
+    AdaptiveCostEstimator, CostBreakdown, CostDecision, DeviceProfile, NetworkProfile, TransferMode,
+};
 pub use directory::{
     compute_file_hash, diff_local_dir_with_manifest, diff_manifest_readers,
     diff_manifest_spill_files, execute_directory_sync, plan_directory_diff, plan_directory_sync,

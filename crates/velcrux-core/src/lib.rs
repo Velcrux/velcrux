@@ -61,10 +61,11 @@ pub use storage::{
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
     plan_directory_diff, plan_directory_sync, recv_directory_manifest, resume_interrupted_commit,
-    scan_dir_entries, send_directory_manifest, BloomFilter, ChunkExtent, CostEstimator, DeleteMode,
-    DeltaProgress, DeltaReconstructor, DeltaSyncReport, DirectoryDiffSummary, DirectoryPlan,
-    DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType, LocalInventory,
-    RleBitmap, RleRun, ScannedEntry, SyncDecision, SyncError, SyncPlan,
+    scan_dir_entries, send_directory_manifest, AdaptiveCostEstimator, BloomFilter, ChunkExtent,
+    CostBreakdown, CostDecision, CostEstimator, DeleteMode, DeltaProgress, DeltaReconstructor,
+    DeltaSyncReport, DeviceProfile, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
+    DirectorySyncResult, FileAction, FileActionType, LocalInventory, NetworkProfile, RleBitmap,
+    RleRun, ScannedEntry, SyncDecision, SyncError, SyncPlan, TransferMode,
 };
 pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,

@@ -58,6 +58,7 @@ fn test_symlink_replication_and_modified_targets() {
         delete_mode: DeleteMode::None,
         dry_run: false,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
 
     // Initial sync

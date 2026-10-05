@@ -88,6 +88,34 @@ struct Cli {
     )]
     compression: String,
 
+    /// Transfer execution mode: "auto" (default, adaptive cost-based), "direct" (full stream), "deltacdc" (FastCDC delta), or "deltafixed" (fixed-size delta). Option AD.
+    #[arg(
+        long = "mode",
+        short = 'M',
+        env = "VELCRUX_MODE",
+        default_value = "auto",
+        global = true
+    )]
+    mode: String,
+
+    /// Network performance profile: "auto" (default, derived from QUIC stats), "lan", "wan", or "satellite". Option AD.
+    #[arg(
+        long = "network-profile",
+        env = "VELCRUX_NETWORK_PROFILE",
+        default_value = "auto",
+        global = true
+    )]
+    network_profile: String,
+
+    /// Minimum file size in bytes to consider delta synchronization (Option AD).
+    #[arg(
+        long = "min-delta-size",
+        env = "VELCRUX_MIN_DELTA_SIZE",
+        default_value = "65536",
+        global = true
+    )]
+    min_delta_size: u64,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -368,6 +396,27 @@ fn get_sni(cli: &Cli, url: &str) -> String {
     })
 }
 
+fn get_transfer_mode(cli: &Cli) -> velcrux_core::sync::TransferMode {
+    cli.mode
+        .parse()
+        .unwrap_or(velcrux_core::sync::TransferMode::Auto)
+}
+
+fn get_network_profile(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+) -> velcrux_core::sync::NetworkProfile {
+    match cli.network_profile.to_ascii_lowercase().as_str() {
+        "lan" => velcrux_core::sync::NetworkProfile::lan(),
+        "wan" | "wan_fast" => velcrux_core::sync::NetworkProfile::wan_fast(),
+        "satellite" | "wan_satellite" => velcrux_core::sync::NetworkProfile::wan_satellite(),
+        _ => {
+            let stats = conn.stats();
+            velcrux_core::sync::NetworkProfile::from_transport_stats(&stats, 12_500_000)
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 struct FileClientConfig {
     ca: Option<PathBuf>,
@@ -621,53 +670,99 @@ async fn upload_file_stream(
         let _bloom = BloomFilter::from_bytes(&hint.bitset, hint.filter_bits, hint.num_hashes)
             .map_err(|e| anyhow::anyhow!("invalid bloom filter: {e}"))?;
 
-        let mut file = std::fs::File::open(local)?;
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut chunk_hashes = Vec::new();
-        let mut chunk_indices = Vec::new();
-        let mut offset = 0u64;
-        let mut chunk_idx = 0u64;
-        use std::io::Read;
-        while offset < file_size {
-            let to_read = ((file_size - offset).min(64 * 1024)) as usize;
-            file.read_exact(&mut buf[..to_read])?;
-            let h = velcrux_core::Hash::of(&buf[..to_read]);
-            chunk_hashes.push(h);
-            chunk_indices.push((chunk_idx, to_read as u64));
-            offset += to_read as u64;
-            chunk_idx += 1;
-        }
+        let mode = get_transfer_mode(cli);
+        let net = get_network_profile(cli, conn);
+        let dev = velcrux_core::sync::DeviceProfile::default();
+        let estimator = velcrux_core::sync::AdaptiveCostEstimator::new(cli.min_delta_size, 0.08);
 
-        let query = ChunkQuery {
-            transfer_id: created.transfer_id,
-            query_seq: 1,
-            chunk_hashes,
-        };
-        let q_buf = bytes::Bytes::from(encode_message(&Message::ChunkQuery(query), 0)?);
-        session.send_mut().write_all(q_buf).await?;
-
-        let resp_frame = session.recv_frame().await?;
-        if resp_frame.type_byte != velcrux_core::protocol::message::CHUNK_RESPONSE {
-            anyhow::bail!(
-                "expected CHUNK_RESPONSE, got 0x{:02x}",
-                resp_frame.type_byte
-            );
-        }
-        let resp = ChunkResponse::decode(resp_frame.payload)?;
-        let rle = RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)
-            .map_err(|e| anyhow::anyhow!("invalid rle bitmap: {e}"))?;
-
-        for (i, &(c_idx, len)) in chunk_indices.iter().enumerate() {
-            if rle.get(i) == Some(true) {
-                initial_bitmap.mark_complete(c_idx, len);
+        let should_use_delta = match mode {
+            velcrux_core::sync::TransferMode::DirectStream => false,
+            velcrux_core::sync::TransferMode::DeltaCDC
+            | velcrux_core::sync::TransferMode::DeltaFixed => true,
+            velcrux_core::sync::TransferMode::Skip => false,
+            velcrux_core::sync::TransferMode::Auto => {
+                if file_size < cli.min_delta_size {
+                    false
+                } else {
+                    let decision = estimator.evaluate(file_size, 0.50, false, &net, &dev);
+                    decision.is_delta_worthwhile
+                }
             }
-        }
+        };
 
-        let plan_frame = session.recv_frame().await?;
-        if plan_frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
-            anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", plan_frame.type_byte);
+        if !should_use_delta {
+            // Bypass delta calculation: send empty ChunkQuery to trigger immediate full-file plan
+            let query = ChunkQuery {
+                transfer_id: created.transfer_id,
+                query_seq: 1,
+                chunk_hashes: Vec::new(),
+            };
+            let q_buf = bytes::Bytes::from(encode_message(&Message::ChunkQuery(query), 0)?);
+            session.send_mut().write_all(q_buf).await?;
+
+            let resp_frame = session.recv_frame().await?;
+            if resp_frame.type_byte != velcrux_core::protocol::message::CHUNK_RESPONSE {
+                anyhow::bail!(
+                    "expected CHUNK_RESPONSE, got 0x{:02x}",
+                    resp_frame.type_byte
+                );
+            }
+            let _ = ChunkResponse::decode(resp_frame.payload)?;
+
+            let plan_frame = session.recv_frame().await?;
+            if plan_frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+                anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", plan_frame.type_byte);
+            }
+            TransferPlan::decode(plan_frame.payload)?
+        } else {
+            let mut file = std::fs::File::open(local)?;
+            let mut buf = vec![0u8; 64 * 1024];
+            let mut chunk_hashes = Vec::new();
+            let mut chunk_indices = Vec::new();
+            let mut offset = 0u64;
+            let mut chunk_idx = 0u64;
+            use std::io::Read;
+            while offset < file_size {
+                let to_read = ((file_size - offset).min(64 * 1024)) as usize;
+                file.read_exact(&mut buf[..to_read])?;
+                let h = velcrux_core::Hash::of(&buf[..to_read]);
+                chunk_hashes.push(h);
+                chunk_indices.push((chunk_idx, to_read as u64));
+                offset += to_read as u64;
+                chunk_idx += 1;
+            }
+
+            let query = ChunkQuery {
+                transfer_id: created.transfer_id,
+                query_seq: 1,
+                chunk_hashes,
+            };
+            let q_buf = bytes::Bytes::from(encode_message(&Message::ChunkQuery(query), 0)?);
+            session.send_mut().write_all(q_buf).await?;
+
+            let resp_frame = session.recv_frame().await?;
+            if resp_frame.type_byte != velcrux_core::protocol::message::CHUNK_RESPONSE {
+                anyhow::bail!(
+                    "expected CHUNK_RESPONSE, got 0x{:02x}",
+                    resp_frame.type_byte
+                );
+            }
+            let resp = ChunkResponse::decode(resp_frame.payload)?;
+            let rle = RleBitmap::decode(&resp.rle_bitmap, resp.total_chunks)
+                .map_err(|e| anyhow::anyhow!("invalid rle bitmap: {e}"))?;
+
+            for (i, &(c_idx, len)) in chunk_indices.iter().enumerate() {
+                if rle.get(i) == Some(true) {
+                    initial_bitmap.mark_complete(c_idx, len);
+                }
+            }
+
+            let plan_frame = session.recv_frame().await?;
+            if plan_frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+                anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", plan_frame.type_byte);
+            }
+            TransferPlan::decode(plan_frame.payload)?
         }
-        TransferPlan::decode(plan_frame.payload)?
     } else if frame.type_byte == velcrux_core::protocol::message::TRANSFER_PLAN {
         TransferPlan::decode(frame.payload)?
     } else {
@@ -1218,8 +1313,28 @@ async fn download_file_stream(
     let client_cs = open_client_chunk_store(cli).await;
     let local_exists = local.is_file();
 
+    let mode = get_transfer_mode(cli);
+    let net = get_network_profile(cli, conn);
+    let dev = velcrux_core::sync::DeviceProfile::default();
+    let estimator = velcrux_core::sync::AdaptiveCostEstimator::new(cli.min_delta_size, 0.08);
+
+    let should_use_delta = match mode {
+        velcrux_core::sync::TransferMode::DirectStream => false,
+        velcrux_core::sync::TransferMode::DeltaCDC
+        | velcrux_core::sync::TransferMode::DeltaFixed => true,
+        velcrux_core::sync::TransferMode::Skip => false,
+        velcrux_core::sync::TransferMode::Auto => {
+            if plan.bytes_total < cli.min_delta_size || (!local_exists && client_cs.is_none()) {
+                false
+            } else {
+                let decision = estimator.evaluate(plan.bytes_total, 0.50, false, &net, &dev);
+                decision.is_delta_worthwhile
+            }
+        }
+    };
+
     // Check if local file or client chunk store can participate in deduplication/delta download
-    if local_exists || client_cs.is_some() {
+    if should_use_delta && (local_exists || client_cs.is_some()) {
         use velcrux_core::protocol::message::{ChunkQuery, ChunkResponse, InventoryHint};
         use velcrux_core::sync::RleBitmap;
 
@@ -2151,6 +2266,8 @@ async fn run_sync(
         delete_mode,
         dry_run,
         read_buffer_size: 2 * 1024 * 1024,
+        transfer_mode: get_transfer_mode(cli),
+        min_delta_size: cli.min_delta_size,
     };
 
     let store = if dedup {

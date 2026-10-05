@@ -329,3 +329,18 @@ storage volumes must persist across container restarts or resume stops working.
 - Server must be directly reachable on UDP; no NAT traversal.
 - Sparse-file support is Linux-only; elsewhere holes are written as zeros.
 - Chunk-store GC is manual by default; automated LRU/TTL cache pruning is available via `LocalChunkStore::prune_cache`.
+
+## 12. Adaptive Cost Estimator & Transfer Mode Selection (Option AD)
+
+Velcrux incorporates an empirical, network-aware cost estimator (`REQUIREMENTS.md` §55, §88) that dynamically selects between **Direct Stream** and **Delta CDC Reconstruction**:
+
+```text
+FullCost  = (file_size / network_bw) + rtt_overhead + (file_size / disk_write_bw)
+DeltaCost = (file_size / min(disk_read_bw, hash_bw)) + (delta_rtts × RTT) + (changed_bytes / network_bw) + (reused_bytes / disk_read_bw) + (file_size / disk_write_bw)
+```
+
+- **Automatic Selection (`--mode auto`, default)**: Dynamically derives link bandwidth and RTT from live QUIC transport stats (`cwnd / rtt`) and evaluates if data reuse outweighs disk scanning and negotiation latency.
+- **Forced Direct Stream (`--mode direct` / `--mode full`)**: Bypasses chunking and negotiation, immediately streaming data over the wire for optimal throughput on high-bandwidth LANs.
+- **Forced Delta CDC (`--mode deltacdc` / `--mode fastcdc`)**: Enforces FastCDC chunk negotiation, minimizing bytes sent over metered or high-latency WAN connections.
+- **Network Profiles (`--network-profile <auto|lan|wan|satellite>`)**: Supplies network latency and bandwidth presets (`lan` = 10 Gbps / 0.5ms, `wan` = 100 Mbps / 30ms, `satellite` = 15 Mbps / 250ms).
+- **Minimum Delta Size Threshold (`--min-delta-size <bytes>`, default 64 KiB)**: Files below this threshold are automatically transferred as direct streams to eliminate multi-roundtrip negotiation overhead.

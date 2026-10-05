@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::chunking::{ChunkEngine, ChunkMode, ChunkParams};
 use crate::state::{CommitJournalEntry, CommitStatus, StateStore};
 use crate::storage::LocalChunkStore;
+use crate::sync::cost::TransferMode;
 use crate::sync::inventory::LocalInventory;
 use crate::sync::reconstruct::DeltaReconstructor;
 use crate::sync::SyncError;
@@ -148,6 +149,10 @@ pub struct DirectorySyncOptions {
     pub dry_run: bool,
     /// Buffer size for file reads.
     pub read_buffer_size: usize,
+    /// Transfer mode (Auto, DirectStream, DeltaCDC, DeltaFixed, Skip).
+    pub transfer_mode: TransferMode,
+    /// Minimum file size in bytes to consider delta synchronization (default: 64 KiB).
+    pub min_delta_size: u64,
 }
 
 impl Default for DirectorySyncOptions {
@@ -158,7 +163,23 @@ impl Default for DirectorySyncOptions {
             delete_mode: DeleteMode::None,
             dry_run: false,
             read_buffer_size: 2 * 1024 * 1024,
+            transfer_mode: TransferMode::Auto,
+            min_delta_size: 64 * 1024,
         }
+    }
+}
+
+impl DirectorySyncOptions {
+    /// Configure transfer mode.
+    pub fn with_transfer_mode(mut self, mode: TransferMode) -> Self {
+        self.transfer_mode = mode;
+        self
+    }
+
+    /// Configure minimum delta file size threshold.
+    pub fn with_min_delta_size(mut self, size: u64) -> Self {
+        self.min_delta_size = size;
+        self
     }
 }
 
@@ -1195,6 +1216,22 @@ pub fn plan_directory_sync(
                     });
                 } else {
                     files_modified += 1;
+                    if options.transfer_mode == TransferMode::DirectStream
+                        || sf.size < options.min_delta_size
+                    {
+                        data_to_transfer += sf.size;
+                        actions.push(FileAction {
+                            rel_path,
+                            action: FileActionType::Modify,
+                            src_size: sf.size,
+                            dst_size: df.size,
+                            src_hash: Some(sf.hash),
+                            bytes_to_transfer: sf.size,
+                            bytes_reusable: 0,
+                        });
+                        continue;
+                    }
+
                     // Delta estimation
                     let inv = LocalInventory::from_file(
                         &dst_full,
@@ -1266,6 +1303,23 @@ pub fn plan_directory_sync(
 
                 let src_full = src_dir.join(&rel_path);
                 let sh = sf.hash;
+
+                if chunk_store.is_none()
+                    || options.transfer_mode == TransferMode::DirectStream
+                    || sf.size < options.min_delta_size
+                {
+                    data_to_transfer += sf.size;
+                    actions.push(FileAction {
+                        rel_path,
+                        action: FileActionType::Add,
+                        src_size: sf.size,
+                        dst_size: 0,
+                        src_hash: Some(sh),
+                        bytes_to_transfer: sf.size,
+                        bytes_reusable: 0,
+                    });
+                    continue;
+                }
 
                 let mut reusable = 0u64;
                 let mut needed = 0u64;
@@ -1434,6 +1488,46 @@ pub fn execute_directory_sync(
 
         let src_size = action.src_size;
         let src_hash = action.src_hash.expect("src hash present for Add/Modify");
+
+        let use_delta = match options.transfer_mode {
+            TransferMode::DirectStream => false,
+            TransferMode::DeltaCDC | TransferMode::DeltaFixed => true,
+            TransferMode::Skip => false,
+            TransferMode::Auto => {
+                (dst_file.exists() || chunk_store.is_some()) && src_size >= options.min_delta_size
+            }
+        };
+
+        if !use_delta {
+            if staged_file.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&staged_file);
+            }
+            std::fs::copy(&src_file, &staged_file)?;
+
+            let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
+            if src_sidecar.symlink_metadata().is_ok() {
+                let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+                let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
+            }
+
+            if let Ok(src_meta) = std::fs::metadata(&src_file) {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &staged_file,
+                        std::fs::Permissions::from_mode(src_meta.permissions().mode() & 0o777),
+                    );
+                }
+                if let Ok(modified) = src_meta.modified() {
+                    let _ = std::fs::FileTimes::new().set_modified(modified);
+                }
+            }
+
+            staged_files.push((file_idx as u64, action.rel_path.clone(), staged_file));
+            total_wire_bytes += src_size;
+            continue;
+        }
 
         // Build local inventory if destination file exists
         let dst_inventory = if dst_file.exists() {

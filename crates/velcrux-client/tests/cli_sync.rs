@@ -655,3 +655,33 @@ fn test_cli_sync_posix_metadata_and_symlinks() {
         assert_eq!(mode, 0o755);
     }
 }
+
+#[test]
+fn test_cli_sync_mode_flags() {
+    let temp = tempdir().unwrap();
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+
+    std::fs::write(src.join("sample.txt"), b"sample payload for direct mode").unwrap();
+
+    let output = Command::new(velcrux_bin())
+        .arg("--mode")
+        .arg("direct")
+        .arg("--network-profile")
+        .arg("lan")
+        .arg("--min-delta-size")
+        .arg("32768")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to execute velcrux sync --mode direct");
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read(dst.join("sample.txt")).unwrap(),
+        b"sample payload for direct mode"
+    );
+}

@@ -164,6 +164,7 @@ fn test_directory_sync_dry_run_leaves_destination_untouched() {
         delete_mode: DeleteMode::DeleteAfter,
         dry_run: true,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
 
     let result = execute_directory_sync(&src, &dst, &options, None, None).unwrap();
@@ -213,6 +214,7 @@ fn test_directory_sync_delete_modes() {
         delete_mode: DeleteMode::None,
         dry_run: false,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
     let res1 = execute_directory_sync(&src, &dst, &options_none, None, None).unwrap();
     assert_eq!(res1.files_committed, 1);
@@ -230,6 +232,7 @@ fn test_directory_sync_delete_modes() {
         delete_mode: DeleteMode::DeleteAfter,
         dry_run: false,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
     let res2 = execute_directory_sync(&src, &dst, &options_delete, None, None).unwrap();
     assert_eq!(res2.files_deleted, 1);
@@ -275,6 +278,7 @@ fn test_directory_sync_delta_reuse_and_sqlite_journal() {
         delete_mode: DeleteMode::None,
         dry_run: false,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
 
     let result = execute_directory_sync(&src, &dst, &options, Some(&state), None).unwrap();
@@ -326,6 +330,7 @@ fn test_stage_failure_leaves_destination_untouched() {
         delete_mode: DeleteMode::None,
         dry_run: false,
         read_buffer_size: 64 * 1024,
+        ..Default::default()
     };
 
     let plan = plan_directory_sync(&src, &dst, &options, None).unwrap();
