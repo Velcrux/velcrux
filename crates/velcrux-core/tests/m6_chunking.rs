@@ -202,10 +202,10 @@ fn m6_exact_concatenation_reconstruction() {
     for &size in &test_sizes {
         let input = generate_test_content(size, 0xCAFEBABE);
 
-        for mode in [ChunkMode::Fixed, ChunkMode::Cdc] {
+        for mode in [ChunkMode::Fixed, ChunkMode::Cdc, ChunkMode::FastCdc] {
             let params = match mode {
                 ChunkMode::Fixed => ChunkParams::fixed(512 * 1024),
-                ChunkMode::Cdc => ChunkParams::default(),
+                ChunkMode::Cdc | ChunkMode::FastCdc => ChunkParams::default(),
             };
 
             let mut reconstructed = Vec::with_capacity(size);

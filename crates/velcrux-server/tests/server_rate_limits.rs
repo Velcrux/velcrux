@@ -77,11 +77,13 @@ async fn test_limits_manager_quota_enforcement_and_metrics() {
             identity: "tenant-capped".into(),
             max_bandwidth: Some("100MB/s".into()),
             quota_bytes: Some("100KiB".into()),
+            soft_quota_bytes: None,
         },
         LimitsCfg {
             identity: "tenant-unlimited".into(),
             max_bandwidth: None,
             quota_bytes: None,
+            soft_quota_bytes: None,
         },
     ];
 
@@ -154,6 +156,7 @@ async fn test_limits_manager_sighup_reload_preserves_usage() {
         identity: "tenant-dyn".into(),
         max_bandwidth: Some("10MB/s".into()),
         quota_bytes: Some("100KiB".into()),
+        soft_quota_bytes: None,
     }];
 
     let manager = LimitsManager::new(
@@ -174,6 +177,7 @@ async fn test_limits_manager_sighup_reload_preserves_usage() {
         identity: "tenant-dyn".into(),
         max_bandwidth: Some("50MB/s".into()),
         quota_bytes: Some("200KiB".into()),
+        soft_quota_bytes: None,
     }];
 
     manager

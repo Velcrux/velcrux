@@ -1,9 +1,11 @@
 //! Content-addressed chunk store and deduplication engine (`ARCHITECTURE.md` §2, §7, §12).
 
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -38,6 +40,58 @@ pub trait ChunkStore: Send + Sync {
     async fn total_bytes(&self) -> Result<u64, VelcruxError>;
 }
 
+/// Eviction policy configuration for chunk store cache pruning (`OPERATIONS.md` §6).
+#[derive(Debug, Clone, Default)]
+pub struct PrunePolicy {
+    /// Maximum capacity in bytes for the chunk store.
+    /// If total stored bytes exceed this, the oldest unpinned chunks are pruned.
+    pub max_bytes: Option<u64>,
+    /// Maximum number of chunks allowed in the chunk store.
+    /// If total chunk count exceeds this, the oldest unpinned chunks are pruned.
+    pub max_chunks: Option<usize>,
+    /// Time-to-live for chunks. Unpinned chunks not accessed within `ttl` are pruned.
+    pub ttl: Option<Duration>,
+    /// Explicit set of chunk hashes to protect from pruning (e.g. from active manifests or transfers).
+    pub keep_hashes: Option<HashSet<Hash>>,
+}
+
+/// Report summarizing the outcome of a chunk store cache pruning sweep (`OPERATIONS.md` §6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    /// Total number of chunk files discovered in the store.
+    pub chunks_scanned: usize,
+    /// Number of chunk files pruned.
+    pub chunks_pruned: usize,
+    /// Total bytes of disk storage reclaimed.
+    pub bytes_reclaimed: u64,
+    /// Total bytes remaining in the store after pruning.
+    pub bytes_remaining: u64,
+    /// Total chunks remaining in the store after pruning.
+    pub chunks_remaining: usize,
+    /// Number of chunks skipped because they were pinned or in `keep_hashes`.
+    pub pinned_skipped: usize,
+}
+
+/// RAII guard holding a reference pin on a chunk in `LocalChunkStore`.
+pub struct ChunkPin<'a> {
+    store: &'a LocalChunkStore,
+    hash: Hash,
+}
+
+impl<'a> std::fmt::Debug for ChunkPin<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChunkPin")
+            .field("hash", &self.hash)
+            .finish()
+    }
+}
+
+impl<'a> Drop for ChunkPin<'a> {
+    fn drop(&mut self) {
+        self.store.unpin_chunk(&self.hash);
+    }
+}
+
 /// Filesystem-backed content-addressed chunk store with two-level directory sharding.
 ///
 /// Directory layout:
@@ -55,6 +109,17 @@ pub struct LocalChunkStore {
     chunks_dir: PathBuf,
     staging_dir: PathBuf,
     bloom: RwLock<BloomFilter>,
+    pinned_chunks: RwLock<HashMap<Hash, usize>>,
+    access_times: RwLock<HashMap<Hash, SystemTime>>,
+}
+
+impl std::fmt::Debug for LocalChunkStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalChunkStore")
+            .field("root", &self.root)
+            .field("chunks_dir", &self.chunks_dir)
+            .finish()
+    }
 }
 
 impl LocalChunkStore {
@@ -69,12 +134,16 @@ impl LocalChunkStore {
 
         // Initialize in-memory Bloom filter for membership pre-filtering
         let bloom = RwLock::new(BloomFilter::new(50_000, 0.01));
+        let pinned_chunks = RwLock::new(HashMap::new());
+        let access_times = RwLock::new(HashMap::new());
 
         let store = Self {
             root,
             chunks_dir,
             staging_dir,
             bloom,
+            pinned_chunks,
+            access_times,
         };
 
         // Populate initial bloom filter from existing directory
@@ -143,6 +212,11 @@ impl LocalChunkStore {
             )));
         }
 
+        {
+            let mut access = self.access_times.write().unwrap();
+            access.insert(*h, SystemTime::now());
+        }
+
         Ok(Bytes::from(buf))
     }
 
@@ -181,6 +255,11 @@ impl LocalChunkStore {
         {
             let mut b = self.bloom.write().unwrap();
             b.insert(h);
+        }
+
+        {
+            let mut access = self.access_times.write().unwrap();
+            access.insert(*h, SystemTime::now());
         }
 
         Ok(())
@@ -291,6 +370,196 @@ impl LocalChunkStore {
 
         Ok(())
     }
+
+    /// Pin a chunk to prevent it from being pruned during active operations.
+    pub fn pin_chunk(&self, h: &Hash) {
+        let mut pins = self.pinned_chunks.write().unwrap();
+        *pins.entry(*h).or_insert(0) += 1;
+    }
+
+    /// Decrement pin count for a chunk.
+    pub fn unpin_chunk(&self, h: &Hash) {
+        let mut pins = self.pinned_chunks.write().unwrap();
+        if let Some(c) = pins.get_mut(h) {
+            if *c <= 1 {
+                pins.remove(h);
+            } else {
+                *c -= 1;
+            }
+        }
+    }
+
+    /// Returns true if the chunk has active pins.
+    pub fn is_pinned(&self, h: &Hash) -> bool {
+        self.pinned_chunks
+            .read()
+            .unwrap()
+            .get(h)
+            .copied()
+            .unwrap_or(0)
+            > 0
+    }
+
+    /// Acquire an RAII pin on a chunk.
+    pub fn acquire_pin<'a>(&'a self, h: &Hash) -> ChunkPin<'a> {
+        self.pin_chunk(h);
+        ChunkPin {
+            store: self,
+            hash: *h,
+        }
+    }
+
+    /// Prune chunks from the store according to `policy`.
+    ///
+    /// Evaluates TTL, maximum capacity in bytes, and maximum chunk count.
+    /// Pinned chunks (via `pin_chunk` or `policy.keep_hashes`) are never pruned.
+    /// Unpinned chunks are evicted in LRU order (oldest access time first).
+    /// Bloom filter is automatically rebuilt after pruning to ensure consistency.
+    pub fn prune_cache_sync(&self, policy: &PrunePolicy) -> Result<PruneReport, VelcruxError> {
+        let mut report = PruneReport::default();
+        if !self.chunks_dir.exists() {
+            return Ok(report);
+        }
+
+        struct ChunkEntry {
+            hash: Hash,
+            path: PathBuf,
+            size: u64,
+            last_access: SystemTime,
+            pinned: bool,
+        }
+
+        let now = SystemTime::now();
+        let mut entries = Vec::new();
+
+        let pinned_guard = self.pinned_chunks.read().unwrap();
+        let access_guard = self.access_times.read().unwrap();
+
+        for d1 in fs::read_dir(&self.chunks_dir)? {
+            let d1 = d1?;
+            if d1.file_type()?.is_dir() {
+                for d2 in fs::read_dir(d1.path())? {
+                    let d2 = d2?;
+                    if d2.file_type()?.is_dir() {
+                        for f in fs::read_dir(d2.path())? {
+                            let f = f?;
+                            let name = f.file_name();
+                            let s = name.to_string_lossy();
+                            if let Some(hex) = s.strip_suffix(".chunk") {
+                                if let Some(h) = Hash::from_hex(hex) {
+                                    report.chunks_scanned += 1;
+                                    let meta = f.metadata()?;
+                                    let size = meta.len();
+                                    let last_access = access_guard
+                                        .get(&h)
+                                        .copied()
+                                        .unwrap_or_else(|| meta.modified().unwrap_or(now));
+
+                                    let is_pin = pinned_guard.get(&h).copied().unwrap_or(0) > 0
+                                        || policy
+                                            .keep_hashes
+                                            .as_ref()
+                                            .map_or(false, |k| k.contains(&h));
+
+                                    if is_pin {
+                                        report.pinned_skipped += 1;
+                                    }
+
+                                    entries.push(ChunkEntry {
+                                        hash: h,
+                                        path: f.path(),
+                                        size,
+                                        last_access,
+                                        pinned: is_pin,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        drop(pinned_guard);
+        drop(access_guard);
+
+        let mut to_prune = HashSet::new();
+
+        // 1. TTL-based eviction for unpinned chunks
+        if let Some(ttl) = policy.ttl {
+            for entry in &entries {
+                if !entry.pinned {
+                    if let Ok(age) = now.duration_since(entry.last_access) {
+                        if age >= ttl {
+                            to_prune.insert(entry.hash);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Capacity-based and count-based LRU eviction
+        let mut unpinned_remaining: Vec<&ChunkEntry> = entries
+            .iter()
+            .filter(|e| !e.pinned && !to_prune.contains(&e.hash))
+            .collect();
+
+        // Sort by last_access ascending (oldest first)
+        unpinned_remaining.sort_by_key(|e| e.last_access);
+
+        let mut current_bytes: u64 = entries
+            .iter()
+            .filter(|e| !to_prune.contains(&e.hash))
+            .map(|e| e.size)
+            .sum();
+
+        let mut current_chunks = entries.len() - to_prune.len();
+
+        let max_b = policy.max_bytes.unwrap_or(u64::MAX);
+        let max_c = policy.max_chunks.unwrap_or(usize::MAX);
+
+        for entry in unpinned_remaining {
+            if current_bytes <= max_b && current_chunks <= max_c {
+                break;
+            }
+            to_prune.insert(entry.hash);
+            current_bytes = current_bytes.saturating_sub(entry.size);
+            current_chunks = current_chunks.saturating_sub(1);
+        }
+
+        // 3. Perform file deletions
+        let mut access_write = self.access_times.write().unwrap();
+        for entry in &entries {
+            if to_prune.contains(&entry.hash) {
+                let _ = fs::remove_file(&entry.path);
+                if let Some(parent) = entry.path.parent() {
+                    let _ = fs::remove_dir(parent);
+                    if let Some(grandparent) = parent.parent() {
+                        let _ = fs::remove_dir(grandparent);
+                    }
+                }
+                access_write.remove(&entry.hash);
+                report.chunks_pruned += 1;
+                report.bytes_reclaimed += entry.size;
+            } else {
+                report.bytes_remaining += entry.size;
+                report.chunks_remaining += 1;
+            }
+        }
+        drop(access_write);
+
+        // 4. Rebuild BloomFilter if chunks were removed
+        if report.chunks_pruned > 0 {
+            self.rebuild_bloom_sync()?;
+        }
+
+        Ok(report)
+    }
+
+    /// Asynchronous wrapper for cache pruning.
+    pub async fn prune_cache(&self, policy: &PrunePolicy) -> Result<PruneReport, VelcruxError> {
+        let policy_clone = policy.clone();
+        self.prune_cache_sync(&policy_clone)
+    }
 }
 
 #[async_trait]
@@ -370,13 +639,22 @@ impl ChunkStore for LocalChunkStore {
             )));
         }
 
+        {
+            let mut access = self.access_times.write().unwrap();
+            access.insert(*h, SystemTime::now());
+        }
+
         Ok(Bytes::from(buf))
     }
 
     async fn remove(&self, h: &Hash) -> Result<bool, VelcruxError> {
         let path = self.chunk_path(h);
         match tokio::fs::remove_file(&path).await {
-            Ok(()) => Ok(true),
+            Ok(()) => {
+                let mut access = self.access_times.write().unwrap();
+                access.remove(h);
+                Ok(true)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(VelcruxError::Io(e)),
         }

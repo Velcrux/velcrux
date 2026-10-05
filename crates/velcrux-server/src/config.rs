@@ -204,6 +204,8 @@ pub struct LimitsCfg {
     pub max_bandwidth: Option<String>,
     #[serde(default)]
     pub quota_bytes: Option<String>,
+    #[serde(default)]
+    pub soft_quota_bytes: Option<String>,
 }
 
 impl ServerConfig {

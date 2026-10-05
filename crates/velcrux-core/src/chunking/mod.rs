@@ -17,6 +17,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod fastcdc;
+pub use fastcdc::{generate_gear_64, FastCdcChunker, GEAR_64};
+
 use crate::error::{ProtocolError, Result};
 use crate::manifest::entry::ChunkDesc;
 use crate::util::Hash;
@@ -36,6 +39,8 @@ pub enum ChunkMode {
     Cdc,
     /// Fixed-size chunking. Fast, zero hash-rolling overhead, but sensitive to insertions.
     Fixed,
+    /// FastCDC: sub-chunk normalization with dual masks and fast skipping (`REQUIREMENTS.md` §12).
+    FastCdc,
 }
 
 /// Parameters for a chunker. Both sides of a transfer must use identical
@@ -92,6 +97,11 @@ impl ChunkParams {
             return None;
         }
         Some(Self { min, target, max })
+    }
+
+    /// Construct parameters for FastCDC content-defined chunking.
+    pub fn fastcdc(min: u64, target: u64, max: u64) -> Option<Self> {
+        Self::cdc(min, target, max)
     }
 
     /// True if these parameters represent a fixed-size chunker (`min == target == max`).
@@ -345,6 +355,7 @@ pub fn create_chunker(mode: ChunkMode, params: ChunkParams) -> Box<dyn Chunker +
     match mode {
         ChunkMode::Fixed => Box::new(FixedChunker::new(params)),
         ChunkMode::Cdc => Box::new(RollingChunker::new(params)),
+        ChunkMode::FastCdc => Box::new(FastCdcChunker::new(params)),
     }
 }
 
@@ -522,6 +533,7 @@ mod tests {
         let mut cursor: Box<dyn Chunker> = match mode {
             "fixed" => Box::new(FixedChunker::new(params)),
             "rolling" => Box::new(RollingChunker::new(params)),
+            "fastcdc" => Box::new(FastCdcChunker::new(params)),
             _ => panic!("unknown mode"),
         };
         let mut chunks: Vec<Vec<u8>> = Vec::new();

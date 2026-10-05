@@ -40,8 +40,8 @@ pub use auth::{
 };
 pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
-    Chunker, FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN,
-    CHUNK_DEFAULT_TARGET,
+    Chunker, FastCdcChunker, FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX,
+    CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
 };
 pub use error::{Result, VelcruxError};
 pub use manifest::{

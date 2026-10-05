@@ -122,18 +122,43 @@ fn test_perf_chunking_fixed_and_cdc() {
     let cdc_elapsed = t1.elapsed();
     let cdc_gbps = (size as f64 / cdc_elapsed.as_secs_f64()) / 1_000_000_000.0;
 
+    // FastCDC chunking (target 1 MiB, min 256 KiB, max 4 MiB)
+    let fastcdc_params = ChunkParams::fastcdc(256 * 1024, 1024 * 1024, 4 * 1024 * 1024).unwrap();
+    let mut fastcdc_chunk_sizes = Vec::new();
+    let t2 = Instant::now();
+    let _ = ChunkEngine::chunk_reader(
+        &payload[..],
+        ChunkMode::FastCdc,
+        fastcdc_params,
+        64 * 1024,
+        |desc, _data| {
+            fastcdc_chunk_sizes.push(desc.length);
+            Ok(())
+        },
+    )
+    .unwrap();
+    let fastcdc_elapsed = t2.elapsed();
+    let fastcdc_gbps = (size as f64 / fastcdc_elapsed.as_secs_f64()) / 1_000_000_000.0;
+
     println!(
         "\n--- Chunking Performance ---\n\
-         Fixed (1 MiB):  {:>7.2} GB/s ({} chunks)\n\
-         CDC (256k-4M):  {:>7.2} GB/s ({} chunks)",
+         Fixed (1 MiB):    {:>7.2} GB/s ({} chunks)\n\
+         CDC (256k-4M):    {:>7.2} GB/s ({} chunks)\n\
+         FastCDC (256k-4M):{:>7.2} GB/s ({} chunks)",
         fixed_gbps,
         fixed_count,
         cdc_gbps,
-        cdc_chunk_sizes.len()
+        cdc_chunk_sizes.len(),
+        fastcdc_gbps,
+        fastcdc_chunk_sizes.len(),
     );
 
     assert_eq!(fixed_count, 8);
     for &s in &cdc_chunk_sizes {
+        assert!(s >= 256 * 1024, "chunk size {s} must be >= min");
+        assert!(s <= 4 * 1024 * 1024, "chunk size {s} must be <= max");
+    }
+    for &s in &fastcdc_chunk_sizes {
         assert!(s >= 256 * 1024, "chunk size {s} must be >= min");
         assert!(s <= 4 * 1024 * 1024, "chunk size {s} must be <= max");
     }

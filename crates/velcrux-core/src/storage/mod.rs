@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 pub mod chunk_store;
 pub mod gc;
 pub mod sparse;
-pub use chunk_store::{ChunkStore, LocalChunkStore};
+pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
