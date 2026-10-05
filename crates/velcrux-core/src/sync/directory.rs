@@ -204,7 +204,7 @@ impl ScannedEntry {
             symlink_target: None,
             hardlink_target: None,
             xattrs: Vec::new(),
-            mode: 0o644,
+            mode: 0,
             mtime_sec: 0,
             mtime_nsec: 0,
         }
@@ -220,7 +220,7 @@ impl ScannedEntry {
             symlink_target: Some(target),
             hardlink_target: None,
             xattrs: Vec::new(),
-            mode: 0o777,
+            mode: 0,
             mtime_sec: 0,
             mtime_nsec: 0,
         }
@@ -234,7 +234,7 @@ impl ScannedEntry {
             symlink_target: None,
             hardlink_target: Some(target),
             xattrs: Vec::new(),
-            mode: 0o644,
+            mode: 0,
             mtime_sec: 0,
             mtime_nsec: 0,
         }
@@ -320,14 +320,6 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
             let target_path = std::fs::read_link(&path)?;
             let target_str = target_path.to_string_lossy().to_string();
             let sym_meta = std::fs::symlink_metadata(&path)?;
-            #[cfg(unix)]
-            let mode = {
-                use std::os::unix::fs::PermissionsExt;
-                sym_meta.permissions().mode()
-            };
-            #[cfg(not(unix))]
-            let mode = 0o777;
-
             let (mtime_sec, mtime_nsec) = match sym_meta.modified() {
                 Ok(t) => {
                     let d = t.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -351,7 +343,6 @@ pub fn scan_dir_entries(root: &Path) -> std::io::Result<BTreeMap<String, Scanned
                 rel_str,
                 ScannedEntry::symlink(target_str)
                     .with_xattrs(xattrs)
-                    .with_mode(mode)
                     .with_mtime(mtime_sec, mtime_nsec),
             );
         } else if file_type.is_file() {
@@ -469,7 +460,10 @@ pub fn plan_directory_diff(
                     && sf.size == df.size
                     && sf.hash == df.hash
                     && sf.xattrs == df.xattrs
-                    && (sf.mode == 0 || df.mode == 0 || (sf.mode & 0o777) == (df.mode & 0o777));
+                    && (sf.is_symlink
+                        || sf.mode == 0
+                        || df.mode == 0
+                        || (sf.mode & 0o777) == (df.mode & 0o777));
                 if is_same {
                     files_unchanged += 1;
                     data_present += sf.size;
