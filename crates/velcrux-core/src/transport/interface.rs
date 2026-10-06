@@ -260,7 +260,34 @@ pub fn parse_ifconfig_output(output: &str) -> Vec<InterfaceInfo> {
 
 /// Discover all local network interfaces on the host system without unsafe code.
 pub fn list_interfaces() -> Vec<InterfaceInfo> {
-    // 1. Try Linux /sys/class/net and /proc/net
+    // 1. Try `ip -o addr show` (Linux)
+    if let Ok(out) = std::process::Command::new("ip")
+        .args(["-o", "addr", "show"])
+        .output()
+    {
+        if out.status.success() {
+            let str_out = String::from_utf8_lossy(&out.stdout);
+            let mut parsed = parse_ip_command_output(&str_out);
+            if !parsed.is_empty() {
+                ensure_loopback_ips(&mut parsed);
+                return parsed;
+            }
+        }
+    }
+
+    // 2. Try `ifconfig` (macOS / BSD / legacy Linux)
+    if let Ok(out) = std::process::Command::new("ifconfig").output() {
+        if out.status.success() {
+            let str_out = String::from_utf8_lossy(&out.stdout);
+            let mut parsed = parse_ifconfig_output(&str_out);
+            if !parsed.is_empty() {
+                ensure_loopback_ips(&mut parsed);
+                return parsed;
+            }
+        }
+    }
+
+    // 3. Fallback: Linux /sys/class/net and /proc/net/if_inet6
     if Path::new("/sys/class/net").exists() {
         if let Ok(read_dir) = std::fs::read_dir("/sys/class/net") {
             let mut ifaces = Vec::new();
@@ -294,37 +321,13 @@ pub fn list_interfaces() -> Vec<InterfaceInfo> {
             }
 
             if !ifaces.is_empty() {
+                ensure_loopback_ips(&mut ifaces);
                 return ifaces;
             }
         }
     }
 
-    // 2. Try `ip -o addr show` (Linux)
-    if let Ok(out) = std::process::Command::new("ip")
-        .args(["-o", "addr", "show"])
-        .output()
-    {
-        if out.status.success() {
-            let str_out = String::from_utf8_lossy(&out.stdout);
-            let parsed = parse_ip_command_output(&str_out);
-            if !parsed.is_empty() {
-                return parsed;
-            }
-        }
-    }
-
-    // 3. Try `ifconfig` (macOS / BSD)
-    if let Ok(out) = std::process::Command::new("ifconfig").output() {
-        if out.status.success() {
-            let str_out = String::from_utf8_lossy(&out.stdout);
-            let parsed = parse_ifconfig_output(&str_out);
-            if !parsed.is_empty() {
-                return parsed;
-            }
-        }
-    }
-
-    // Fallback: standard loopback
+    // 4. Fallback: standard loopback
     vec![InterfaceInfo::new(
         "lo",
         vec![
@@ -334,6 +337,32 @@ pub fn list_interfaces() -> Vec<InterfaceInfo> {
         true,
         true,
     )]
+}
+
+fn ensure_loopback_ips(ifaces: &mut Vec<InterfaceInfo>) {
+    let mut has_lo = false;
+    for iface in ifaces.iter_mut() {
+        if iface.is_loopback {
+            has_lo = true;
+            if !iface.ips.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)) {
+                iface.ips.push(IpAddr::V4(Ipv4Addr::LOCALHOST));
+            }
+            if !iface.ips.contains(&IpAddr::V6(Ipv6Addr::LOCALHOST)) {
+                iface.ips.push(IpAddr::V6(Ipv6Addr::LOCALHOST));
+            }
+        }
+    }
+    if !has_lo {
+        ifaces.push(InterfaceInfo::new(
+            "lo",
+            vec![
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ],
+            true,
+            true,
+        ));
+    }
 }
 
 /// Find a specific interface by name.

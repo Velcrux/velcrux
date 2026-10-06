@@ -62,7 +62,10 @@ fn test_resolve_bind_addr_explicit_ip() {
 fn test_resolve_bind_addr_by_interface() {
     let ifaces = list_interfaces();
     assert!(!ifaces.is_empty());
-    let iface = &ifaces[0];
+    let iface = ifaces
+        .iter()
+        .find(|i| !i.ips.is_empty())
+        .expect("system must have at least one interface with an assigned IP");
 
     let resolved =
         resolve_bind_addr(None, Some(&iface.name), 7777, None).expect("resolves known interface");
@@ -73,6 +76,12 @@ fn test_resolve_bind_addr_by_interface() {
         resolved.ip(),
         iface.ips
     );
+
+    // If there is any interface without an assigned IP, resolving it must error
+    if let Some(empty_iface) = ifaces.iter().find(|i| i.ips.is_empty()) {
+        let err = resolve_bind_addr(None, Some(&empty_iface.name), 7777, None);
+        assert!(err.is_err());
+    }
 
     // Non-existent interface fails
     let err = resolve_bind_addr(None, Some("fake_iface_xyz"), 7777, None);
