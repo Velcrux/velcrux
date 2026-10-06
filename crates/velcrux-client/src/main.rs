@@ -133,6 +133,24 @@ struct Cli {
     )]
     bind_port: u16,
 
+    /// Transfer priority tier: "urgent", "high", "normal" (default), or "low" (Option AF).
+    #[arg(
+        long = "priority",
+        env = "VELCRUX_PRIORITY",
+        default_value = "normal",
+        global = true
+    )]
+    priority: String,
+
+    /// Maximum concurrent file transfers permitted (Option AF).
+    #[arg(
+        long = "concurrency",
+        env = "VELCRUX_CONCURRENCY",
+        default_value = "4",
+        global = true
+    )]
+    concurrency: usize,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -534,11 +552,19 @@ fn get_rate_limiter(cli: &Cli) -> anyhow::Result<Option<velcrux_core::RateLimite
     Ok(None)
 }
 
+fn get_priority(cli: &Cli) -> anyhow::Result<velcrux_core::TransferPriority> {
+    cli.priority.parse().map_err(|e: String| anyhow::anyhow!(e))
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut cli = Cli::parse();
     load_client_config(&mut cli);
     let _ = get_rate_limiter(&cli)?;
+    let _ = get_priority(&cli)?;
+    if cli.concurrency == 0 {
+        anyhow::bail!("--concurrency must be greater than 0");
+    }
     init_tracing(&cli.log_format);
 
     match &cli.cmd {

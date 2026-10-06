@@ -726,3 +726,68 @@ fn test_cli_bind_flags() {
     assert!(help_text.contains("--bind-interface"));
     assert!(help_text.contains("--bind-port"));
 }
+
+#[test]
+fn test_cli_priority_and_concurrency_flags() {
+    let temp = tempdir().unwrap();
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+
+    std::fs::write(src.join("sample.txt"), b"priority test payload").unwrap();
+
+    // Verify valid priority and concurrency flags succeed during sync execution
+    let output = Command::new(velcrux_bin())
+        .arg("--priority")
+        .arg("urgent")
+        .arg("--concurrency")
+        .arg("8")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to execute velcrux with priority and concurrency flags");
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read(dst.join("sample.txt")).unwrap(),
+        b"priority test payload"
+    );
+
+    // Verify invalid priority fails
+    let bad_prio = Command::new(velcrux_bin())
+        .arg("--priority")
+        .arg("superfast")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to run with invalid priority");
+    assert!(!bad_prio.status.success());
+    let stderr = String::from_utf8_lossy(&bad_prio.stderr);
+    assert!(stderr.contains("invalid transfer priority"));
+
+    // Verify zero concurrency fails
+    let zero_conc = Command::new(velcrux_bin())
+        .arg("--concurrency")
+        .arg("0")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to run with zero concurrency");
+    assert!(!zero_conc.status.success());
+    let stderr_conc = String::from_utf8_lossy(&zero_conc.stderr);
+    assert!(stderr_conc.contains("concurrency must be greater than 0"));
+
+    // Verify --help documents --priority and --concurrency
+    let help_output = Command::new(velcrux_bin())
+        .arg("--help")
+        .output()
+        .expect("failed to run velcrux --help");
+    assert!(help_output.status.success());
+    let help_text = String::from_utf8_lossy(&help_output.stdout);
+    assert!(help_text.contains("--priority"));
+    assert!(help_text.contains("--concurrency"));
+}

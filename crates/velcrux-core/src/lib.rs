@@ -73,7 +73,8 @@ pub use transfer::{
     parse_rate_limit, server_download_session, server_download_session_with_delta,
     server_download_session_with_limits, server_staging_path, server_upload_session,
     server_upload_session_with_delta, server_upload_session_with_limits,
-    server_upload_session_with_state, PipelineConfig, RateLimiter, TransferDir, TransferKind,
+    server_upload_session_with_state, ConcurrentTransferLimiter, PipelineConfig, PriorityScheduler,
+    RateLimiter, ScheduledTask, TransferDir, TransferKind, TransferPermit, TransferPriority,
     TransferRequest,
 };
 pub use transport::{

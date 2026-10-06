@@ -482,3 +482,99 @@ staging = "{}"
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_max_concurrent_transfers_config_and_validation() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS");
+
+    let tmp = setup_temp_dir("max_concurrent_transfers");
+    let root = tmp.join("files");
+    let staging = tmp.join("files/.velcrux-staging");
+    let cert = tmp.join("server.crt");
+    let key = tmp.join("server.key");
+    let ca = tmp.join("clients-ca.crt");
+
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(&cert, "dummy-cert").unwrap();
+    fs::write(&key, "dummy-key").unwrap();
+    fs::write(&ca, "dummy-ca").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let toml = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root    = "{}"
+staging = "{}"
+
+[transfer]
+max_concurrent_transfers = 8
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+
+    let path = tmp.join("config.toml");
+    fs::write(&path, &toml).unwrap();
+
+    let cfg = ServerConfig::load(&path).expect("valid config with max_concurrent_transfers");
+    assert_eq!(cfg.transfer.max_concurrent_transfers, Some(8));
+
+    // Env override
+    std::env::set_var("VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS", "16");
+    let cfg_env = ServerConfig::load(&path).expect("valid config with env override");
+    assert_eq!(cfg_env.transfer.max_concurrent_transfers, Some(16));
+    std::env::remove_var("VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS");
+
+    // Zero max_concurrent_transfers fails validation
+    let toml_zero = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root    = "{}"
+staging = "{}"
+
+[transfer]
+max_concurrent_transfers = 0
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+    let path_zero = tmp.join("zero_concurrency.toml");
+    fs::write(&path_zero, &toml_zero).unwrap();
+    let res = ServerConfig::load(&path_zero);
+    assert!(
+        res.is_err(),
+        "zero max_concurrent_transfers must fail validation"
+    );
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("transfer.max_concurrent_transfers must be greater than 0"));
+
+    let _ = fs::remove_dir_all(&tmp);
+}

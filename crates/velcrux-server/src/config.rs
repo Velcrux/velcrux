@@ -145,6 +145,8 @@ pub struct TransferCfg {
     pub max_file_size: Option<String>,
     #[serde(default)]
     pub max_manifest_entries: Option<u64>,
+    #[serde(default)]
+    pub max_concurrent_transfers: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -326,6 +328,11 @@ impl ServerConfig {
                 self.transfer.max_manifest_entries = Some(n);
             }
         }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS") {
+            if let Ok(n) = val.parse() {
+                self.transfer.max_concurrent_transfers = Some(n);
+            }
+        }
 
         // Hash
         if let Ok(val) = std::env::var("VELCRUX_HASH_ALGORITHM") {
@@ -499,6 +506,13 @@ impl ServerConfig {
         if let Some(ref comp) = self.transfer.compression {
             if comp != "none" && comp != "zstd" {
                 anyhow::bail!("invalid transfer.compression: {comp} (must be 'none' or 'zstd')");
+            }
+        }
+
+        // 7b. Validate max_concurrent_transfers if specified
+        if let Some(mct) = self.transfer.max_concurrent_transfers {
+            if mct == 0 {
+                anyhow::bail!("transfer.max_concurrent_transfers must be greater than 0");
             }
         }
 

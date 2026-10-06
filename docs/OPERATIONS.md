@@ -369,3 +369,37 @@ VELCRUX_NETWORK_BIND_INTERFACE=eth1 velcruxd --config /etc/velcrux/server.toml
 
 ### Destination Address Family Matching
 When `--bind-interface` or wildcard defaults are used, Velcrux dynamically inspects the destination target's address family (`IPv4` vs `IPv6`) and binds the local socket to a compatible IP address on the interface, preventing socket family mismatch errors in QUIC.
+
+## 14. Priority Scheduling & Concurrent Transfer Control (Option AF)
+
+Velcrux implements priority-weighted bandwidth allocation and bounded concurrency control (`REQUIREMENTS.md` §24, §25, §29, `ARCHITECTURE.md` §1):
+
+### Priority Tiers and Deficit Round-Robin (DRR)
+Transfers and streams are scheduled according to four prioritized tiers:
+- **Urgent (`urgent`, weight 8×)**: Dedicated to control frames, directory manifests, ping probes, or high-priority interactive jobs. Supports immediate preemption via `pop_next_urgent_preemptive()`.
+- **High (`high`, weight 4×)**: Expedited bulk file transfers.
+- **Normal (`normal`, weight 2×, default)**: Standard bulk file transfers.
+- **Low (`low` / `background`, weight 1×)**: Routine background synchronization and archival replication.
+
+Unlike strict priority schedulers that can completely starve low-priority tasks under sustained high-priority load, Velcrux employs **Deficit Round-Robin (DRR)** fair queueing. Each tier accumulates deficit credits proportional to its weight in each scheduling round, ensuring lower-priority tasks are guaranteed forward progress while higher-priority tasks receive proportionally larger bandwidth and execution quanta.
+
+### Bounded Concurrency Limiter
+Active parallel transfers are governed by `ConcurrentTransferLimiter`:
+- Enforces an upper bound on active transfers (`active_transfers <= max_concurrency`).
+- When all execution slots are full, waiting tasks queue in priority-ordered buckets (`Urgent > High > Normal > Low`).
+- When an active transfer completes, its permit drop automatically wakes the highest-priority waiting transfer first.
+
+### Client Configuration
+- `--priority <urgent|high|normal|low>` (env: `VELCRUX_PRIORITY`, default: `"normal"`): Sets the transfer priority tier.
+- `--concurrency <N>` (env: `VELCRUX_CONCURRENCY`, default: `4`): Configures the maximum number of concurrent file transfers allowed.
+
+### Server Configuration
+In `server.toml`, servers can restrict max concurrent transfers per session or overall:
+```toml
+[transfer]
+max_concurrent_transfers = 16 # Must be > 0
+```
+Or via environment override:
+```bash
+VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS=16 velcruxd --config /etc/velcrux/server.toml
+```
