@@ -103,11 +103,25 @@ where
         .ok_or_else(|| anyhow::anyhow!("no PKCS#8 key in {}", cfg.security.private_key))?;
     let key_der = PrivateKey(parsed_key);
 
-    let addr: std::net::SocketAddr = cfg
-        .network
-        .listen
-        .parse()
-        .with_context(|| format!("invalid listen address: {}", cfg.network.listen))?;
+    let addr: std::net::SocketAddr = if let Some(iface_name) = &cfg.network.bind_interface {
+        let parsed: std::net::SocketAddr = cfg
+            .network
+            .listen
+            .parse()
+            .with_context(|| format!("invalid listen address: {}", cfg.network.listen))?;
+        velcrux_core::transport::resolve_bind_addr(
+            None,
+            Some(iface_name),
+            parsed.port(),
+            Some(parsed),
+        )
+        .with_context(|| format!("resolving server bind interface {}", iface_name))?
+    } else {
+        cfg.network
+            .listen
+            .parse()
+            .with_context(|| format!("invalid listen address: {}", cfg.network.listen))?
+    };
 
     let mut server_caps = Capabilities::EMPTY;
     server_caps.set(Capability::FixedChunking);

@@ -116,6 +116,23 @@ struct Cli {
     )]
     min_delta_size: u64,
 
+    /// Explicit source IP address to bind to for outgoing QUIC traffic (Option AE).
+    #[arg(long = "bind-ip", env = "VELCRUX_BIND_IP", global = true)]
+    bind_ip: Option<String>,
+
+    /// Network interface name whose IP address should be bound to for outgoing traffic (Option AE).
+    #[arg(long = "bind-interface", env = "VELCRUX_BIND_INTERFACE", global = true)]
+    bind_interface: Option<String>,
+
+    /// Local port to bind to for outgoing traffic (default: 0 for ephemeral) (Option AE).
+    #[arg(
+        long = "bind-port",
+        env = "VELCRUX_BIND_PORT",
+        default_value = "0",
+        global = true
+    )]
+    bind_port: u16,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -293,13 +310,26 @@ fn parse_url_with_path(s: &str) -> anyhow::Result<(SocketAddr, String)> {
     Ok((addr, path))
 }
 
-fn build_transport(cli: &Cli) -> anyhow::Result<SharedTransport> {
+fn build_transport_target(
+    cli: &Cli,
+    target_addr: Option<SocketAddr>,
+) -> anyhow::Result<SharedTransport> {
     let ca_path = cli
         .ca
         .as_ref()
         .context("--ca is required (no insecure mode is supported; see SECURITY.md §3)")?;
     let ca_pem = read_file(ca_path)?;
     let mut builder = ClientBuilder::new().with_server_roots_pem(&ca_pem)?;
+
+    let bind_addr = velcrux_core::transport::resolve_bind_addr(
+        cli.bind_ip.as_deref(),
+        cli.bind_interface.as_deref(),
+        cli.bind_port,
+        target_addr,
+    )
+    .map_err(|e| anyhow::anyhow!("resolving client bind address: {e}"))?;
+
+    builder = builder.with_bind_addr(bind_addr);
 
     if let (Some(cert), Some(key)) = (cli.cert.as_ref(), cli.key.as_ref()) {
         let cert_pem = read_file(cert)?;
@@ -321,6 +351,11 @@ fn build_transport(cli: &Cli) -> anyhow::Result<SharedTransport> {
     let transport: Arc<dyn velcrux_core::transport::Transport<Conn = QuicConnection>> =
         Arc::new(builder.build()?);
     Ok(transport)
+}
+
+#[allow(dead_code)]
+fn build_transport(cli: &Cli) -> anyhow::Result<SharedTransport> {
+    build_transport_target(cli, None)
 }
 
 fn open_client_state_store(cli: &Cli) -> Option<Arc<dyn velcrux_core::state::StateStore>> {
@@ -516,7 +551,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
             let sni = get_sni(&cli, url);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             info!(%addr, %sni, "connecting");
             let mut session = ClientSession::connect(transport, addr, &sni).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
@@ -527,7 +562,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Upload { local, url } => {
             let (addr, path) = parse_url_with_path(url)?;
             let sni = get_sni(&cli, url);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
@@ -538,7 +573,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Download { url, local } => {
             let (addr, path) = parse_url_with_path(url)?;
             let sni = get_sni(&cli, url);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             info!(%addr, %sni, ?path, "connecting");
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
@@ -552,7 +587,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let (addr, _) = parse_url_with_path(server)?;
             let sni = get_sni(&cli, server);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             info!(%addr, %sni, "connecting for resume");
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
@@ -566,7 +601,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let (addr, _) = parse_url_with_path(server)?;
             let sni = get_sni(&cli, server);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
             run_cancel(&cli, &mut session, transfer_id).await?;
@@ -577,7 +612,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let (addr, _) = parse_url_with_path(server)?;
             let sni = get_sni(&cli, server);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
             run_stat(&cli, &mut session, transfer_id).await?;
@@ -585,7 +620,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::List { url_prefix } => {
             let (addr, path) = parse_url_with_path(url_prefix)?;
             let sni = get_sni(&cli, url_prefix);
-            let transport = build_transport(&cli)?;
+            let transport = build_transport_target(&cli, Some(addr))?;
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
             let clean_prefix = path.trim_start_matches('/').to_string();
@@ -1758,7 +1793,7 @@ async fn run_remote_upload_sync(
 
     let (addr, path) = parse_url_with_path(destination)?;
     let sni = get_sni(cli, destination);
-    let transport = build_transport(cli)?;
+    let transport = build_transport_target(cli, Some(addr))?;
     let conn = transport.connect(addr, &sni).await?;
     let mut session = open_client_session(&conn, cli).await?;
     let store = open_client_state_store(cli);
@@ -1965,7 +2000,7 @@ async fn run_remote_download_sync(
 
     let (addr, path) = parse_url_with_path(source)?;
     let sni = get_sni(cli, source);
-    let transport = build_transport(cli)?;
+    let transport = build_transport_target(cli, Some(addr))?;
     let conn = transport.connect(addr, &sni).await?;
     let mut session = open_client_session(&conn, cli).await?;
 

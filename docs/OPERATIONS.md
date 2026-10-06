@@ -344,3 +344,28 @@ DeltaCost = (file_size / min(disk_read_bw, hash_bw)) + (delta_rtts × RTT) + (ch
 - **Forced Delta CDC (`--mode deltacdc` / `--mode fastcdc`)**: Enforces FastCDC chunk negotiation, minimizing bytes sent over metered or high-latency WAN connections.
 - **Network Profiles (`--network-profile <auto|lan|wan|satellite>`)**: Supplies network latency and bandwidth presets (`lan` = 10 Gbps / 0.5ms, `wan` = 100 Mbps / 30ms, `satellite` = 15 Mbps / 250ms).
 - **Minimum Delta Size Threshold (`--min-delta-size <bytes>`, default 64 KiB)**: Files below this threshold are automatically transferred as direct streams to eliminate multi-roundtrip negotiation overhead.
+
+## 13. Multi-Homed Network Interface & Source IP Binding (Option AE)
+
+Velcrux supports multi-homed hosts and network segmentation (`REQUIREMENTS.md` §74, §75) on both client and server deployments without requiring elevated privileges:
+
+### Client Configuration
+By default, the client binds to `0.0.0.0:0` (or `[::]:0` for IPv6 targets). When operating on multi-homed workstations or edge routers with segregated management and storage networks (e.g. 100GbE SAN alongside a 1GbE LAN), traffic can be forced out of a specific interface or IP:
+- `--bind-ip <IP>` (env: `VELCRUX_BIND_IP`): Explicit source IP address to bind to for outgoing QUIC UDP packets.
+- `--bind-interface <IFACE>` (env: `VELCRUX_BIND_INTERFACE`): Interface name (e.g. `eth1`, `en0`) whose IP address is automatically resolved.
+- `--bind-port <PORT>` (env: `VELCRUX_BIND_PORT`, default: `0`): Local source UDP port.
+
+### Server Configuration
+In `server.toml`, servers can bind to specific physical or virtual network interfaces:
+```toml
+[network]
+listen         = "0.0.0.0:7443"
+bind_interface = "eth1" # Resolves interface IP and binds endpoint socket
+```
+Or via environment variable:
+```bash
+VELCRUX_NETWORK_BIND_INTERFACE=eth1 velcruxd --config /etc/velcrux/server.toml
+```
+
+### Destination Address Family Matching
+When `--bind-interface` or wildcard defaults are used, Velcrux dynamically inspects the destination target's address family (`IPv4` vs `IPv6`) and binds the local socket to a compatible IP address on the interface, preventing socket family mismatch errors in QUIC.

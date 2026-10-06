@@ -9,6 +9,7 @@
 
 pub mod flow_control;
 pub mod identity;
+pub mod interface;
 pub mod quic;
 pub mod stats;
 
@@ -17,6 +18,7 @@ pub use flow_control::{
     MAX_RECEIVE_WINDOW, MIN_RECEIVE_WINDOW,
 };
 pub use identity::Identity;
+pub use interface::{find_interface, list_interfaces, resolve_bind_addr, InterfaceInfo};
 pub use quic::{
     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,
     TransportConfigTunables,
@@ -78,6 +80,16 @@ pub trait Connection: Send + Sync {
     /// Used for channel-bound authentication (`SECURITY.md` §2).
     fn export_keying_material(&self, output: &mut [u8], label: &[u8], context: &[u8])
         -> Result<()>;
+
+    /// Local socket address of the connection, if known.
+    fn local_addr(&self) -> Option<SocketAddr> {
+        None
+    }
+
+    /// Remote peer socket address of the connection, if known.
+    fn remote_addr(&self) -> Option<SocketAddr> {
+        None
+    }
 }
 
 /// The transport factory. One for clients, one for servers.

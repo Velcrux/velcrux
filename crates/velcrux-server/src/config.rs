@@ -37,6 +37,8 @@ pub struct NetworkCfg {
     #[serde(default = "default_listen")]
     pub listen: String,
     #[serde(default)]
+    pub bind_interface: Option<String>,
+    #[serde(default)]
     pub max_bandwidth: Option<String>,
     #[serde(default)]
     pub max_connections: Option<u32>,
@@ -56,6 +58,7 @@ impl Default for NetworkCfg {
     fn default() -> Self {
         Self {
             listen: default_listen(),
+            bind_interface: None,
             max_bandwidth: None,
             max_connections: None,
             max_connections_per_ip: None,
@@ -226,6 +229,9 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_LISTEN") {
             self.network.listen = val;
         }
+        if let Ok(val) = std::env::var("VELCRUX_NETWORK_BIND_INTERFACE") {
+            self.network.bind_interface = Some(val);
+        }
         if let Ok(val) = std::env::var("VELCRUX_NETWORK_MAX_BANDWIDTH") {
             self.network.max_bandwidth = Some(val);
         }
@@ -392,6 +398,13 @@ impl ServerConfig {
             self.network.listen.parse().with_context(|| {
                 format!("invalid network.listen address: {}", self.network.listen)
             })?;
+
+        // 1b. Validate bind_interface if specified
+        if let Some(iface) = &self.network.bind_interface {
+            if iface.trim().is_empty() {
+                anyhow::bail!("network.bind_interface cannot be empty if specified");
+            }
+        }
 
         // 2. Validate state_db path (must be absolute per ADR-005)
         if let Some(state_db) = &self.storage.state_db {

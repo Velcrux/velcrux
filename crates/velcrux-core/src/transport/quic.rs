@@ -118,6 +118,7 @@ pub struct ClientBuilder {
     server_roots: RootCertStore,
     client_identity: Option<ClientIdentity>,
     tunables: TransportConfigTunables,
+    bind_addr: Option<SocketAddr>,
 }
 
 impl ClientBuilder {
@@ -127,6 +128,7 @@ impl ClientBuilder {
             server_roots: RootCertStore::empty(),
             client_identity: None,
             tunables: TransportConfigTunables::default(),
+            bind_addr: None,
         }
     }
 
@@ -156,6 +158,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Override the local socket address to bind to.
+    ///
+    /// If not specified, defaults to `0.0.0.0:0`.
+    pub fn with_bind_addr(mut self, addr: SocketAddr) -> Self {
+        self.bind_addr = Some(addr);
+        self
+    }
+
     /// Override the default tunables.
     pub fn with_tunables(mut self, tunables: TransportConfigTunables) -> Self {
         self.tunables = tunables;
@@ -181,8 +191,11 @@ impl ClientBuilder {
         let mut client_cfg = ClientConfig::new(Arc::new(tls_cfg));
         client_cfg.transport_config(Arc::new(self.tunables.build_quinn()));
 
-        let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())
-            .map_err(|e| TransportError::Endpoint(e.to_string()))?;
+        let bind_addr = self
+            .bind_addr
+            .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
+        let mut endpoint =
+            Endpoint::client(bind_addr).map_err(|e| TransportError::Endpoint(e.to_string()))?;
         endpoint.set_default_client_config(client_cfg);
         Ok(QuicTransport { endpoint })
     }
@@ -327,7 +340,11 @@ impl Transport for QuicTransport {
             .connect(addr, sni)
             .map_err(|e| TransportError::Endpoint(e.to_string()))?;
         let conn = conn.await?;
-        Ok(QuicConnection { inner: conn })
+        let local_addr = self.endpoint.local_addr().ok();
+        Ok(QuicConnection {
+            inner: conn,
+            local_addr,
+        })
     }
 
     async fn accept(&self) -> Result<Self::Conn> {
@@ -337,19 +354,34 @@ impl Transport for QuicTransport {
             .await
             .ok_or_else(|| TransportError::Endpoint("endpoint closed".into()))?;
         let conn = incoming.await?;
-        Ok(QuicConnection { inner: conn })
+        let local_addr = self.endpoint.local_addr().ok();
+        Ok(QuicConnection {
+            inner: conn,
+            local_addr,
+        })
     }
 }
 
 /// A live QUIC connection.
 pub struct QuicConnection {
     inner: quinn::Connection,
+    local_addr: Option<SocketAddr>,
 }
 
 impl QuicConnection {
     /// Returns the underlying quinn connection.
     pub fn quinn(&self) -> &quinn::Connection {
         &self.inner
+    }
+
+    /// Local socket address of the connection, if known.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+
+    /// Remote socket address of the connection.
+    pub fn remote_addr(&self) -> SocketAddr {
+        self.inner.remote_address()
     }
 }
 
@@ -412,6 +444,14 @@ impl Connection for QuicConnection {
                 crate::error::TransportError::Endpoint(format!("export_keying_material: {e:?}"))
             })?;
         Ok(())
+    }
+
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+
+    fn remote_addr(&self) -> Option<SocketAddr> {
+        Some(self.inner.remote_address())
     }
 }
 

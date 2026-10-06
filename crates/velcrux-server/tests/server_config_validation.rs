@@ -393,3 +393,92 @@ fn test_parse_size_bytes_utility() {
     );
     assert_eq!(parse_size_bytes("1048576").unwrap(), 1048576);
 }
+
+#[test]
+fn test_bind_interface_configuration() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_NETWORK_BIND_INTERFACE");
+
+    let tmp = setup_temp_dir("bind_iface");
+    let cert = tmp.join("server.crt");
+    let key = tmp.join("server.key");
+    let ca = tmp.join("clients-ca.crt");
+    let root = tmp.join("root");
+    let staging = root.join(".velcrux-staging");
+
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(&cert, "dummy-cert").unwrap();
+    fs::write(&key, "dummy-key").unwrap();
+    fs::write(&ca, "dummy-ca").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let toml = format!(
+        r#"
+[network]
+listen         = "127.0.0.1:7443"
+bind_interface = "lo"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root    = "{}"
+staging = "{}"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+
+    let path = tmp.join("config.toml");
+    fs::write(&path, &toml).unwrap();
+
+    let cfg = ServerConfig::load(&path).expect("valid config with bind_interface");
+    assert_eq!(cfg.network.bind_interface, Some("lo".to_string()));
+
+    // Env override
+    std::env::set_var("VELCRUX_NETWORK_BIND_INTERFACE", "eth2");
+    let cfg_env = ServerConfig::load(&path).expect("valid config with env override");
+    assert_eq!(cfg_env.network.bind_interface, Some("eth2".to_string()));
+    std::env::remove_var("VELCRUX_NETWORK_BIND_INTERFACE");
+
+    // Empty bind_interface fails validation
+    let toml_empty = format!(
+        r#"
+[network]
+listen         = "127.0.0.1:7443"
+bind_interface = "   "
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root    = "{}"
+staging = "{}"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+    let path_empty = tmp.join("empty_iface.toml");
+    fs::write(&path_empty, &toml_empty).unwrap();
+    let res = ServerConfig::load(&path_empty);
+    assert!(res.is_err(), "empty bind_interface must fail validation");
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("bind_interface"));
+
+    let _ = fs::remove_dir_all(&tmp);
+}
