@@ -403,3 +403,42 @@ Or via environment override:
 ```bash
 VELCRUX_TRANSFER_MAX_CONCURRENT_TRANSFERS=16 velcruxd --config /etc/velcrux/server.toml
 ```
+
+## 15. REST Control Plane, Operator Management API & Live Telemetry Dashboard (Option AG)
+
+`velcruxd` embeds an asynchronous HTTP management control plane and live web dashboard (`REQUIREMENTS.md` §36, §38, §81):
+
+### Configuration
+Enabled via `[telemetry] metrics_listen` in `server.toml` (e.g. `metrics_listen = "127.0.0.1:9443"`) or environment variable `VELCRUX_TELEMETRY_METRICS_LISTEN`.
+
+### REST API v1 Surface (`/api/v1/`)
+- `GET /api/v1/status`: Comprehensive node operational report in machine-readable JSON:
+  - Daemon version, uptime, QUIC listening address, readiness state.
+  - Active and total connection counts, active transfers (upload/download), committed transfers.
+  - Real-time wire throughput in bits/sec (upload/download).
+  - Storage statistics: total transferred, reused, saved via dedup/sparse, dedup ratio, chunk cache hit ratio.
+  - Process metrics: CPU time and resident memory (RSS).
+- `GET /api/v1/sessions`: Active client session registry:
+  - List of sessions with `conn_id`, authenticated `identity`, `remote_addr`, and `uptime_secs`.
+- `POST /api/v1/sessions/kill` / `DELETE /api/v1/sessions`: Terminate active connections:
+  - Parameters: `?conn_id=<ID>` or `?identity=<NAME>`.
+  - Returns `{"killed": N}`.
+- `GET /api/v1/quotas`: Multi-tenant quota accounting and current usage:
+  - List of configured tenants, current storage usage, quota caps, soft quotas, bandwidth limits, and in-flight reservations.
+- `POST /api/v1/gc`: On-demand disk garbage collection sweep:
+  - Parameters: `?dry_run=true|false&staging=true|false&chunks=true|false`.
+  - Returns structured `ChunkStoreGcReport` and `StagingGcReport` with total reclaimed bytes.
+
+### Live Operator Web Dashboard (`/` and `/dashboard`)
+Accessing `http://<metrics_listen>/` or `http://<metrics_listen>/dashboard` renders an embedded Single-Page Application:
+- **Aesthetic Dark Theme**: Engineered with deep space palette (`#090D16`), glowing glassmorphism cards, and high-contrast typography.
+- **Real-Time Telemetry Cards**: Live-updating connection counts, throughput meters, active transfer counters, and deduplication savings.
+- **Active Sessions Table**: Real-time connection list with interactive "Terminate" action buttons.
+- **Tenant Quotas Overview**: Storage and transfer usage breakdown per tenant.
+- **Storage Maintenance Panel**: One-click "Run Garbage Collection" button providing instant feedback on reclaimed disk space.
+- **Air-Gap Capability**: 100% self-contained with zero CDN or external font dependencies, operating reliably in isolated network enclaves.
+
+### Observability & Probes
+- `GET /metrics`: Standard Prometheus text format (v0.0.4) metrics.
+- `GET /healthz`, `/livez`: Liveness probe (`healthy`).
+- `GET /readyz`: Readiness probe (`ready` with HTTP 200, or `unready` with HTTP 503).

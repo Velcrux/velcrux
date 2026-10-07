@@ -617,6 +617,56 @@ impl LimitsManager {
     pub fn record_transfer(&self, identity: Option<&str>, bytes_committed: u64) {
         <Self as LimitsProvider>::record_transfer(self, identity, bytes_committed);
     }
+
+    /// Return a snapshot list of all known tenants and their quota / bandwidth utilization.
+    pub fn list_tenants_quotas(&self) -> Vec<TenantQuotaInfo> {
+        let mut idents = std::collections::BTreeSet::new();
+        if let Ok(g) = self.quotas.read() {
+            idents.extend(g.keys().cloned());
+        }
+        if let Ok(g) = self.usage.read() {
+            idents.extend(g.keys().cloned());
+        }
+        if let Ok(g) = self.tenant_storage_bytes.read() {
+            idents.extend(g.keys().cloned());
+        }
+        if let Ok(g) = self.tenant_limiters.read() {
+            idents.extend(g.keys().cloned());
+        }
+
+        let mut res = Vec::new();
+        for id in idents {
+            let quota_bytes = self.get_quota(&id);
+            let soft_quota_bytes = self.get_soft_quota(&id);
+            let transfer_usage_bytes = self.get_usage(&id);
+            let reserved_bytes = self.get_reserved(&id);
+            let storage_usage_bytes = self.get_storage_usage(&id);
+            let max_bandwidth_bps = self.tenant_bandwidth(&id);
+
+            res.push(TenantQuotaInfo {
+                identity: id,
+                quota_bytes,
+                soft_quota_bytes,
+                transfer_usage_bytes,
+                reserved_bytes,
+                storage_usage_bytes,
+                max_bandwidth_bps,
+            });
+        }
+        res
+    }
+}
+
+/// Tenant quota and usage snapshot for administrative inspection (`REQUIREMENTS.md` §23, §81).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TenantQuotaInfo {
+    pub identity: String,
+    pub quota_bytes: Option<u64>,
+    pub soft_quota_bytes: Option<u64>,
+    pub transfer_usage_bytes: u64,
+    pub reserved_bytes: u64,
+    pub storage_usage_bytes: u64,
+    pub max_bandwidth_bps: Option<u64>,
 }
 
 impl LimitsProvider for LimitsManager {

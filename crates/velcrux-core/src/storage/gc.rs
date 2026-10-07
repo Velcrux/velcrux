@@ -1,5 +1,6 @@
 //! Garbage collection for orphaned staging files and unreferenced deduplication chunks (`docs/OPERATIONS.md` §6).
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -11,7 +12,7 @@ use crate::storage::chunk_store::LocalChunkStore;
 use crate::util::Hash;
 
 /// Report from a staging garbage collection sweep.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StagingGcReport {
     /// Total entries scanned in the staging directory.
     pub entries_scanned: usize,
@@ -24,7 +25,7 @@ pub struct StagingGcReport {
 }
 
 /// Report from a chunk store garbage collection sweep.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkStoreGcReport {
     /// Total chunks scanned in the chunk store.
     pub chunks_scanned: usize,

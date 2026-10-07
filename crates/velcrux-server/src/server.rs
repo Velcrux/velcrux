@@ -142,17 +142,34 @@ where
     let registry: Arc<SessionRegistry> = SessionRegistry::new();
     info!(%addr, "velcruxd listening");
 
+    let limits_manager = Arc::new(LimitsManager::new(
+        cfg.network.max_bandwidth.as_deref(),
+        cfg.network.max_connections,
+        cfg.network.max_connections_per_ip,
+        cfg.network.max_connections_unauth,
+        &cfg.limits,
+        Arc::clone(&stats),
+    )?);
+    let limits_provider: Arc<dyn LimitsProvider> =
+        Arc::clone(&limits_manager) as Arc<dyn LimitsProvider>;
+
     let metrics_shutdown = if let Some(metrics_listen) = &cfg.telemetry.metrics_listen {
-        match crate::metrics::start_metrics_server_with_registry(
-            metrics_listen,
-            Arc::clone(&stats),
-            Some(Arc::clone(&registry)),
-        )
-        .await
-        {
+        let api_ctx = crate::api::ApiServerContext::new(Arc::clone(&stats), metrics_listen.clone())
+            .with_registry(Some(Arc::clone(&registry)))
+            .with_limits(Some(Arc::clone(&limits_manager)))
+            .with_paths(
+                Some(std::path::PathBuf::from(&cfg.storage.root)),
+                Some(std::path::PathBuf::from(&cfg.storage.staging)),
+                cfg.storage.state_db.as_ref().map(std::path::PathBuf::from),
+                cfg.storage
+                    .chunk_store
+                    .as_ref()
+                    .map(std::path::PathBuf::from),
+            );
+        match crate::api::start_api_server(api_ctx).await {
             Ok((_addr, tx)) => Some(tx),
             Err(e) => {
-                warn!(error = %e, "failed to start metrics server");
+                warn!(error = %e, "failed to start metrics & api server");
                 None
             }
         }
@@ -286,17 +303,6 @@ where
         .with_context(|| "failed to build authorizer from configuration")?;
     let reloadable_authorizer = Arc::new(ReloadableAuthorizer::new(initial_authorizer));
     let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
-
-    let limits_manager = Arc::new(LimitsManager::new(
-        cfg.network.max_bandwidth.as_deref(),
-        cfg.network.max_connections,
-        cfg.network.max_connections_per_ip,
-        cfg.network.max_connections_unauth,
-        &cfg.limits,
-        Arc::clone(&stats),
-    )?);
-    let limits_provider: Arc<dyn LimitsProvider> =
-        Arc::clone(&limits_manager) as Arc<dyn LimitsProvider>;
 
     let next_id = Arc::new(AtomicU64::new(1));
     let (drain_tx, drain_rx) = tokio::sync::watch::channel(false);

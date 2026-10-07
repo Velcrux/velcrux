@@ -6,10 +6,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::oneshot;
-use tracing::{info, warn};
 use velcrux_core::session::ServerStats;
 
 /// Safely sample process CPU time (in seconds) and resident memory (in bytes)
@@ -259,148 +256,9 @@ pub async fn start_metrics_server_with_registry(
     stats: Arc<ServerStats>,
     registry: Option<Arc<SessionRegistry>>,
 ) -> anyhow::Result<(std::net::SocketAddr, oneshot::Sender<()>)> {
-    let listener = TcpListener::bind(listen_addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("bind metrics listener on {listen_addr}: {e}"))?;
-    let local_addr = listener.local_addr()?;
-    info!(metrics_addr = %local_addr, "Prometheus /metrics HTTP endpoint listening");
-
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = &mut shutdown_rx => {
-                    info!("metrics server received shutdown signal");
-                    break;
-                }
-                accept_res = listener.accept() => {
-                    let (mut socket, _) = match accept_res {
-                        Ok(s) => s,
-                        Err(e) => {
-                            warn!(error = %e, "metrics accept failed");
-                            continue;
-                        }
-                    };
-                    let stats = Arc::clone(&stats);
-                    let registry = registry.clone();
-                    tokio::spawn(async move {
-                        let mut buf = [0u8; 2048];
-                        let n = match socket.read(&mut buf).await {
-                            Ok(n) if n > 0 => n,
-                            _ => return,
-                        };
-                        let req_str = String::from_utf8_lossy(&buf[..n]);
-                        let first_line = req_str.lines().next().unwrap_or("");
-                        let path = first_line.split_whitespace().nth(1).unwrap_or("/");
-
-                        let response = if path == "/metrics" {
-                            let body = format_prometheus_metrics(&stats);
-                            format!(
-                                "HTTP/1.1 200 OK\r\n\
-                                 Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n\
-                                 Content-Length: {}\r\n\
-                                 Connection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            )
-                        } else if path == "/healthz" || path == "/health" || path == "/livez" {
-                            let body = "healthy\n";
-                            format!(
-                                "HTTP/1.1 200 OK\r\n\
-                                 Content-Type: text/plain\r\n\
-                                 Content-Length: {}\r\n\
-                                 Connection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            )
-                        } else if path == "/readyz" {
-                            let is_ready = stats.is_ready.load(Ordering::Relaxed);
-                            if is_ready {
-                                let body = "ready\n";
-                                format!(
-                                    "HTTP/1.1 200 OK\r\n\
-                                     Content-Type: text/plain\r\n\
-                                     Content-Length: {}\r\n\
-                                     Connection: close\r\n\r\n{}",
-                                    body.len(),
-                                    body
-                                )
-                            } else {
-                                let body = "unready\n";
-                                format!(
-                                    "HTTP/1.1 503 Service Unavailable\r\n\
-                                     Content-Type: text/plain\r\n\
-                                     Content-Length: {}\r\n\
-                                     Connection: close\r\n\r\n{}",
-                                    body.len(),
-                                    body
-                                )
-                            }
-                        } else if path == "/admin/sessions" {
-                            let sessions = if let Some(reg) = &registry {
-                                reg.list_sessions().await
-                            } else {
-                                Vec::new()
-                            };
-                            let body = serde_json::to_string_pretty(&sessions).unwrap_or_else(|_| "[]".into());
-                            format!(
-                                "HTTP/1.1 200 OK\r\n\
-                                 Content-Type: application/json\r\n\
-                                 Content-Length: {}\r\n\
-                                 Connection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            )
-                        } else if path.starts_with("/admin/kill-session") {
-                            let mut killed = 0;
-                            if let Some(reg) = &registry {
-                                if let Some((_, query)) = path.split_once('?') {
-                                    for param in query.split('&') {
-                                        if let Some((k, v)) = param.split_once('=') {
-                                            if k == "identity" {
-                                                killed += reg.kill_by_identity(v).await;
-                                            } else if k == "conn_id" {
-                                                if let Ok(id) = v.parse::<u64>() {
-                                                    if reg.kill_by_conn_id(id).await {
-                                                        killed += 1;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            let body = format!("{{\"killed\":{}}}\n", killed);
-                            format!(
-                                "HTTP/1.1 200 OK\r\n\
-                                 Content-Type: application/json\r\n\
-                                 Content-Length: {}\r\n\
-                                 Connection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            )
-                        } else {
-                            let body = "404 Not Found\n";
-                            format!(
-                                "HTTP/1.1 404 Not Found\r\n\
-                                 Content-Type: text/plain\r\n\
-                                 Content-Length: {}\r\n\
-                                 Connection: close\r\n\r\n{}",
-                                body.len(),
-                                body
-                            )
-                        };
-
-                        let _ = socket.write_all(response.as_bytes()).await;
-                        let _ = socket.shutdown().await;
-                    });
-                }
-            }
-        }
-    });
-
-    Ok((local_addr, shutdown_tx))
+    let ctx =
+        crate::api::ApiServerContext::new(stats, listen_addr.to_string()).with_registry(registry);
+    crate::api::start_api_server(ctx).await
 }
 
 /// Returns the canonical Grafana dashboard definition as a JSON string (`deploy/grafana/velcrux-overview.json`).

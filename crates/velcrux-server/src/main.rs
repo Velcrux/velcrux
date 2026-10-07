@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod api;
 pub mod config;
 mod dev_pki;
 pub mod limits;
