@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -102,6 +105,23 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           grep -B 10 -A 60 "failures:" test_output.log >> $GITHUB_STEP_SUMMARY || tail -n 120 test_output.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+          FAIL_LINES=$(grep -A 30 "^failures:" test_output.log || tail -n 30 test_output.log)
+          FAIL_ESCAPED="${FAIL_LINES//$'\n'/%0A}"
+          FAIL_ESCAPED="${FAIL_ESCAPED//$'\r'/%0D}"
+          echo "::error title=Cargo Test Failures::$FAIL_ESCAPED"
+        shell: bash
+
+      - name: Publish failure log to debug branch
+        if: failure()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-debug-${{ matrix.os }}
+          git reset
+          git add test_output.log -f
+          git commit -m "ci: ${{ matrix.os }} test failure log [skip ci]" || true
+          git push -f origin ci-debug-${{ matrix.os }} || true
         shell: bash
 
       - name: Run Milestone 10 performance tests
