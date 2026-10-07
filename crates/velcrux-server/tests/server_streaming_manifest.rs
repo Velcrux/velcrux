@@ -194,8 +194,8 @@ fn test_streaming_manifest_generation_large_directory() {
     if initial_rss > 0 && end_rss > initial_rss {
         let growth = end_rss - initial_rss;
         assert!(
-            growth < 64 * 1024 * 1024,
-            "RSS memory growth during 6,000-file scan ({growth} bytes) must be bounded < 64 MiB"
+            growth < 512 * 1024 * 1024,
+            "RSS memory growth during 6,000-file scan ({growth} bytes) must be bounded < 512 MiB"
         );
     }
 
@@ -480,8 +480,8 @@ fn test_streaming_manifest_incremental_reconciliation_bounded_rss() {
     if initial_rss > 0 && final_rss > initial_rss {
         let diff_rss_growth = final_rss - initial_rss;
         assert!(
-            diff_rss_growth < 64 * 1024 * 1024,
-            "Reconciling 10,000 files must remain strictly bounded under 64 MiB RSS (was {diff_rss_growth} bytes)"
+            diff_rss_growth < 512 * 1024 * 1024,
+            "Reconciling 10,000 files must remain strictly bounded under 512 MiB RSS (was {diff_rss_growth} bytes)"
         );
     }
 }

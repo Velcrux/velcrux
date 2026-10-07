@@ -90,7 +90,19 @@ jobs:
             ${{ runner.os }}-cargo-test-
 
       - name: Run unit & integration tests
-        run: cargo test --workspace -- --nocapture
+        run: |
+          set -o pipefail
+          cargo test --workspace -- --nocapture 2>&1 | tee test_output.log
+        shell: bash
+
+      - name: Report test failure details
+        if: failure()
+        run: |
+          echo "## Test Failure Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -B 10 -A 60 "failures:" test_output.log >> $GITHUB_STEP_SUMMARY || tail -n 120 test_output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        shell: bash
 
       - name: Run Milestone 10 performance tests
         run: cargo test -p velcrux-core --test m10_performance -- --nocapture
