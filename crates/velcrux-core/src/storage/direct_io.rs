@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -217,6 +217,7 @@ fn apply_direct_io_flags(_opts: &mut OpenOptions) {
 
 /// Streaming reader utilizing sector-aligned buffers and optional Direct I/O.
 pub struct DirectFileReader {
+    path: PathBuf,
     file: File,
     buffer: AlignedSectorBuffer,
     file_size: u64,
@@ -228,8 +229,8 @@ pub struct DirectFileReader {
 impl DirectFileReader {
     /// Open a file for direct or buffered streaming read based on configuration.
     pub fn open<P: AsRef<Path>>(path: P, config: &DirectIoConfig) -> std::io::Result<Self> {
-        let p = path.as_ref();
-        let meta = std::fs::metadata(p)?;
+        let p = path.as_ref().to_path_buf();
+        let meta = std::fs::metadata(&p)?;
         let file_size = meta.len();
         let sector_size = config.sector_size;
 
@@ -248,9 +249,10 @@ impl DirectFileReader {
             opts.read(true);
             apply_direct_io_flags(&mut opts);
 
-            match opts.open(p) {
+            match opts.open(&p) {
                 Ok(file) => {
                     return Ok(Self {
+                        path: p,
                         file,
                         buffer,
                         file_size,
@@ -269,8 +271,9 @@ impl DirectFileReader {
         }
 
         // Standard buffered reader
-        let file = File::open(p)?;
+        let file = File::open(&p)?;
         Ok(Self {
+            path: p,
             file,
             buffer,
             file_size,
@@ -301,7 +304,21 @@ impl DirectFileReader {
         };
 
         self.buffer.set_len(read_len);
-        let n = self.file.read(self.buffer.as_mut_slice())?;
+        let n = match self.file.read(self.buffer.as_mut_slice()) {
+            Ok(n) => n,
+            Err(e) if self.is_direct && e.raw_os_error() == Some(22) => {
+                // Linux O_DIRECT cannot read fractional blocks at EOF without returning EINVAL.
+                // Fall back to buffered read for the fractional tail at the current offset.
+                let mut fallback_file = File::open(&self.path)?;
+                fallback_file.seek(SeekFrom::Start(self.bytes_read))?;
+                self.buffer.set_len(target_len);
+                let n = fallback_file.read(self.buffer.as_mut_slice())?;
+                self.file = fallback_file;
+                self.is_direct = false;
+                n
+            }
+            Err(e) => return Err(e),
+        };
         if n == 0 {
             return Ok(None);
         }
@@ -311,6 +328,11 @@ impl DirectFileReader {
         self.buffer.set_len(actual_bytes);
 
         Ok(Some(self.buffer.as_slice()))
+    }
+
+    /// Target file path.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Total file length in bytes.
