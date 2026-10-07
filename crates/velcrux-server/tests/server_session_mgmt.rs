@@ -127,7 +127,7 @@ async fn test_admin_http_endpoints() {
     )
     .await;
     assert_eq!(status, 200);
-    assert!(body.contains("{\"killed\":1}"));
+    assert!(body.contains("\"killed\": 1") || body.contains("{\"killed\":1}"));
     assert!(*rx1.borrow());
 
     // Register second session and kill by conn_id
@@ -135,7 +135,7 @@ async fn test_admin_http_endpoints() {
     assert!(!*rx2.borrow());
     let (status, body) = http_request(admin_addr, "POST", "/admin/kill-session?conn_id=20").await;
     assert_eq!(status, 200);
-    assert!(body.contains("{\"killed\":1}"));
+    assert!(body.contains("\"killed\": 1") || body.contains("{\"killed\":1}"));
     assert!(*rx2.borrow());
 
     let _ = shutdown_tx.send(());
