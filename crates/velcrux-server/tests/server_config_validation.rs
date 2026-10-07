@@ -667,3 +667,107 @@ direct_io = "super_unsupported"
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_batch_small_files_config_and_validation() {
+    let tmp = setup_temp_dir("batch_small_files_cfg");
+    let root = tmp.join("files");
+    let staging = tmp.join("files/.velcrux-staging");
+    let cert = tmp.join("server.crt");
+    let key = tmp.join("server.key");
+    let ca = tmp.join("clients-ca.crt");
+
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(&cert, "dummy-cert").unwrap();
+    fs::write(&key, "dummy-key").unwrap();
+    fs::write(&ca, "dummy-ca").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let toml = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root      = "{}"
+staging   = "{}"
+
+[transfer]
+batch_small_files    = true
+small_file_threshold = "256KiB"
+batch_max_bytes      = "64MiB"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+
+    let path = tmp.join("config.toml");
+    fs::write(&path, &toml).unwrap();
+
+    let cfg = ServerConfig::load(&path).expect("valid config with batch_small_files");
+    assert_eq!(cfg.transfer.batch_small_files, Some(true));
+    assert_eq!(
+        cfg.transfer.small_file_threshold,
+        Some("256KiB".to_string())
+    );
+    assert_eq!(cfg.transfer.batch_max_bytes, Some("64MiB".to_string()));
+
+    // Env overrides
+    std::env::set_var("VELCRUX_TRANSFER_BATCH_SMALL_FILES", "false");
+    std::env::set_var("VELCRUX_TRANSFER_SMALL_FILE_THRESHOLD", "128KiB");
+    std::env::set_var("VELCRUX_TRANSFER_BATCH_MAX_BYTES", "32MiB");
+    let cfg_env = ServerConfig::load(&path).expect("valid config with env overrides");
+    assert_eq!(cfg_env.transfer.batch_small_files, Some(false));
+    assert_eq!(
+        cfg_env.transfer.small_file_threshold,
+        Some("128KiB".to_string())
+    );
+    assert_eq!(cfg_env.transfer.batch_max_bytes, Some("32MiB".to_string()));
+    std::env::remove_var("VELCRUX_TRANSFER_BATCH_SMALL_FILES");
+    std::env::remove_var("VELCRUX_TRANSFER_SMALL_FILE_THRESHOLD");
+    std::env::remove_var("VELCRUX_TRANSFER_BATCH_MAX_BYTES");
+
+    // Invalid small_file_threshold
+    let toml_invalid = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root      = "{}"
+staging   = "{}"
+
+[transfer]
+small_file_threshold = "0"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+    let path_invalid = tmp.join("invalid_thresh.toml");
+    fs::write(&path_invalid, &toml_invalid).unwrap();
+    let res = ServerConfig::load(&path_invalid);
+    assert!(res.is_err(), "threshold 0 must fail validation");
+
+    let _ = fs::remove_dir_all(&tmp);
+}

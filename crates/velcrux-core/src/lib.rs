@@ -62,11 +62,14 @@ pub use storage::{
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
     plan_directory_diff, plan_directory_sync, recv_directory_manifest, resume_interrupted_commit,
-    scan_dir_entries, send_directory_manifest, AdaptiveCostEstimator, BloomFilter, ChunkExtent,
-    CostBreakdown, CostDecision, CostEstimator, DeleteMode, DeltaProgress, DeltaReconstructor,
-    DeltaSyncReport, DeviceProfile, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
-    DirectorySyncResult, FileAction, FileActionType, LocalInventory, NetworkProfile, RleBitmap,
-    RleRun, ScannedEntry, SyncDecision, SyncError, SyncPlan, TransferMode,
+    scan_dir_entries, send_directory_manifest, AdaptiveCostEstimator, BatchContainerReader,
+    BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, BloomFilter, ChunkExtent, CostBreakdown,
+    CostDecision, CostEstimator, DeleteMode, DeltaProgress, DeltaReconstructor, DeltaSyncReport,
+    DeviceProfile, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult,
+    FileAction, FileActionType, LocalInventory, NetworkProfile, RleBitmap, RleRun, ScannedEntry,
+    SmallFileBatch, SmallFileBatchConfig, SmallFileBatchPlanner, SyncDecision, SyncError, SyncPlan,
+    TransferMode, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES, DEFAULT_BATCH_MAX_FILES,
+    DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
 };
 pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,

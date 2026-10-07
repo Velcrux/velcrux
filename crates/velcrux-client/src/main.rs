@@ -242,6 +242,18 @@ enum Cmd {
         /// Optional path to chunk store directory.
         #[arg(long)]
         chunk_store: Option<PathBuf>,
+        /// Bundle small files into streaming batch containers (default: enabled).
+        #[arg(long)]
+        batch_small_files: bool,
+        /// Disable small file batch container pipeline.
+        #[arg(long)]
+        no_batch_small_files: bool,
+        /// Size threshold in bytes under which regular files are batched (default: 131072 / 128 KiB).
+        #[arg(long, env = "VELCRUX_SMALL_FILE_THRESHOLD")]
+        small_file_threshold: Option<u64>,
+        /// Maximum container payload bytes per batch (default: 33554432 / 32 MiB).
+        #[arg(long, env = "VELCRUX_BATCH_MAX_BYTES")]
+        batch_max_bytes: Option<u64>,
     },
     /// Generate shell completion script (bash, zsh, fish, powershell, elvish).
     Completions {
@@ -677,7 +689,12 @@ async fn main() -> anyhow::Result<()> {
             cdc,
             dedup,
             chunk_store,
+            batch_small_files: _,
+            no_batch_small_files,
+            small_file_threshold,
+            batch_max_bytes,
         } => {
+            let effective_batch = !*no_batch_small_files;
             run_sync(
                 &cli,
                 source,
@@ -688,6 +705,9 @@ async fn main() -> anyhow::Result<()> {
                 *cdc,
                 *dedup,
                 chunk_store,
+                effective_batch,
+                *small_file_threshold,
+                *batch_max_bytes,
             )
             .await?;
         }
@@ -2288,6 +2308,9 @@ async fn run_sync(
     cdc: bool,
     dedup: bool,
     chunk_store_path: &Option<PathBuf>,
+    batch_small_files: bool,
+    small_file_threshold: Option<u64>,
+    batch_max_bytes: Option<u64>,
 ) -> anyhow::Result<()> {
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
@@ -2345,6 +2368,10 @@ async fn run_sync(
         read_buffer_size: 2 * 1024 * 1024,
         transfer_mode: get_transfer_mode(cli),
         min_delta_size: cli.min_delta_size,
+        batch_small_files,
+        small_file_threshold: small_file_threshold
+            .unwrap_or(velcrux_core::sync::DEFAULT_SMALL_FILE_THRESHOLD),
+        batch_max_bytes: batch_max_bytes.unwrap_or(velcrux_core::sync::DEFAULT_BATCH_MAX_BYTES),
     };
 
     let store = if dedup {
@@ -2389,11 +2416,21 @@ async fn run_sync(
             "files_transferred": result.files_transferred,
             "files_committed": result.files_committed,
             "files_deleted_count": result.files_deleted,
+            "small_files_batched": result.small_files_batched,
+            "batch_containers": result.batch_containers,
+            "roundtrips_saved": result.roundtrips_saved,
             "actions": actions,
         });
         println!("{out}");
     } else {
         println!("{}", result.plan.summary.format_display());
+
+        if result.small_files_batched > 0 {
+            println!(
+                "Batched: {} small files in {} streaming containers ({} roundtrips saved)",
+                result.small_files_batched, result.batch_containers, result.roundtrips_saved
+            );
+        }
 
         if !dry_run {
             println!();

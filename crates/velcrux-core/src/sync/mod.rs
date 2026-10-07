@@ -4,6 +4,7 @@
 //! RLE bitmaps, cost estimation (FULL vs DELTA), and streaming delta reconstruction
 //! with bounded memory and atomic commit (`ARCHITECTURE.md` §7, §12).
 
+pub mod batch;
 pub mod bloom;
 pub mod cost;
 pub mod directory;
@@ -12,6 +13,11 @@ pub mod inventory;
 pub mod reconstruct;
 pub mod rle;
 
+pub use batch::{
+    BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, SmallFileBatch,
+    SmallFileBatchConfig, SmallFileBatchPlanner, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES,
+    DEFAULT_BATCH_MAX_FILES, DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
+};
 pub use bloom::BloomFilter;
 pub use cost::{
     AdaptiveCostEstimator, CostBreakdown, CostDecision, DeviceProfile, NetworkProfile, TransferMode,

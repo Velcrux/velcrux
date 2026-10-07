@@ -147,6 +147,12 @@ pub struct TransferCfg {
     pub max_manifest_entries: Option<u64>,
     #[serde(default)]
     pub max_concurrent_transfers: Option<u32>,
+    #[serde(default)]
+    pub batch_small_files: Option<bool>,
+    #[serde(default)]
+    pub small_file_threshold: Option<String>,
+    #[serde(default)]
+    pub batch_max_bytes: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -334,6 +340,17 @@ impl ServerConfig {
             if let Ok(n) = val.parse() {
                 self.transfer.max_concurrent_transfers = Some(n);
             }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_BATCH_SMALL_FILES") {
+            if let Ok(b) = val.parse() {
+                self.transfer.batch_small_files = Some(b);
+            }
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_SMALL_FILE_THRESHOLD") {
+            self.transfer.small_file_threshold = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_TRANSFER_BATCH_MAX_BYTES") {
+            self.transfer.batch_max_bytes = Some(val);
         }
 
         // Hash
@@ -524,6 +541,22 @@ impl ServerConfig {
         if let Some(mct) = self.transfer.max_concurrent_transfers {
             if mct == 0 {
                 anyhow::bail!("transfer.max_concurrent_transfers must be greater than 0");
+            }
+        }
+
+        // 7c. Validate batch small files settings if specified (Option AI)
+        if let Some(ref s) = self.transfer.small_file_threshold {
+            let bytes = parse_size_bytes(s)
+                .map_err(|e| anyhow::anyhow!("transfer.small_file_threshold: {e}"))?;
+            if bytes == 0 {
+                anyhow::bail!("transfer.small_file_threshold must be greater than 0");
+            }
+        }
+        if let Some(ref s) = self.transfer.batch_max_bytes {
+            let bytes = parse_size_bytes(s)
+                .map_err(|e| anyhow::anyhow!("transfer.batch_max_bytes: {e}"))?;
+            if bytes == 0 {
+                anyhow::bail!("transfer.batch_max_bytes must be greater than 0");
             }
         }
 

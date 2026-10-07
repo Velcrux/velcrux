@@ -487,3 +487,55 @@ Or via environment override:
 ```bash
 VELCRUX_STORAGE_DIRECT_IO=auto velcruxd --config /etc/velcrux/server.toml
 ```
+
+## 17. Small Files Container Pipeline & Batch Streaming Archive Engine (Option AI)
+
+Velcrux includes a high-performance small-file batch aggregation and streaming pipeline (`REQUIREMENTS.md` §56, §31, §25) engineered for repositories and datasets with thousands or millions of small files (< 128 KiB):
+
+### The Small Files Bottleneck
+In massive file collections containing hundreds of thousands of small files (source repositories, web asset bundles, ML feature datasets):
+- Standard synchronization incurs per-file negotiation roundtrips (manifest lookups, stream openings, staging directory creations).
+- Transport protocols suffer from connection stall: streams terminate before congestion windows expand to saturate bandwidth.
+- Operating systems incur severe inode and metadata lock contention.
+
+### Streaming Container Architecture (`VBATCH/1`)
+The batch engine aggregates small files into contiguous, verified streaming containers:
+1. **Adaptive Partitioning**: The directory planner inspects candidate `Add` and `Modify` actions. Files smaller than `small_file_threshold` (default: 128 KiB) are bundled into containers up to `batch_max_bytes` (default: 32 MiB) or 1,000 files per batch.
+2. **Compact Binary Index**: The `VBATCH/1` container header includes an inline metadata table detailing relative paths (`VPath`), sizes, POSIX permissions, nanosecond modification times, extended attributes, and BLAKE3 hashes.
+3. **Contiguous Streaming**: Payloads are streamed sequentially across a single QUIC data stream, reducing network roundtrip overhead by up to 99.9%.
+4. **Single-Pass Secure Extraction**: Receivers stream-unpack containers into staging directories, enforcing lexical path traversal boundaries, computing per-file BLAKE3 hashes on-the-fly, restoring POSIX metadata, and validating trailing checksums before atomic commit.
+
+### Client CLI Usage
+```bash
+# Enable batch container sync (enabled by default)
+velcrux sync ./source_tree velcrux://server:7443/data/repo --batch-small-files
+
+# Disable batch container sync (reverts to individual transfers)
+velcrux sync ./source_tree velcrux://server:7443/data/repo --no-batch-small-files
+
+# Tune batching thresholds
+velcrux sync ./source_tree velcrux://server:7443/data/repo \
+  --small-file-threshold 262144 \
+  --batch-max-bytes 67108864
+```
+Or via environment variables:
+```bash
+VELCRUX_SMALL_FILE_THRESHOLD=262144 VELCRUX_BATCH_MAX_BYTES=67108864 velcrux sync ./source_tree velcrux://server:7443/data/repo
+```
+
+### Server Configuration
+In `server.toml`:
+```toml
+[transfer]
+batch_small_files    = true
+small_file_threshold = "128KiB"
+batch_max_bytes      = "32MiB"
+```
+Or via environment overrides:
+```bash
+VELCRUX_TRANSFER_BATCH_SMALL_FILES=true \
+VELCRUX_TRANSFER_SMALL_FILE_THRESHOLD=128KiB \
+VELCRUX_TRANSFER_BATCH_MAX_BYTES=32MiB \
+velcruxd --config /etc/velcrux/server.toml
+```
+

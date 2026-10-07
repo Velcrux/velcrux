@@ -851,3 +851,71 @@ fn test_cli_direct_io_flags() {
     let help_text = String::from_utf8_lossy(&help_output.stdout);
     assert!(help_text.contains("--direct-io"));
 }
+
+#[test]
+fn test_cli_batch_small_files_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src_batch");
+    let dst = tmp.path().join("dst_batch");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+
+    // Create 10 small files
+    for i in 0..10 {
+        std::fs::write(
+            src.join(format!("file_{}.txt", i)),
+            format!("small test payload {}", i),
+        )
+        .unwrap();
+    }
+
+    // 1. Verify --batch-small-files sync succeeds with batch reporting
+    let output = Command::new(velcrux_bin())
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .arg("--batch-small-files")
+        .arg("--small-file-threshold")
+        .arg("65536")
+        .output()
+        .expect("failed to execute velcrux sync with --batch-small-files");
+
+    assert!(output.status.success(), "sync with batching must succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Batched: 10 small files"));
+    for i in 0..10 {
+        assert_eq!(
+            std::fs::read_to_string(dst.join(format!("file_{}.txt", i))).unwrap(),
+            format!("small test payload {}", i)
+        );
+    }
+
+    // 2. Verify --no-batch-small-files flag works
+    let dst2 = tmp.path().join("dst_nobatch");
+    std::fs::create_dir_all(&dst2).unwrap();
+    let output_nobatch = Command::new(velcrux_bin())
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst2.to_str().unwrap())
+        .arg("--no-batch-small-files")
+        .output()
+        .expect("failed to execute velcrux sync with --no-batch-small-files");
+
+    assert!(output_nobatch.status.success());
+    for i in 0..10 {
+        assert!(dst2.join(format!("file_{}.txt", i)).exists());
+    }
+
+    // 3. Verify --help documents batch options
+    let help_output = Command::new(velcrux_bin())
+        .arg("sync")
+        .arg("--help")
+        .output()
+        .expect("failed to run velcrux sync --help");
+    assert!(help_output.status.success());
+    let help_text = String::from_utf8_lossy(&help_output.stdout);
+    assert!(help_text.contains("--batch-small-files"));
+    assert!(help_text.contains("--no-batch-small-files"));
+    assert!(help_text.contains("--small-file-threshold"));
+    assert!(help_text.contains("--batch-max-bytes"));
+}

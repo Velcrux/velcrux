@@ -153,6 +153,12 @@ pub struct DirectorySyncOptions {
     pub transfer_mode: TransferMode,
     /// Minimum file size in bytes to consider delta synchronization (default: 64 KiB).
     pub min_delta_size: u64,
+    /// Whether to bundle small files into streaming batch containers (default: true).
+    pub batch_small_files: bool,
+    /// Threshold under which regular files are batched into containers (default: 128 KiB).
+    pub small_file_threshold: u64,
+    /// Maximum container data bytes per batch (default: 32 MiB).
+    pub batch_max_bytes: u64,
 }
 
 impl Default for DirectorySyncOptions {
@@ -165,11 +171,20 @@ impl Default for DirectorySyncOptions {
             read_buffer_size: 2 * 1024 * 1024,
             transfer_mode: TransferMode::Auto,
             min_delta_size: 64 * 1024,
+            batch_small_files: true,
+            small_file_threshold: crate::sync::batch::DEFAULT_SMALL_FILE_THRESHOLD,
+            batch_max_bytes: crate::sync::batch::DEFAULT_BATCH_MAX_BYTES,
         }
     }
 }
 
 impl DirectorySyncOptions {
+    /// Configure dry-run mode.
+    pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
     /// Configure transfer mode.
     pub fn with_transfer_mode(mut self, mode: TransferMode) -> Self {
         self.transfer_mode = mode;
@@ -179,6 +194,24 @@ impl DirectorySyncOptions {
     /// Configure minimum delta file size threshold.
     pub fn with_min_delta_size(mut self, size: u64) -> Self {
         self.min_delta_size = size;
+        self
+    }
+
+    /// Configure small files batching enablement.
+    pub fn with_batch_small_files(mut self, enabled: bool) -> Self {
+        self.batch_small_files = enabled;
+        self
+    }
+
+    /// Configure small file size threshold in bytes.
+    pub fn with_small_file_threshold(mut self, threshold: u64) -> Self {
+        self.small_file_threshold = threshold;
+        self
+    }
+
+    /// Configure maximum batch container payload bytes.
+    pub fn with_batch_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.batch_max_bytes = max_bytes;
         self
     }
 }
@@ -200,6 +233,12 @@ pub struct DirectorySyncResult {
     pub local_bytes_reused: u64,
     /// Actual store bytes reused from chunk store.
     pub store_bytes_reused: u64,
+    /// Total small files bundled into batch containers.
+    pub small_files_batched: usize,
+    /// Total batch containers generated and streamed.
+    pub batch_containers: usize,
+    /// Total network roundtrips saved by batch containers.
+    pub roundtrips_saved: usize,
 }
 
 /// Scanned directory entry with size, whole-file BLAKE3 hash, link metadata, mode, mtime, and xattrs.
@@ -1409,6 +1448,15 @@ pub fn execute_directory_sync(
 ) -> Result<DirectorySyncResult, SyncError> {
     let plan = plan_directory_sync(src_dir, dst_dir, options, chunk_store)?;
 
+    let batch_cfg = crate::sync::batch::SmallFileBatchConfig {
+        enabled: options.batch_small_files,
+        threshold_bytes: options.small_file_threshold,
+        max_batch_bytes: options.batch_max_bytes,
+        max_batch_files: crate::sync::batch::DEFAULT_BATCH_MAX_FILES,
+    };
+    let batched_plan =
+        crate::sync::batch::SmallFileBatchPlanner::plan(src_dir, &plan.actions, &batch_cfg);
+
     // If dry run, return plan without modifying destination
     if options.dry_run {
         return Ok(DirectorySyncResult {
@@ -1419,6 +1467,9 @@ pub fn execute_directory_sync(
             wire_bytes_transferred: 0,
             local_bytes_reused: 0,
             store_bytes_reused: 0,
+            small_files_batched: batched_plan.small_files_count,
+            batch_containers: batched_plan.batch_containers_count,
+            roundtrips_saved: batched_plan.roundtrips_saved,
         });
     }
 
@@ -1440,9 +1491,39 @@ pub fn execute_directory_sync(
     let mut total_local_reused = 0u64;
     let mut total_store_reused = 0u64;
 
+    let mut batched_action_paths = std::collections::HashSet::new();
+
+    // --- BATCH STREAMING CONTAINER PHASE (Option AI) ---
+    for batch in &batched_plan.batches {
+        let mut container_buf = Vec::new();
+        crate::sync::batch::BatchContainerWriter::pack(
+            src_dir,
+            &batch.actions,
+            &mut container_buf,
+        )?;
+
+        let mut cursor = std::io::Cursor::new(&container_buf);
+        let report = crate::sync::batch::BatchContainerReader::unpack(&mut cursor, &staging_root)?;
+
+        for action in &batch.actions {
+            let staged_file = staging_root.join(&action.rel_path);
+            let file_idx = plan
+                .actions
+                .iter()
+                .position(|a| a.rel_path == action.rel_path)
+                .unwrap_or(0);
+            staged_files.push((file_idx as u64, action.rel_path.clone(), staged_file));
+            batched_action_paths.insert(action.rel_path.clone());
+        }
+        total_wire_bytes += report.total_bytes;
+    }
+
     // --- STAGE & TRANSFER & VERIFY PHASE ---
     for (file_idx, action) in plan.actions.iter().enumerate() {
         if action.action != FileActionType::Add && action.action != FileActionType::Modify {
+            continue;
+        }
+        if batched_action_paths.contains(&action.rel_path) {
             continue;
         }
 
@@ -1785,6 +1866,9 @@ pub fn execute_directory_sync(
         wire_bytes_transferred: total_wire_bytes,
         local_bytes_reused: total_local_reused,
         store_bytes_reused: total_store_reused,
+        small_files_batched: batched_plan.small_files_count,
+        batch_containers: batched_plan.batch_containers_count,
+        roundtrips_saved: batched_plan.roundtrips_saved,
     })
 }
 
