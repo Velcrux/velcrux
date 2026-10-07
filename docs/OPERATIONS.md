@@ -442,3 +442,48 @@ Accessing `http://<metrics_listen>/` or `http://<metrics_listen>/dashboard` rend
 - `GET /metrics`: Standard Prometheus text format (v0.0.4) metrics.
 - `GET /healthz`, `/livez`: Liveness probe (`healthy`).
 - `GET /readyz`: Readiness probe (`ready` with HTTP 200, or `unready` with HTTP 503).
+
+## 16. Kernel Zero-Copy, Page-Cache Bypass & Direct I/O (Option AH)
+
+Velcrux includes a high-performance, sector-aligned Direct I/O streaming engine (`REQUIREMENTS.md` §26, §27, `ARCHITECTURE.md` §2) designed for multi-gigabyte and multi-terabyte datasets:
+
+### Motivation & Cache Thrashing Prevention
+Standard buffered OS filesystem I/O routes all read and write streams through the kernel page cache. For massive file transfers over 10GbE–100GbE networks, streaming hundreds of gigabytes through the page cache causes severe cache thrashing, evicts active working memory sets (such as database caches and application memory), and introduces memory reclaim latency (`kswapd`).
+
+Direct I/O (`O_DIRECT` on Linux, unbuffered streaming on macOS) bypasses the kernel page cache, transferring data directly between storage controllers (DMA) and user-space memory buffers.
+
+### Safe Aligned Sector Buffers (`AlignedSectorBuffer`)
+Direct I/O mandates that user-space memory buffers, file offsets, and I/O lengths align to the physical sector size (typically 4096 bytes / 4 KiB). Velcrux implements `AlignedSectorBuffer` in 100% safe Rust without `#![forbid(unsafe_code)]` violations, ensuring physical sector alignment for DMA operations.
+
+### Fractional Sector Tail Truncation
+Files rarely align precisely to 4096-byte boundaries. When writing non-sector-aligned files:
+1. All full 4096-byte sectors are streamed directly to disk via Direct I/O.
+2. The remaining fractional tail is sector-padded, written, and then the file is atomically truncated to the exact file size via `set_len()`.
+3. Whole-file BLAKE3 cryptographic verification ensures identical byte-for-byte fidelity.
+
+### Execution Modes
+- **`auto` (default)**: Automatically engages Direct I/O for files >= 16 MiB when supported by the underlying filesystem. Falls back gracefully to standard buffered streaming if the filesystem (e.g. tmpfs, NFS) does not support direct flags.
+- **`always`**: Strictly enforces Direct I/O; returns an error if unsupported.
+- **`disabled`**: Disables Direct I/O, always using standard buffered streaming.
+
+### Client Configuration
+```bash
+velcrux sync /data /backup --direct-io auto
+```
+Or via environment variable:
+```bash
+VELCRUX_DIRECT_IO=auto velcrux sync /data /backup
+```
+
+### Server Configuration
+In `server.toml`:
+```toml
+[storage]
+root      = "/data/storage"
+staging   = "/data/staging"
+direct_io = "auto" # "auto", "always", or "disabled"
+```
+Or via environment override:
+```bash
+VELCRUX_STORAGE_DIRECT_IO=auto velcruxd --config /etc/velcrux/server.toml
+```

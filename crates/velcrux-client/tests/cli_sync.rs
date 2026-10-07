@@ -791,3 +791,63 @@ fn test_cli_priority_and_concurrency_flags() {
     assert!(help_text.contains("--priority"));
     assert!(help_text.contains("--concurrency"));
 }
+
+#[test]
+fn test_cli_direct_io_flags() {
+    let temp = tempdir().unwrap();
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+
+    std::fs::write(src.join("sample.txt"), b"direct-io test payload").unwrap();
+
+    // 1. Verify valid --direct-io flag succeeds during sync
+    let output = Command::new(velcrux_bin())
+        .arg("--direct-io")
+        .arg("auto")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to execute velcrux with --direct-io auto");
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read(dst.join("sample.txt")).unwrap(),
+        b"direct-io test payload"
+    );
+
+    // 2. Verify --direct-io disabled succeeds
+    let output_dis = Command::new(velcrux_bin())
+        .arg("--direct-io")
+        .arg("disabled")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to execute velcrux with --direct-io disabled");
+    assert!(output_dis.status.success());
+
+    // 3. Verify invalid --direct-io mode fails
+    let bad_dio = Command::new(velcrux_bin())
+        .arg("--direct-io")
+        .arg("turbo_boost")
+        .arg("sync")
+        .arg(src.to_str().unwrap())
+        .arg(dst.to_str().unwrap())
+        .output()
+        .expect("failed to run with invalid direct-io");
+    assert!(!bad_dio.status.success());
+    let stderr = String::from_utf8_lossy(&bad_dio.stderr);
+    assert!(stderr.contains("invalid direct_io mode"));
+
+    // 4. Verify --help documents --direct-io
+    let help_output = Command::new(velcrux_bin())
+        .arg("--help")
+        .output()
+        .expect("failed to run velcrux --help");
+    assert!(help_output.status.success());
+    let help_text = String::from_utf8_lossy(&help_output.stdout);
+    assert!(help_text.contains("--direct-io"));
+}

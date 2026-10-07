@@ -55,7 +55,8 @@ pub use state::{
     TransferStatus, UpsertOutcome, MAX_WIRE_CHUNKS,
 };
 pub use storage::{
-    gc_chunk_store, gc_staging, ChunkStore, ChunkStoreGcReport, FileMeta, LocalChunkStore,
+    gc_chunk_store, gc_staging, AlignedSectorBuffer, ChunkStore, ChunkStoreGcReport,
+    DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
     LocalFilesystemBackend, Staging, StagingGcReport, StorageBackend, VPath, VPathError,
 };
 pub use sync::{

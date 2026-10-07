@@ -151,6 +151,15 @@ struct Cli {
     )]
     concurrency: usize,
 
+    /// Direct I/O execution mode: "auto" (default, files >= 16MiB), "always", or "disabled" (Option AH).
+    #[arg(
+        long = "direct-io",
+        env = "VELCRUX_DIRECT_IO",
+        default_value = "auto",
+        global = true
+    )]
+    direct_io: String,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -556,12 +565,19 @@ fn get_priority(cli: &Cli) -> anyhow::Result<velcrux_core::TransferPriority> {
     cli.priority.parse().map_err(|e: String| anyhow::anyhow!(e))
 }
 
+fn get_direct_io_mode(cli: &Cli) -> anyhow::Result<velcrux_core::DirectIoMode> {
+    cli.direct_io
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!(e))
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut cli = Cli::parse();
     load_client_config(&mut cli);
     let _ = get_rate_limiter(&cli)?;
     let _ = get_priority(&cli)?;
+    let _ = get_direct_io_mode(&cli)?;
     if cli.concurrency == 0 {
         anyhow::bail!("--concurrency must be greater than 0");
     }

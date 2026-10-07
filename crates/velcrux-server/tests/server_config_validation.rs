@@ -578,3 +578,92 @@ max_concurrent_transfers = 0
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_direct_io_config_and_validation() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("VELCRUX_STORAGE_DIRECT_IO");
+
+    let tmp = setup_temp_dir("direct_io_cfg");
+    let root = tmp.join("files");
+    let staging = tmp.join("files/.velcrux-staging");
+    let cert = tmp.join("server.crt");
+    let key = tmp.join("server.key");
+    let ca = tmp.join("clients-ca.crt");
+
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(&cert, "dummy-cert").unwrap();
+    fs::write(&key, "dummy-key").unwrap();
+    fs::write(&ca, "dummy-ca").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let toml = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root      = "{}"
+staging   = "{}"
+direct_io = "always"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+
+    let path = tmp.join("config.toml");
+    fs::write(&path, &toml).unwrap();
+
+    let cfg = ServerConfig::load(&path).expect("valid config with direct_io");
+    assert_eq!(cfg.storage.direct_io, Some("always".to_string()));
+
+    // Env override
+    std::env::set_var("VELCRUX_STORAGE_DIRECT_IO", "disabled");
+    let cfg_env = ServerConfig::load(&path).expect("valid config with env override");
+    assert_eq!(cfg_env.storage.direct_io, Some("disabled".to_string()));
+    std::env::remove_var("VELCRUX_STORAGE_DIRECT_IO");
+
+    // Invalid direct_io fails validation
+    let toml_invalid = format!(
+        r#"
+[network]
+listen = "127.0.0.1:7443"
+
+[security]
+certificate = "{}"
+private_key = "{}"
+client_ca   = "{}"
+
+[storage]
+root      = "{}"
+staging   = "{}"
+direct_io = "super_unsupported"
+"#,
+        cert.display(),
+        key.display(),
+        ca.display(),
+        root.display(),
+        staging.display()
+    );
+    let path_invalid = tmp.join("invalid_dio.toml");
+    fs::write(&path_invalid, &toml_invalid).unwrap();
+    let res = ServerConfig::load(&path_invalid);
+    assert!(res.is_err(), "invalid direct_io must fail validation");
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("storage.direct_io"));
+
+    let _ = fs::remove_dir_all(&tmp);
+}

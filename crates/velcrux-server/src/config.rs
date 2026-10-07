@@ -182,6 +182,8 @@ pub struct StorageCfg {
     pub min_free_space: Option<String>,
     #[serde(default)]
     pub preallocate: Option<bool>,
+    #[serde(default)]
+    pub direct_io: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -385,6 +387,9 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_PREALLOCATE") {
             self.storage.preallocate = Some(val == "true" || val == "1");
         }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_DIRECT_IO") {
+            self.storage.direct_io = Some(val);
+        }
 
         // Telemetry
         if let Ok(val) = std::env::var("VELCRUX_TELEMETRY_METRICS_LISTEN") {
@@ -486,6 +491,12 @@ impl ServerConfig {
         if let Some(ref mfs) = self.storage.min_free_space {
             parse_size_bytes(mfs)
                 .with_context(|| format!("invalid storage.min_free_space: {mfs}"))?;
+        }
+
+        // 5b. Validate storage direct_io if specified (Option AH)
+        if let Some(ref dio) = self.storage.direct_io {
+            dio.parse::<velcrux_core::DirectIoMode>()
+                .map_err(|e| anyhow::anyhow!("storage.direct_io: {e}"))?;
         }
 
         // 6. Validate hash algorithm if specified

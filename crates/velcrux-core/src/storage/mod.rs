@@ -22,9 +22,14 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub mod chunk_store;
+pub mod direct_io;
 pub mod gc;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use direct_io::{
+    AlignedSectorBuffer, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
+    DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_SECTOR_SIZE,
+};
 pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
@@ -523,6 +528,7 @@ pub struct LocalFilesystemBackend {
     staging: PathBuf,
     min_free_space: u64,
     preallocate: bool,
+    direct_io: DirectIoMode,
 }
 
 impl LocalFilesystemBackend {
@@ -579,7 +585,19 @@ impl LocalFilesystemBackend {
             staging,
             min_free_space,
             preallocate,
+            direct_io: DirectIoMode::Auto,
         })
+    }
+
+    /// Builder helper to set Direct I/O execution mode.
+    pub fn with_direct_io(mut self, mode: DirectIoMode) -> Self {
+        self.direct_io = mode;
+        self
+    }
+
+    /// Configured Direct I/O mode.
+    pub fn direct_io(&self) -> DirectIoMode {
+        self.direct_io
     }
 
     /// Builder helper to set preallocation and disk reservation margin.
