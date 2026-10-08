@@ -499,15 +499,18 @@ pub fn build_resume_state(
 /// Cancel a transfer. Removes the staging file and deletes the state
 /// row. Idempotent: a missing row is treated as already cancelled.
 pub async fn cancel_transfer(
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     store: Arc<dyn StateStore>,
     transfer_id: TransferId,
 ) -> Result<()> {
     if let Ok(rec) = store.get_transfer(transfer_id) {
         if let Ok(vp) = VPath::validate(rec.remote_path.as_str()) {
-            let staging_path = server_staging_path(backend.staging_dir(), &transfer_id, &vp);
-            if staging_path.exists() {
-                let _ = tokio::fs::remove_file(&staging_path).await;
+            if backend.backend_type() == "local" {
+                let staging_path =
+                    server_staging_path(&backend.root().join("staging"), &transfer_id, &vp);
+                if staging_path.exists() {
+                    let _ = tokio::fs::remove_file(&staging_path).await;
+                }
             }
         }
         let mut updated = rec;

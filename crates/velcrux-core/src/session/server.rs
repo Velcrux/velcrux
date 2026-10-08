@@ -19,7 +19,7 @@ use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
 use crate::state::{Direction, StateStore, TransferStatus};
-use crate::storage::{LocalChunkStore, LocalFilesystemBackend, VPath};
+use crate::storage::{FileMeta, LocalChunkStore, Staging, StorageBackend, VPath};
 use crate::transport::identity::Identity;
 use crate::transport::{BiRecvStream, Connection};
 use std::sync::Arc;
@@ -235,7 +235,7 @@ pub struct ServerConn {
     /// Server-wide counters (Arc'd so a test can share them).
     stats: Arc<ServerStats>,
     /// Storage backend used by M2 transfer sessions.
-    backend: Arc<LocalFilesystemBackend>,
+    backend: Arc<dyn StorageBackend>,
     /// M3 state store. The server uses it to answer STAT / LIST
     /// queries and to update transfer status on CANCEL. The default
     /// is `None`, which disables the M3 surface (used by tests that
@@ -343,7 +343,7 @@ impl ServerConn {
         server_caps: Capabilities,
         server_name: impl Into<String>,
         stats: Arc<ServerStats>,
-        backend: Arc<LocalFilesystemBackend>,
+        backend: Arc<dyn StorageBackend>,
     ) -> Self {
         Self::with_state(server_caps, server_name, stats, backend, None, None, None)
     }
@@ -354,7 +354,7 @@ impl ServerConn {
         server_caps: Capabilities,
         server_name: impl Into<String>,
         stats: Arc<ServerStats>,
-        backend: Arc<LocalFilesystemBackend>,
+        backend: Arc<dyn StorageBackend>,
         state: Option<Arc<dyn StateStore>>,
         authenticator: Option<Arc<dyn Authenticator>>,
         authorizer: Option<Arc<dyn Authorizer>>,
@@ -810,7 +810,7 @@ impl ServerConn {
                             // is authorized inside, before any filesystem I/O.
                             if let Err(e) = handle_transfer_create(
                                 conn,
-                                &self.backend,
+                                self.backend.as_ref(),
                                 self.authorizer.as_ref(),
                                 &self.state,
                                 &self.chunk_store,
@@ -991,7 +991,7 @@ impl<'a> Drop for ActiveTransferGuard<'a> {
 
 async fn handle_transfer_create(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &dyn StorageBackend,
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
     chunk_store: &Option<Arc<LocalChunkStore>>,
@@ -1008,7 +1008,6 @@ async fn handle_transfer_create(
         Commit, Committed, Message, TransferBegin, TransferCreate, TransferCreated, TransferOp,
         TransferPlan,
     };
-    use crate::storage::StorageBackend;
     use crate::util::TransferId;
 
     let create = TransferCreate::decode(payload)?;
@@ -1254,8 +1253,21 @@ async fn handle_transfer_create(
         };
         write_frame(send, &Message::TransferCreated(created), 0).await?;
 
-        let server_dir = backend.root().join(vpath.as_path());
-        let entries = crate::sync::scan_dir_entries(&server_dir).unwrap_or_default();
+        let entries = if backend.backend_type() == "local" {
+            let server_dir = backend.root().join(vpath.as_path());
+            crate::sync::scan_dir_entries(&server_dir).unwrap_or_default()
+        } else {
+            let mut map = std::collections::BTreeMap::new();
+            if let Ok(dir_entries) = backend.list_dir(&vpath).await {
+                for (name, meta) in dir_entries {
+                    map.insert(
+                        name,
+                        crate::sync::ScannedEntry::file(meta.size, meta.file_hash),
+                    );
+                }
+            }
+            map
+        };
         crate::sync::send_directory_manifest(send, &entries).await?;
         return Ok(());
     }
@@ -1406,19 +1418,23 @@ async fn handle_transfer_create(
     }
 
     let existing_path = backend.root().join(dst.as_path());
-    let has_existing = existing_path.is_file();
+    let has_existing = backend.exists(&dst).await.unwrap_or(false);
     let has_chunk_store = chunk_store.is_some();
 
     if create.op == TransferOp::Upload && (has_existing || has_chunk_store) {
         let meta_len = if has_existing {
-            std::fs::metadata(&existing_path)
-                .map(|m| m.len())
+            backend
+                .stat(&dst)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.size)
                 .unwrap_or(0)
         } else {
             0
         };
         let existing_hash = if has_existing {
-            crate::sync::compute_file_hash(&existing_path).ok()
+            backend.compute_file_hash(&dst).await.ok()
         } else {
             None
         };
@@ -1660,7 +1676,9 @@ async fn handle_transfer_create(
                             crate::error::ProtocolError::InvalidStateTransition("expected VERIFY"),
                         ));
                     }
-                    let hash = crate::sync::compute_file_hash(&staging_path)?;
+                    let hash = backend
+                        .compute_staging_hash(&transfer_id.to_string(), &dst)
+                        .await?;
                     let ok = hash == create.file_hash;
                     let vr = crate::protocol::message::VerifyResult {
                         transfer_id,
@@ -1681,11 +1699,15 @@ async fn handle_transfer_create(
                             crate::error::ProtocolError::InvalidStateTransition("expected COMMIT"),
                         ));
                     }
-                    let final_path = backend.root().join(dst.as_path());
-                    if let Some(parent) = final_path.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    tokio::fs::rename(&staging_path, &final_path).await?;
+                    let meta = FileMeta::new(create.file_size, hash);
+                    backend
+                        .commit(
+                            &transfer_id.to_string(),
+                            Staging::new(staging_path.clone()),
+                            &dst,
+                            &meta,
+                        )
+                        .await?;
                     let committed = crate::protocol::message::Committed {
                         transfer_id,
                         files: 1,
@@ -1698,15 +1720,17 @@ async fn handle_transfer_create(
                         .bytes_reused
                         .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
                     if let Some(cs) = chunk_store {
-                        let final_path = backend.root().join(dst.as_path());
-                        let params =
-                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
-                                .unwrap();
-                        let _ = cs.ingest_file_sync(
-                            &final_path,
-                            crate::chunking::ChunkMode::Fixed,
-                            params,
-                        );
+                        if backend.backend_type() == "local" {
+                            let final_path = backend.root().join(dst.as_path());
+                            let params =
+                                crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                    .unwrap();
+                            let _ = cs.ingest_file_sync(
+                                &final_path,
+                                crate::chunking::ChunkMode::Fixed,
+                                params,
+                            );
+                        }
                     }
                     return Ok(());
                 }
@@ -1744,15 +1768,17 @@ async fn handle_transfer_create(
 
                     // Ingest newly committed file into chunk store for future cross-file deduplication
                     if let Some(cs) = chunk_store {
-                        let final_path = backend.root().join(dst.as_path());
-                        let params =
-                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
-                                .unwrap();
-                        let _ = cs.ingest_file_sync(
-                            &final_path,
-                            crate::chunking::ChunkMode::Fixed,
-                            params,
-                        );
+                        if backend.backend_type() == "local" {
+                            let final_path = backend.root().join(dst.as_path());
+                            let params =
+                                crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                    .unwrap();
+                            let _ = cs.ingest_file_sync(
+                                &final_path,
+                                crate::chunking::ChunkMode::Fixed,
+                                params,
+                            );
+                        }
                     }
                 } else {
                     stats
@@ -1794,21 +1820,22 @@ async fn handle_transfer_create(
                 VelcruxError::Protocol(crate::error::ProtocolError::Malformed("invalid bloom"))
             })?;
 
-        let server_file_path = backend.root().join(dst.as_path());
-        let mut sf = std::fs::File::open(&server_file_path)?;
+        let mut reader = backend.open_read(&dst).await?;
         let mut buf = vec![0u8; 64 * 1024];
         let mut chunk_hashes = Vec::new();
         let mut chunk_indices = Vec::new();
         let mut offset = 0u64;
         let mut c_idx = 0u64;
-        use std::io::Read;
         while offset < bytes_total {
             let to_read = ((bytes_total - offset).min(64 * 1024)) as usize;
-            sf.read_exact(&mut buf[..to_read])?;
-            let h = crate::util::Hash::of(&buf[..to_read]);
+            let n = reader.read_at(offset, &mut buf[..to_read]).await?;
+            if n == 0 {
+                break;
+            }
+            let h = crate::util::Hash::of(&buf[..n]);
             chunk_hashes.push(h);
-            chunk_indices.push((c_idx, to_read as u64));
-            offset += to_read as u64;
+            chunk_indices.push((c_idx, n as u64));
+            offset += n as u64;
             c_idx += 1;
         }
 
@@ -2008,7 +2035,7 @@ async fn handle_transfer_create(
 
 async fn handle_resume(
     conn: &dyn Connection,
-    backend: &Arc<LocalFilesystemBackend>,
+    backend: &Arc<dyn StorageBackend>,
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
     limits_provider: &Option<Arc<dyn LimitsProvider>>,
@@ -2102,7 +2129,7 @@ async fn handle_resume(
     let res = match record.direction {
         Direction::Upload => crate::transfer::server_upload_session_with_limits(
             conn,
-            backend,
+            backend.as_ref(),
             send,
             recv,
             state.clone(),
@@ -2120,7 +2147,7 @@ async fn handle_resume(
         Direction::Download => {
             crate::transfer::server_download_session_with_compression(
                 conn,
-                backend,
+                backend.as_ref(),
                 send,
                 recv,
                 record.transfer_id,
@@ -2278,7 +2305,7 @@ async fn handle_list(
 /// tenant's transfers.
 async fn handle_cancel(
     _send: &mut dyn crate::transport::BiSendStream,
-    backend: &Arc<LocalFilesystemBackend>,
+    backend: &Arc<dyn StorageBackend>,
     state: &Option<Arc<dyn StateStore>>,
     authorizer: &dyn Authorizer,
     identity: &Identity,
@@ -2305,6 +2332,6 @@ async fn handle_cancel(
     if authorizer.check(identity, op, &record.remote_path).is_err() {
         return;
     }
-    let _ = cancel_transfer_m3(backend, store.clone(), c.transfer_id).await;
+    let _ = cancel_transfer_m3(backend.as_ref(), store.clone(), c.transfer_id).await;
     let _ = TransferStatus::Cancelled;
 }

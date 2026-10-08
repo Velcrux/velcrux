@@ -539,3 +539,55 @@ VELCRUX_TRANSFER_BATCH_MAX_BYTES=32MiB \
 velcruxd --config /etc/velcrux/server.toml
 ```
 
+## 18. Pluggable Storage Backend Abstraction & In-Memory Storage Engine
+
+Velcrux provides a fully decoupled, polymorphic storage subsystem through the `StorageBackend` trait (`REQUIREMENTS.md` §42, §43). Storage operations (metadata lookup, staged file writes, atomic commits, random reads, directory enumeration, whole-file hash computations, extended attribute management, and content-addressed chunk caching) are abstracted behind dynamic trait objects (`Arc<dyn StorageBackend>`).
+
+### Supported Backends
+
+1. **`local` (Local POSIX Filesystem Engine)**:
+   - Default production backend.
+   - Utilizes persistent storage directories for `root`, `staging`, and deduplication chunk stores.
+   - Enforces same-filesystem atomic commits via atomic POSIX `rename(2)`.
+   - Supports direct I/O (`O_DIRECT`), fallocate reservation, and real filesystem metadata.
+
+2. **`memory` (Virtual In-Memory Storage Engine)**:
+   - High-performance, 100% safe Rust in-memory virtual filesystem engine (`MemoryStorageBackend`).
+   - Zero disk I/O: files, directories, staging buffers, content-addressed chunks, and extended attributes are held entirely in thread-safe memory structures (`tokio::sync::RwLock`).
+   - Fully supports transactional staging: writes are isolated per `transfer_id`, and become atomically visible at the destination path only upon `commit()`.
+   - Configurable memory quota and disk reservation margin simulation (`min_free_space`), returning `DISK_FULL` when capacities are exceeded.
+   - Ideal for hermetic integration testing, CI pipelines, ephemeral transfer caches, and cloud object store staging buffers.
+
+### Server Configuration
+
+In `server.toml`:
+```toml
+[storage]
+root     = "/data/storage"
+staging  = "/data/staging"
+backend  = "local"       # Options: "local" (default) or "memory"
+min_free_space = "1GiB"
+```
+
+Or for in-memory mode:
+```toml
+[storage]
+root     = "/virtual/root"
+staging  = "/virtual/staging"
+backend  = "memory"
+min_free_space = "512MiB"
+```
+
+### Environment Variable Overrides
+The storage backend can be dynamically selected via the `VELCRUX_STORAGE_BACKEND` environment variable without editing configuration files:
+```bash
+VELCRUX_STORAGE_BACKEND=memory velcruxd --config /etc/velcrux/server.toml
+```
+
+### Architecture Invariants & Guarantees
+- **Strict `#![forbid(unsafe_code)]`**: All backend implementations are written in 100% safe Rust.
+- **Fail-Closed Validation**: Server refuses to boot if `storage.backend` is set to an unsupported value (must be `"local"` or `"memory"`).
+- **Same-Filesystem Check Exemption**: The physical same-device check between `storage.root` and `storage.staging` (Section 2) is automatically bypassed when `backend = "memory"`, allowing arbitrary virtual path roots.
+- **Content-Addressed Deduplication**: `MemoryStorageBackend` includes a built-in content-addressed chunk store supporting chunk caching, dedup indexing, and hash-based retrieval.
+
+

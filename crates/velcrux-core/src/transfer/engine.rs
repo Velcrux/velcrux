@@ -70,7 +70,7 @@ use crate::state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, Role, StateStore, TransferRecord,
     TransferStatus,
 };
-use crate::storage::{FileMeta, LocalFilesystemBackend, StorageBackend, VPath};
+use crate::storage::{FileMeta, StorageBackend, VPath};
 use crate::transfer::rate_limit::RateLimiter;
 use crate::transport::{BiRecvStream, BiSendStream, Connection};
 use crate::util::{Hash, HashHasher, TransferId};
@@ -729,21 +729,6 @@ pub(super) fn protocol_violation(detail: &'static str) -> VelcruxError {
 // Server-side helpers (upload receive)
 // ===========================================================================
 
-pub(super) async fn hash_file(path: &std::path::Path) -> Result<Hash> {
-    use tokio::io::AsyncReadExt;
-    let mut f = tokio::fs::File::open(path).await?;
-    let mut h = HashHasher::new();
-    let mut buf = vec![0u8; 2 * 1024 * 1024];
-    loop {
-        let n = f.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        h.feed(&buf[..n]);
-    }
-    Ok(h.finalize())
-}
-
 /// Compute the staging file path the `LocalFilesystemBackend` uses for a
 /// given `(transfer_id, dest)`. M2 helper used by the server-side upload
 /// session to find the on-disk staging file for whole-file hashing.
@@ -776,7 +761,7 @@ pub fn server_staging_path(
 /// Returns the committed file's whole-file BLAKE3 on success.
 pub async fn server_upload_session(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
@@ -802,7 +787,7 @@ pub async fn server_upload_session(
 /// Server-side upload session with state store persistence and resume support.
 pub async fn server_upload_session_with_state(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     store: Option<Arc<dyn StateStore>>,
@@ -833,7 +818,7 @@ pub async fn server_upload_session_with_state(
 /// and resume support.
 pub async fn server_upload_session_with_delta(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     store: Option<Arc<dyn StateStore>>,
@@ -867,7 +852,7 @@ pub async fn server_upload_session_with_delta(
 /// and resume support.
 pub async fn server_upload_session_with_limits(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     store: Option<Arc<dyn StateStore>>,
@@ -1079,14 +1064,9 @@ pub async fn server_upload_session_with_limits(
     }
 
     // Compute whole-file hash of the staged file.
-    let staging_path = server_staging_path(backend.staging_dir(), &transfer_id, dst);
-    if !staging_path.exists() {
-        return Err(VelcruxError::Internal(format!(
-            "server: staging file not found at {}",
-            staging_path.display()
-        )));
-    }
-    let computed = hash_file(&staging_path).await?;
+    let computed = backend
+        .compute_staging_hash(&transfer_id.to_string(), dst)
+        .await?;
 
     // Await VERIFY (skipping and persisting any CHECKPOINT frames that arrive first).
     let frame = loop {
@@ -1490,7 +1470,7 @@ pub async fn client_download_stream_with_staging(
 /// VERIFY / VERIFY_RESULT / COMMIT / COMMITTED with the client.
 pub async fn server_download_session(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
@@ -1516,7 +1496,7 @@ pub async fn server_download_session(
 /// Server-side download session with optional skip bitmap for delta transfer.
 pub async fn server_download_session_with_delta(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
@@ -1545,7 +1525,7 @@ pub async fn server_download_session_with_delta(
 /// Server-side download session with bandwidth rate limiting and optional skip bitmap for delta transfer.
 pub async fn server_download_session_with_limits(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
@@ -1576,7 +1556,7 @@ pub async fn server_download_session_with_limits(
 /// Server-side download session with bandwidth rate limiting, optional skip bitmap, and optional zstd compression (Option Q).
 pub async fn server_download_session_with_compression(
     conn: &dyn Connection,
-    backend: &LocalFilesystemBackend,
+    backend: &(impl StorageBackend + ?Sized),
     control_send: &mut dyn BiSendStream,
     control_recv: &mut dyn BiRecvStream,
     transfer_id: TransferId,
@@ -1690,8 +1670,7 @@ pub async fn server_download_session_with_compression(
         if file_hash != Hash::ZERO {
             file_hash
         } else {
-            let abs_path = backend.root().join(src_path.as_path());
-            hash_file(&abs_path).await?
+            backend.compute_file_hash(src).await?
         }
     } else {
         // Open a unidirectional data stream and write the preamble.

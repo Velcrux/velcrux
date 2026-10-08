@@ -184,19 +184,32 @@ where
     let preallocate = cfg.storage.preallocate.unwrap_or(true);
 
     // Construct the storage backend. M2 enforces same-filesystem for atomic commit (OPERATIONS.md §2).
-    let backend = velcrux_core::storage::LocalFilesystemBackend::new(
-        std::path::PathBuf::from(&cfg.storage.root),
-        std::path::PathBuf::from(&cfg.storage.staging),
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "storage backend init failed (root={}, staging={})",
-            cfg.storage.root, cfg.storage.staging
-        )
-    })?
-    .with_preallocation(preallocate, min_free_space_bytes);
-    let backend = Arc::new(backend);
+    let backend: Arc<dyn velcrux_core::storage::StorageBackend> =
+        match cfg.storage.backend.as_deref() {
+            Some("memory") => {
+                info!(root = %cfg.storage.root, "MemoryStorageBackend initialized");
+                Arc::new(
+                    velcrux_core::storage::MemoryStorageBackend::new()
+                        .with_root(std::path::PathBuf::from(&cfg.storage.root))
+                        .with_min_free_space(min_free_space_bytes),
+                )
+            }
+            _ => {
+                let b = velcrux_core::storage::LocalFilesystemBackend::new(
+                    std::path::PathBuf::from(&cfg.storage.root),
+                    std::path::PathBuf::from(&cfg.storage.staging),
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "storage backend init failed (root={}, staging={})",
+                        cfg.storage.root, cfg.storage.staging
+                    )
+                })?
+                .with_preallocation(preallocate, min_free_space_bytes);
+                Arc::new(b)
+            }
+        };
 
     // Optional LocalChunkStore for deduplication (Option D)
     let chunk_store: Option<Arc<velcrux_core::storage::LocalChunkStore>> =

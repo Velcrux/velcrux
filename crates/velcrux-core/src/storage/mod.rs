@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 pub mod chunk_store;
 pub mod direct_io;
 pub mod gc;
+pub mod memory;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use direct_io::{
@@ -31,6 +32,7 @@ pub use direct_io::{
     DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_SECTOR_SIZE,
 };
 pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
+pub use memory::{MemoryFile, MemoryStorageBackend};
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
 use crate::error::{ProtocolError, VelcruxError};
@@ -411,6 +413,72 @@ pub trait StorageBackend: Send + Sync {
     /// Remove a file.
     async fn remove(&self, p: &VPath) -> Result<(), VelcruxError>;
 
+    /// Check if a path exists.
+    async fn exists(&self, p: &VPath) -> Result<bool, VelcruxError> {
+        Ok(self.stat(p).await?.is_some())
+    }
+
+    /// List directory entries as relative names and their metadata.
+    async fn list_dir(&self, p: &VPath) -> Result<Vec<(String, FileMeta)>, VelcruxError> {
+        let _ = p;
+        Ok(Vec::new())
+    }
+
+    /// Ensure directory path exists.
+    async fn create_dir_all(&self, p: &VPath) -> Result<(), VelcruxError> {
+        let _ = p;
+        Ok(())
+    }
+
+    /// Rename a file atomically within the storage backend.
+    async fn rename_file(&self, src: &VPath, dest: &VPath) -> Result<(), VelcruxError> {
+        let _ = (src, dest);
+        Err(VelcruxError::Internal(
+            "rename_file not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Compute whole file cryptographic hash.
+    async fn compute_file_hash(&self, p: &VPath) -> Result<Hash, VelcruxError>;
+
+    /// Compute staging file cryptographic hash.
+    async fn compute_staging_hash(
+        &self,
+        transfer_id: &str,
+        p: &VPath,
+    ) -> Result<Hash, VelcruxError>;
+
+    /// Store a content-addressed chunk.
+    async fn store_chunk(&self, hash: &Hash, data: &[u8]) -> Result<(), VelcruxError> {
+        let _ = (hash, data);
+        Err(VelcruxError::Internal(
+            "content-addressed chunk store not supported by this backend".to_string(),
+        ))
+    }
+
+    /// Retrieve a content-addressed chunk.
+    async fn get_chunk(&self, hash: &Hash) -> Result<Option<Vec<u8>>, VelcruxError> {
+        let _ = hash;
+        Ok(None)
+    }
+
+    /// Check if a content-addressed chunk exists.
+    async fn has_chunk(&self, hash: &Hash) -> Result<bool, VelcruxError> {
+        let _ = hash;
+        Ok(false)
+    }
+
+    /// Delete a content-addressed chunk.
+    async fn delete_chunk(&self, hash: &Hash) -> Result<bool, VelcruxError> {
+        let _ = hash;
+        Ok(false)
+    }
+
+    /// Return identifier for the storage backend type ("local", "memory", etc.).
+    fn backend_type(&self) -> &'static str {
+        "local"
+    }
+
     /// Create a symbolic link at `dest` pointing to `target`.
     async fn create_symlink(&self, dest: &VPath, target: &str) -> Result<(), VelcruxError>;
 
@@ -448,6 +516,25 @@ pub trait StorageBackend: Send + Sync {
         false
     }
 
+    /// Return the physical or canonical staging path for a transfer and file.
+    fn staging_path(&self, transfer_id: &str, p: &VPath) -> PathBuf {
+        let safe_tid: String = transfer_id
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let stem = p.as_path();
+        let mut out = self.root().join("staging").join(safe_tid);
+        if let Some(parent) = stem.parent() {
+            out.push(parent);
+        }
+        let file_name = stem
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "part".to_string());
+        out.push(format!("{file_name}.part"));
+        out
+    }
+
     /// Storage root absolute path.
     fn root(&self) -> &Path;
 }
@@ -466,11 +553,23 @@ pub trait AsyncRandomRead: Send {
     async fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, VelcruxError>;
 }
 
+/// Target destination for staging writes.
+#[derive(Debug)]
+pub enum StagingTarget {
+    /// On-disk filesystem handle.
+    File(tokio::fs::File),
+    /// In-memory buffer handle.
+    Memory {
+        buffer: std::sync::Arc<tokio::sync::RwLock<Vec<u8>>>,
+        rel_path: String,
+    },
+}
+
 /// A writer into a staged file.
 #[derive(Debug)]
 pub struct StagingWriter {
     staging: Staging,
-    file: tokio::fs::File,
+    target: StagingTarget,
     written: u64,
 }
 
@@ -482,7 +581,20 @@ impl StagingWriter {
     pub fn new(file: tokio::fs::File, staging: Staging) -> Self {
         Self {
             staging,
-            file,
+            target: StagingTarget::File(file),
+            written: 0,
+        }
+    }
+
+    /// Construct a `StagingWriter` targeting an in-memory virtual buffer.
+    pub fn new_memory(
+        buffer: std::sync::Arc<tokio::sync::RwLock<Vec<u8>>>,
+        staging: Staging,
+        rel_path: String,
+    ) -> Self {
+        Self {
+            staging,
+            target: StagingTarget::Memory { buffer, rel_path },
             written: 0,
         }
     }
@@ -490,10 +602,22 @@ impl StagingWriter {
     /// `pwrite`: write `data` at `offset`. The staging file is extended
     /// as needed. Out-of-order writes are supported.
     pub async fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<(), VelcruxError> {
-        use tokio::io::AsyncSeekExt;
-        use tokio::io::AsyncWriteExt;
-        self.file.seek(std::io::SeekFrom::Start(offset)).await?;
-        self.file.write_all(data).await?;
+        match &mut self.target {
+            StagingTarget::File(file) => {
+                use tokio::io::AsyncSeekExt;
+                use tokio::io::AsyncWriteExt;
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                file.write_all(data).await?;
+            }
+            StagingTarget::Memory { buffer, .. } => {
+                let mut buf = buffer.write().await;
+                let end = (offset as usize).saturating_add(data.len());
+                if buf.len() < end {
+                    buf.resize(end, 0);
+                }
+                buf[offset as usize..end].copy_from_slice(data);
+            }
+        }
         let end = offset + data.len() as u64;
         if end > self.written {
             self.written = end;
@@ -508,8 +632,13 @@ impl StagingWriter {
 
     /// `fsync` the file's data and metadata.
     pub async fn fsync(&mut self) -> Result<(), VelcruxError> {
-        self.file.sync_all().await?;
-        Ok(())
+        match &mut self.target {
+            StagingTarget::File(file) => {
+                file.sync_all().await?;
+                Ok(())
+            }
+            StagingTarget::Memory { .. } => Ok(()),
+        }
     }
 
     /// Absolute path to the staged file.
@@ -529,6 +658,7 @@ pub struct LocalFilesystemBackend {
     min_free_space: u64,
     preallocate: bool,
     direct_io: DirectIoMode,
+    chunk_store: Option<std::sync::Arc<dyn ChunkStore>>,
 }
 
 impl LocalFilesystemBackend {
@@ -537,6 +667,12 @@ impl LocalFilesystemBackend {
     /// whole-file BLAKE3.
     pub fn staging_dir(&self) -> &Path {
         &self.staging
+    }
+
+    /// Attach an optional content-addressed ChunkStore.
+    pub fn with_chunk_store(mut self, chunk_store: std::sync::Arc<dyn ChunkStore>) -> Self {
+        self.chunk_store = Some(chunk_store);
+        self
     }
 
     /// Construct a backend with the given root and staging directories.
@@ -586,6 +722,7 @@ impl LocalFilesystemBackend {
             min_free_space,
             preallocate,
             direct_io: DirectIoMode::Auto,
+            chunk_store: None,
         })
     }
 
@@ -650,6 +787,10 @@ fn dev_of(p: &Path) -> u64 {
 impl StorageBackend for LocalFilesystemBackend {
     fn root(&self) -> &Path {
         &self.root
+    }
+
+    fn staging_path(&self, transfer_id: &str, p: &VPath) -> PathBuf {
+        self.staging_path(transfer_id, p)
     }
 
     async fn stat(&self, p: &VPath) -> Result<Option<FileMeta>, VelcruxError> {
@@ -790,7 +931,7 @@ impl StorageBackend for LocalFilesystemBackend {
         };
         Ok(StagingWriter {
             staging: Staging::new(path),
-            file,
+            target: StagingTarget::File(file),
             written,
         })
     }
@@ -915,6 +1056,108 @@ impl StorageBackend for LocalFilesystemBackend {
         }
         tokio::fs::hard_link(&src_path, &dest_path).await?;
         Ok(())
+    }
+
+    async fn exists(&self, p: &VPath) -> Result<bool, VelcruxError> {
+        let path = self.resolve(p);
+        Ok(tokio::fs::try_exists(&path).await.unwrap_or(false))
+    }
+
+    async fn list_dir(&self, p: &VPath) -> Result<Vec<(String, FileMeta)>, VelcruxError> {
+        let dir_path = self.resolve(p);
+        let mut entries = Vec::new();
+        let mut read_dir = match tokio::fs::read_dir(&dir_path).await {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+            Err(e) => return Err(e.into()),
+        };
+        while let Some(entry) = read_dir.next_entry().await? {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let sub_path = if p.is_root() || p.as_str().is_empty() {
+                file_name.clone()
+            } else {
+                format!("{}/{}", p.as_str(), file_name)
+            };
+            let sub_vpath = match VPath::validate(&sub_path) {
+                Ok(vp) => vp,
+                Err(_) => continue,
+            };
+            if let Ok(Some(meta)) = self.stat(&sub_vpath).await {
+                entries.push((file_name, meta));
+            }
+        }
+        Ok(entries)
+    }
+
+    async fn create_dir_all(&self, p: &VPath) -> Result<(), VelcruxError> {
+        let path = self.resolve(p);
+        tokio::fs::create_dir_all(&path).await.map_err(Into::into)
+    }
+
+    async fn rename_file(&self, src: &VPath, dest: &VPath) -> Result<(), VelcruxError> {
+        let src_path = self.resolve(src);
+        let dest_path = self.resolve(dest);
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::rename(&src_path, &dest_path)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn compute_file_hash(&self, p: &VPath) -> Result<Hash, VelcruxError> {
+        let path = self.resolve(p);
+        crate::sync::compute_file_hash(&path).map_err(Into::into)
+    }
+
+    async fn compute_staging_hash(
+        &self,
+        transfer_id: &str,
+        p: &VPath,
+    ) -> Result<Hash, VelcruxError> {
+        let path = self.staging_path(transfer_id, p);
+        crate::sync::compute_file_hash(&path).map_err(Into::into)
+    }
+
+    async fn store_chunk(&self, hash: &Hash, data: &[u8]) -> Result<(), VelcruxError> {
+        if let Some(ref cs) = self.chunk_store {
+            cs.put(hash, data).await
+        } else {
+            Err(VelcruxError::Internal(
+                "content-addressed chunk store not configured".to_string(),
+            ))
+        }
+    }
+
+    async fn get_chunk(&self, hash: &Hash) -> Result<Option<Vec<u8>>, VelcruxError> {
+        if let Some(ref cs) = self.chunk_store {
+            match cs.get(hash).await {
+                Ok(bytes) => Ok(Some(bytes.to_vec())),
+                Err(_) => Ok(None),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn has_chunk(&self, hash: &Hash) -> Result<bool, VelcruxError> {
+        if let Some(ref cs) = self.chunk_store {
+            cs.has(hash).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn delete_chunk(&self, hash: &Hash) -> Result<bool, VelcruxError> {
+        if let Some(ref cs) = self.chunk_store {
+            cs.remove(hash).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn backend_type(&self) -> &'static str {
+        "local"
     }
 }
 

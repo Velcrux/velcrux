@@ -168,7 +168,8 @@ async fn start_test_server(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_transport: Arc<dyn Transport<Conn = QuicConnection>> = Arc::clone(&transport);
-    let server_backend = Arc::clone(&backend);
+    let server_backend: Arc<dyn velcrux_core::storage::StorageBackend> =
+        Arc::clone(&backend) as Arc<dyn velcrux_core::storage::StorageBackend>;
     let server_state = Arc::clone(&state_store);
 
     tokio::spawn(async move {

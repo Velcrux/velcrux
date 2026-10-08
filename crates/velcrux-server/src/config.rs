@@ -190,6 +190,8 @@ pub struct StorageCfg {
     pub preallocate: Option<bool>,
     #[serde(default)]
     pub direct_io: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -407,6 +409,9 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_DIRECT_IO") {
             self.storage.direct_io = Some(val);
         }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_BACKEND") {
+            self.storage.backend = Some(val);
+        }
 
         // Telemetry
         if let Ok(val) = std::env::var("VELCRUX_TELEMETRY_METRICS_LISTEN") {
@@ -470,7 +475,7 @@ impl ServerConfig {
 
         // 4. Validate same-filesystem invariant between storage.root and storage.staging (OPERATIONS.md §2)
         #[cfg(unix)]
-        {
+        if self.storage.backend.as_deref() != Some("memory") {
             use std::os::unix::fs::MetadataExt;
             let root_path = Path::new(&self.storage.root);
             let staging_path = Path::new(&self.storage.staging);
@@ -514,6 +519,13 @@ impl ServerConfig {
         if let Some(ref dio) = self.storage.direct_io {
             dio.parse::<velcrux_core::DirectIoMode>()
                 .map_err(|e| anyhow::anyhow!("storage.direct_io: {e}"))?;
+        }
+
+        // 5c. Validate storage backend if specified (Option AJ)
+        if let Some(ref backend) = self.storage.backend {
+            if backend != "local" && backend != "memory" {
+                anyhow::bail!("invalid storage.backend: {backend} (must be 'local' or 'memory')");
+            }
         }
 
         // 6. Validate hash algorithm if specified

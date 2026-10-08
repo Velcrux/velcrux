@@ -32,7 +32,7 @@ use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::protocol::error::ErrorCode;
 use velcrux_core::protocol::message::{Auth, Hello, Message};
 use velcrux_core::session::{read_frame, write_frame, ServerConn, ServerStats};
-use velcrux_core::storage::LocalFilesystemBackend;
+use velcrux_core::storage::{LocalFilesystemBackend, StorageBackend};
 use velcrux_core::transport::identity::Identity;
 use velcrux_core::transport::quic::{
     ClientBuilder, ClientIdentity, ServerBuilder, TransportConfigTunables,
@@ -368,7 +368,7 @@ async fn test_e2e_quic_mtls_crl_rejection() {
     std::fs::create_dir_all(&backend_root).unwrap();
     std::fs::create_dir_all(&staging_root).unwrap();
 
-    let backend = Arc::new(
+    let backend: Arc<dyn StorageBackend> = Arc::new(
         LocalFilesystemBackend::new(backend_root, staging_root)
             .await
             .expect("local backend"),
@@ -548,7 +548,7 @@ async fn test_e2e_max_auth_attempts_enforcement() {
     std::fs::create_dir_all(&backend_root).unwrap();
     std::fs::create_dir_all(&staging_root).unwrap();
 
-    let backend = Arc::new(
+    let backend: Arc<dyn StorageBackend> = Arc::new(
         LocalFilesystemBackend::new(backend_root, staging_root)
             .await
             .expect("local backend"),
