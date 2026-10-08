@@ -214,10 +214,13 @@ impl Hello {
         let agent_len_us: usize = agent_len
             .try_into()
             .map_err(|_| ProtocolError::Malformed("HELLO: agent_len too large"))?;
-        if buf.len() < i + agent_len_us {
+        let agent_end = i
+            .checked_add(agent_len_us)
+            .ok_or(ProtocolError::Malformed("HELLO: agent_len overflow"))?;
+        if buf.len() < agent_end {
             return Err(ProtocolError::Malformed("HELLO: truncated agent"));
         }
-        let agent = std::str::from_utf8(&buf[i..i + agent_len_us])
+        let agent = std::str::from_utf8(&buf[i..agent_end])
             .map_err(|_| ProtocolError::Malformed("HELLO: agent not UTF-8"))?
             .to_string();
         Ok(Self {
@@ -300,10 +303,13 @@ impl HelloAck {
         let agent_len_us: usize = agent_len
             .try_into()
             .map_err(|_| ProtocolError::Malformed("HELLO_ACK: agent_len too large"))?;
-        if buf.len() < i + agent_len_us {
+        let agent_end = i
+            .checked_add(agent_len_us)
+            .ok_or(ProtocolError::Malformed("HELLO_ACK: agent_len overflow"))?;
+        if buf.len() < agent_end {
             return Err(ProtocolError::Malformed("HELLO_ACK: truncated agent"));
         }
-        let agent = std::str::from_utf8(&buf[i..i + agent_len_us])
+        let agent = std::str::from_utf8(&buf[i..agent_end])
             .map_err(|_| ProtocolError::Malformed("HELLO_ACK: agent not UTF-8"))?
             .to_string();
         Ok(Self {
@@ -455,13 +461,18 @@ impl AuthOk {
             return Err(ProtocolError::Malformed("AUTH_OK: identity too long"));
         }
         // 8 = permissions bitset at the tail.
-        if buf.len() < i + ilen_us + 8 {
+        let off = i
+            .checked_add(ilen_us)
+            .ok_or(ProtocolError::Malformed("AUTH_OK: identity_len overflow"))?;
+        let needed = off
+            .checked_add(8)
+            .ok_or(ProtocolError::Malformed("AUTH_OK: length overflow"))?;
+        if buf.len() < needed {
             return Err(ProtocolError::Malformed("AUTH_OK: truncated"));
         }
-        let identity = std::str::from_utf8(&buf[i..i + ilen_us])
+        let identity = std::str::from_utf8(&buf[i..off])
             .map_err(|_| ProtocolError::Malformed("AUTH_OK: identity not UTF-8"))?
             .to_string();
-        let off = i + ilen_us;
         let permissions =
             u64::from_le_bytes(buf[off..off + 8].try_into().expect("8 bytes for u64"));
         Ok(Self {
@@ -611,10 +622,13 @@ impl ErrorMsg {
         let dlen_us: usize = dlen
             .try_into()
             .map_err(|_| ProtocolError::Malformed("ERROR: detail_len too large"))?;
-        if buf.len() < i + dlen_us {
+        let dend = i
+            .checked_add(dlen_us)
+            .ok_or(ProtocolError::Malformed("ERROR: detail_len overflow"))?;
+        if buf.len() < dend {
             return Err(ProtocolError::Malformed("ERROR: truncated detail"));
         }
-        let detail_str = std::str::from_utf8(&buf[i..i + dlen_us])
+        let detail_str = std::str::from_utf8(&buf[i..dend])
             .map_err(|_| ProtocolError::Malformed("ERROR: detail not UTF-8"))?
             .to_string();
         Ok(Self {
@@ -782,41 +796,53 @@ impl TransferCreate {
         let sp_len_us: usize = sp_len
             .try_into()
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: src_path_len too large"))?;
-        if buf.len() < i + sp_len_us {
+        let sp_end = i.checked_add(sp_len_us).ok_or(ProtocolError::Malformed(
+            "TRANSFER_CREATE: src_path_len overflow",
+        ))?;
+        if buf.len() < sp_end {
             return Err(ProtocolError::Malformed(
                 "TRANSFER_CREATE: truncated src_path",
             ));
         }
-        let src_path = std::str::from_utf8(&buf[i..i + sp_len_us])
+        let src_path = std::str::from_utf8(&buf[i..sp_end])
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: src_path not UTF-8"))?
             .to_string();
-        i += sp_len_us;
+        i = sp_end;
         let (dp_len, consumed) = varint::decode_varint(&buf[i..])?;
         i += consumed;
         let dp_len_us: usize = dp_len
             .try_into()
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: dst_path_len too large"))?;
-        if buf.len() < i + dp_len_us {
+        let dp_end = i.checked_add(dp_len_us).ok_or(ProtocolError::Malformed(
+            "TRANSFER_CREATE: dst_path_len overflow",
+        ))?;
+        if buf.len() < dp_end {
             return Err(ProtocolError::Malformed(
                 "TRANSFER_CREATE: truncated dst_path",
             ));
         }
-        let dst_path = std::str::from_utf8(&buf[i..i + dp_len_us])
+        let dst_path = std::str::from_utf8(&buf[i..dp_end])
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: dst_path not UTF-8"))?
             .to_string();
-        i += dp_len_us;
+        i = dp_end;
         let (id_len, consumed) = varint::decode_varint(&buf[i..])?;
         i += consumed;
         let id_len_us: usize = id_len
             .try_into()
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: idempotency_len too large"))?;
-        if buf.len() < i + id_len_us + 8 + 32 {
+        let id_end = i.checked_add(id_len_us).ok_or(ProtocolError::Malformed(
+            "TRANSFER_CREATE: idempotency_len overflow",
+        ))?;
+        let tail_end = id_end
+            .checked_add(8 + 32)
+            .ok_or(ProtocolError::Malformed("TRANSFER_CREATE: tail overflow"))?;
+        if buf.len() < tail_end {
             return Err(ProtocolError::Malformed("TRANSFER_CREATE: truncated tail"));
         }
-        let idempotency_key = std::str::from_utf8(&buf[i..i + id_len_us])
+        let idempotency_key = std::str::from_utf8(&buf[i..id_end])
             .map_err(|_| ProtocolError::Malformed("TRANSFER_CREATE: idempotency not UTF-8"))?
             .to_string();
-        i += id_len_us;
+        i = id_end;
         let file_size = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
         i += 8;
         let file_hash = Hash::from_bytes(&buf[i..i + 32])
@@ -1241,10 +1267,13 @@ impl Resume {
         let klen_us: usize = klen
             .try_into()
             .map_err(|_| ProtocolError::Malformed("RESUME: key too long"))?;
-        if buf.len() < i + klen_us {
+        let kend = i
+            .checked_add(klen_us)
+            .ok_or(ProtocolError::Malformed("RESUME: key length overflow"))?;
+        if buf.len() < kend {
             return Err(ProtocolError::Malformed("RESUME: truncated key"));
         }
-        let key = std::str::from_utf8(&buf[i..i + klen_us])
+        let key = std::str::from_utf8(&buf[i..kend])
             .map_err(|_| ProtocolError::Malformed("RESUME: key not UTF-8"))?
             .to_string();
         Ok(Self {
@@ -1306,13 +1335,21 @@ impl ResumeState {
         let plen_us: usize = plen
             .try_into()
             .map_err(|_| ProtocolError::Malformed("RESUME_STATE: path too long"))?;
-        if buf.len() < i + plen_us + 8 * 3 + 32 {
+        let pend = i.checked_add(plen_us).ok_or(ProtocolError::Malformed(
+            "RESUME_STATE: path length overflow",
+        ))?;
+        let body_end = pend
+            .checked_add(8 * 3 + 32)
+            .ok_or(ProtocolError::Malformed(
+                "RESUME_STATE: body length overflow",
+            ))?;
+        if buf.len() < body_end {
             return Err(ProtocolError::Malformed("RESUME_STATE: truncated body"));
         }
-        let path = std::str::from_utf8(&buf[i..i + plen_us])
+        let path = std::str::from_utf8(&buf[i..pend])
             .map_err(|_| ProtocolError::Malformed("RESUME_STATE: path not UTF-8"))?
             .to_string();
-        i += plen_us;
+        i = pend;
         let file_size = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
         i += 8;
         let bytes_completed = u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
@@ -1463,13 +1500,16 @@ impl StatResult {
             let n_us: usize = n
                 .try_into()
                 .map_err(|_| ProtocolError::Malformed("STAT_RESULT: string too long"))?;
-            if buf.len() < *i + n_us {
+            let end = (*i).checked_add(n_us).ok_or(ProtocolError::Malformed(
+                "STAT_RESULT: string length overflow",
+            ))?;
+            if buf.len() < end {
                 return Err(ProtocolError::Malformed("STAT_RESULT: truncated string"));
             }
-            let s = std::str::from_utf8(&buf[*i..*i + n_us])
+            let s = std::str::from_utf8(&buf[*i..end])
                 .map_err(|_| ProtocolError::Malformed("STAT_RESULT: not UTF-8"))?
                 .to_string();
-            *i += n_us;
+            *i = end;
             Ok(s)
         };
         let status = read_str(buf, &mut i)?;
@@ -1527,10 +1567,13 @@ impl ListQuery {
         let n_us: usize = n
             .try_into()
             .map_err(|_| ProtocolError::Malformed("LIST: prefix too long"))?;
-        if buf.len() < i + n_us {
+        let end = i
+            .checked_add(n_us)
+            .ok_or(ProtocolError::Malformed("LIST: prefix length overflow"))?;
+        if buf.len() < end {
             return Err(ProtocolError::Malformed("LIST: truncated prefix"));
         }
-        let url_prefix = std::str::from_utf8(&buf[i..i + n_us])
+        let url_prefix = std::str::from_utf8(&buf[i..end])
             .map_err(|_| ProtocolError::Malformed("LIST: not UTF-8"))?
             .to_string();
         Ok(Self { url_prefix })
@@ -1568,7 +1611,8 @@ impl ListResult {
             return Err(ProtocolError::Malformed("LIST_RESULT: too many entries"));
         }
         let mut i = c;
-        let mut entries = Vec::with_capacity(count as usize);
+        let max_possible = (buf.len().saturating_sub(c)) / 20;
+        let mut entries = Vec::with_capacity((count as usize).min(max_possible.max(1)));
         for _ in 0..count {
             if i >= buf.len() {
                 return Err(ProtocolError::Malformed(
@@ -1580,11 +1624,14 @@ impl ListResult {
             let n_us: usize = n
                 .try_into()
                 .map_err(|_| ProtocolError::Malformed("LIST_RESULT: entry too long"))?;
-            if buf.len() < i + n_us {
+            let end = i.checked_add(n_us).ok_or(ProtocolError::Malformed(
+                "LIST_RESULT: entry length overflow",
+            ))?;
+            if buf.len() < end {
                 return Err(ProtocolError::Malformed("LIST_RESULT: truncated entry"));
             }
-            let entry = StatResult::decode(&buf[i..i + n_us])?;
-            i += n_us;
+            let entry = StatResult::decode(&buf[i..end])?;
+            i = end;
             entries.push(entry);
         }
         Ok(Self { entries })
@@ -1815,7 +1862,13 @@ impl ChunkQuery {
             return Err(ProtocolError::Malformed("CHUNK_QUERY: too many hashes"));
         }
         let count_us = count as usize;
-        if buf.len() < i + count_us * 32 {
+        let hashes_bytes = count_us
+            .checked_mul(32)
+            .ok_or(ProtocolError::Malformed("CHUNK_QUERY: count overflow"))?;
+        let end = i
+            .checked_add(hashes_bytes)
+            .ok_or(ProtocolError::Malformed("CHUNK_QUERY: length overflow"))?;
+        if buf.len() < end {
             return Err(ProtocolError::Malformed("CHUNK_QUERY: truncated hashes"));
         }
         let mut chunk_hashes = Vec::with_capacity(count_us);
@@ -2029,6 +2082,8 @@ impl Message {
         match type_byte {
             HELLO => Ok(Message::Hello(Hello::decode(payload)?)),
             HELLO_ACK => Ok(Message::HelloAck(HelloAck::decode(payload)?)),
+            AUTH => Ok(Message::Auth(Auth::decode(payload)?)),
+            AUTH_OK => Ok(Message::AuthOk(AuthOk::decode(payload)?)),
             PING => Ok(Message::Ping(Ping::decode(payload)?)),
             SESSION_INIT => Ok(Message::SessionInit(SessionOptions::decode(payload)?)),
             BYE => Ok(Message::Bye(Bye::decode(payload)?)),

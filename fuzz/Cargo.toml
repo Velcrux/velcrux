@@ -44,3 +44,10 @@ name = "cert_identity"
 path = "fuzz_targets/cert_identity.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "vbatch_decoder"
+path = "fuzz_targets/vbatch_decoder.rs"
+test = false
+doc = false
+

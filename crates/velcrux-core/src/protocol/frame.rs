@@ -242,13 +242,14 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame<'_>, ProtocolError> {
             limit: max,
         });
     }
-    let payload_len: usize = length
-        .try_into()
-        .map_err(|_| ProtocolError::FrameTooLarge {
+    let payload_len = length as usize;
+    let total_needed = header_len
+        .checked_add(payload_len)
+        .ok_or(ProtocolError::FrameTooLarge {
             declared: length,
             limit: max,
         })?;
-    if buf.len() < header_len + payload_len {
+    if buf.len() < total_needed {
         return Err(ProtocolError::Empty);
     }
 
@@ -263,7 +264,7 @@ pub fn decode_frame(buf: &[u8]) -> Result<Frame<'_>, ProtocolError> {
         buf[rid_off + 6],
         buf[rid_off + 7],
     ]);
-    let payload = &buf[header_len..header_len + payload_len];
+    let payload = &buf[header_len..total_needed];
 
     if version != PROTOCOL_VERSION {
         return Err(ProtocolError::VersionMismatch {

@@ -127,12 +127,15 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
         )));
     }
     let path_len_us = path_len as usize;
-    if buf.len() < offset + path_len_us {
+    let path_end = offset
+        .checked_add(path_len_us)
+        .ok_or_else(|| ProtocolError::Malformed("FILE_ENTRY: path offset overflow"))?;
+    if buf.len() < path_end {
         return Err(ProtocolError::Malformed("FILE_ENTRY: truncated path bytes"));
     }
-    let path_str = std::str::from_utf8(&buf[offset..offset + path_len_us])
+    let path_str = std::str::from_utf8(&buf[offset..path_end])
         .map_err(|_| ProtocolError::Malformed("FILE_ENTRY: path is not valid UTF-8"))?;
-    offset += path_len_us;
+    offset = path_end;
 
     // Receiver-side VPath validation (SECURITY.md §4)
     let path = VPath::validate(path_str).map_err(|e| {
@@ -141,7 +144,10 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
 
     // 3. Fixed size header: size (8), mode (4), mtime_sec (8), mtime_nsec (4), hash (32) = 56 bytes
     const FIXED_HDR_LEN: usize = 8 + 4 + 8 + 4 + 32;
-    if buf.len() < offset + FIXED_HDR_LEN {
+    let meta_end = offset
+        .checked_add(FIXED_HDR_LEN)
+        .ok_or_else(|| ProtocolError::Malformed("FILE_ENTRY: metadata offset overflow"))?;
+    if buf.len() < meta_end {
         return Err(ProtocolError::Malformed(
             "FILE_ENTRY: truncated metadata fields",
         ));
@@ -178,7 +184,9 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
         )));
     }
 
-    let mut chunks = Vec::with_capacity(chunk_count as usize);
+    // Bound pre-allocated capacity by buffer size to prevent memory exhaustion bombs
+    let cap = (chunk_count as usize).min(buf.len().saturating_sub(offset) / 2);
+    let mut chunks = Vec::with_capacity(cap);
     let mut running_sum: u64 = 0;
 
     for _ in 0..chunk_count {
@@ -209,14 +217,17 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
             let (target_len, c) = decode_varint(&buf[offset..])?;
             offset += c;
             let target_len_us = target_len as usize;
-            if buf.len() < offset + target_len_us {
+            let target_end = offset.checked_add(target_len_us).ok_or_else(|| {
+                ProtocolError::Malformed("FILE_ENTRY: symlink target offset overflow")
+            })?;
+            if buf.len() < target_end {
                 return Err(ProtocolError::Malformed(
                     "FILE_ENTRY: truncated symlink target",
                 ));
             }
-            let target_str = std::str::from_utf8(&buf[offset..offset + target_len_us])
+            let target_str = std::str::from_utf8(&buf[offset..target_end])
                 .map_err(|_| ProtocolError::Malformed("FILE_ENTRY: symlink target is not UTF-8"))?;
-            offset += target_len_us;
+            offset = target_end;
             Some(target_str.to_string())
         } else {
             None
@@ -230,16 +241,18 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
             let (target_len, c) = decode_varint(&buf[offset..])?;
             offset += c;
             let target_len_us = target_len as usize;
-            if buf.len() < offset + target_len_us {
+            let target_end = offset.checked_add(target_len_us).ok_or_else(|| {
+                ProtocolError::Malformed("FILE_ENTRY: hardlink target offset overflow")
+            })?;
+            if buf.len() < target_end {
                 return Err(ProtocolError::Malformed(
                     "FILE_ENTRY: truncated hardlink target",
                 ));
             }
-            let target_str =
-                std::str::from_utf8(&buf[offset..offset + target_len_us]).map_err(|_| {
-                    ProtocolError::Malformed("FILE_ENTRY: hardlink target is not UTF-8")
-                })?;
-            offset += target_len_us;
+            let target_str = std::str::from_utf8(&buf[offset..target_end]).map_err(|_| {
+                ProtocolError::Malformed("FILE_ENTRY: hardlink target is not UTF-8")
+            })?;
+            offset = target_end;
             Some(target_str.to_string())
         } else {
             None
@@ -277,17 +290,20 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
                 )));
             }
             let name_len_us = name_len as usize;
-            if buf.len() < offset + name_len_us {
+            let name_end = offset.checked_add(name_len_us).ok_or_else(|| {
+                ProtocolError::Malformed("FILE_ENTRY: xattr name offset overflow")
+            })?;
+            if buf.len() < name_end {
                 return Err(ProtocolError::Malformed("FILE_ENTRY: truncated xattr name"));
             }
-            let name_str = std::str::from_utf8(&buf[offset..offset + name_len_us])
+            let name_str = std::str::from_utf8(&buf[offset..name_end])
                 .map_err(|_| ProtocolError::Malformed("FILE_ENTRY: xattr name not valid UTF-8"))?;
             if name_str.is_empty() || name_str.chars().any(|c| c.is_control()) {
                 return Err(ProtocolError::InvalidManifest(format!(
                     "invalid xattr name: {name_str:?}"
                 )));
             }
-            offset += name_len_us;
+            offset = name_end;
 
             if offset >= buf.len() {
                 return Err(ProtocolError::Malformed(
@@ -302,13 +318,16 @@ pub fn decode_file_entry(buf: &[u8]) -> Result<(FileEntry, usize), ProtocolError
                 )));
             }
             let val_len_us = val_len as usize;
-            if buf.len() < offset + val_len_us {
+            let val_end = offset.checked_add(val_len_us).ok_or_else(|| {
+                ProtocolError::Malformed("FILE_ENTRY: xattr value offset overflow")
+            })?;
+            if buf.len() < val_end {
                 return Err(ProtocolError::Malformed(
                     "FILE_ENTRY: truncated xattr value",
                 ));
             }
-            let val_bytes = buf[offset..offset + val_len_us].to_vec();
-            offset += val_len_us;
+            let val_bytes = buf[offset..val_end].to_vec();
+            offset = val_end;
 
             total_xattr_bytes = total_xattr_bytes
                 .checked_add(name_len_us + val_len_us)
@@ -382,12 +401,15 @@ pub fn decode_chunk_desc(buf: &[u8]) -> Result<(ChunkDesc, usize), ProtocolError
     let hash = if flags.is_hole() {
         None
     } else {
-        if buf.len() < offset + 32 {
+        let hash_end = offset
+            .checked_add(32)
+            .ok_or_else(|| ProtocolError::Malformed("CHUNK_DESC: hash offset overflow"))?;
+        if buf.len() < hash_end {
             return Err(ProtocolError::Malformed("CHUNK_DESC: truncated hash"));
         }
-        let h = Hash::from_bytes(&buf[offset..offset + 32])
+        let h = Hash::from_bytes(&buf[offset..hash_end])
             .ok_or_else(|| ProtocolError::Malformed("CHUNK_DESC: invalid hash"))?;
-        offset += 32;
+        offset = hash_end;
         Some(h)
     };
 

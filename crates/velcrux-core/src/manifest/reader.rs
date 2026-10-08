@@ -183,7 +183,8 @@ impl ManifestBatchDecoder {
             )));
         }
 
-        let mut entries = Vec::with_capacity(batch.entry_count as usize);
+        let cap = (batch.entry_count as usize).min(decompressed.len() / 2);
+        let mut entries = Vec::with_capacity(cap);
         let mut cursor = 0;
 
         for _ in 0..batch.entry_count {

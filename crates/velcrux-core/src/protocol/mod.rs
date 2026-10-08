@@ -15,6 +15,7 @@ pub mod capabilities;
 pub mod compression;
 pub mod error;
 pub mod frame;
+pub mod fuzzing;
 pub mod limits;
 pub mod message;
 pub mod varint;
@@ -28,13 +29,17 @@ pub use frame::{
     DataFrame, DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags,
     DATA_FRAME_HEADER_LEN, DATA_MAX_CHUNK_LEN, DATA_PREAMBLE_LEN, FRAME_HEADER_LEN,
 };
+pub use fuzzing::{assert_decoder_panic_free, assert_no_panic, FuzzMutator};
 pub use limits::*;
 pub use message::{
-    Bye, Commit, Committed, Hello, HelloAck, Limits, ManifestBatch, ManifestBegin, ManifestEnd,
-    Message, Ping, Pong, SessionInit, SessionOptions, TransferBegin, TransferCreate,
-    TransferCreated, TransferOp, TransferPlan, Verify, VerifyResult, AGENT, BYE, COMMIT, COMMITTED,
-    ERROR, HELLO, HELLO_ACK, MANIFEST_BATCH, MANIFEST_BEGIN, MANIFEST_END, PING, PONG,
-    SESSION_INIT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN, VERIFY,
+    Auth, AuthOk, Bye, Cancel, Checkpoint, ChunkQuery, ChunkResponse, Commit, Committed, ErrorMsg,
+    Hello, HelloAck, InventoryHint, Limits, ListQuery, ListResult, ManifestBatch, ManifestBegin,
+    ManifestEnd, Message, Ping, Pong, Resume, ResumeState, SessionInit, SessionOptions, StatQuery,
+    StatResult, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan, Verify,
+    VerifyResult, AGENT, AUTH, AUTH_OK, BYE, CANCEL, CHECKPOINT, CHUNK_QUERY, CHUNK_RESPONSE,
+    COMMIT, COMMITTED, ERROR, HELLO, HELLO_ACK, INVENTORY_HINT, LIST, LIST_RESULT, MANIFEST_BATCH,
+    MANIFEST_BEGIN, MANIFEST_END, PING, PONG, RESUME, RESUME_STATE, SESSION_INIT, STAT,
+    STAT_RESULT, TRANSFER_BEGIN, TRANSFER_CREATE, TRANSFER_CREATED, TRANSFER_PLAN, VERIFY,
     VERIFY_RESULT,
 };
 pub use varint::{decode_varint, encode_varint, varint_len};

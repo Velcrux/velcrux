@@ -22,8 +22,8 @@ pub const fn varint_len(value: u64) -> usize {
         0x1000_0000..=0x7_FFFF_FFFF => 5,
         0x8_0000_0000..=0x3FF_FFFF_FFFF => 6,
         0x400_0000_0000..=0x1_FFFF_FFFF_FFFF => 7,
-        0x2_0000_0000_0000..=0xF_FFFF_FFFF_FFFF => 8,
-        0x10_0000_0000_0000..=0x7FF_FFFF_FFFF_FFFF => 9,
+        0x2_0000_0000_0000..=0xFF_FFFF_FFFF_FFFF => 8,
+        0x100_0000_0000_0000..=0x7FFF_FFFF_FFFF_FFFF => 9,
         _ => 10,
     }
 }

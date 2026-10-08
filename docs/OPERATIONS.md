@@ -642,5 +642,50 @@ python3 scripts/bench-report.py benches/results
 - **Speedup Factor**: Relative speedup compared to legacy un-chunked TCP streaming under identical RTT and packet loss conditions ($\text{Duration}_{\text{TCP}} / \text{Duration}_{\text{Velcrux}}$).
 - **Peak RSS**: Peak working set memory. In accordance with `CLAUDE.md` §1 invariant #3, memory consumption remains strictly bounded (≤ 48 MiB) regardless of whether transferring 100 MB, 10 GB, or 1 TB.
 
+## 20. Protocol Fuzzing Suite, Parser Security Hardening & Zero-Panic Invariants
 
+Velcrux enforces parser security hardening and continuous fuzzing across all untrusted wire and manifest boundaries (`REQUIREMENTS.md` §49, §50, §22, `CLAUDE.md` §1 invariant #5). Because Velcrux daemons and agents process untrusted network packets from potentially adversarial network endpoints, all binary parsers are architected as pure functions over immutable byte slices (`&[u8]`) and are continuously audited for panic-free, bounded-memory execution.
 
+### Parser Security Principles
+
+1. **Strict `#![forbid(unsafe_code)]`**:
+   - Zero `unsafe` blocks across all protocol codecs, framing engines, message decoders, manifest processors, and sync container extractors.
+2. **Zero Panic Guarantee**:
+   - Every decoder is guaranteed to return `Result<T, ProtocolError>` and must NEVER panic or abort, regardless of corrupted bytes, truncated streams, invalid UTF-8, out-of-order varints, or malicious headers.
+3. **Integer Overflow & Slice Bounds Hardening**:
+   - All slice offsets and buffer range calculations use `checked_add` and `checked_mul`. Calculations that would wrap `usize` or `u64` are caught immediately, returning `ProtocolError::Malformed` or `ProtocolError::FrameTooLarge`.
+4. **Defense Against Pre-Allocation Memory Exhaustion**:
+   - Decoders that unpack sequences (such as `ListResult`, `ManifestBatchDecoder`, and `FileEntry::decode`) never pre-allocate `Vec::with_capacity(declared_count)` directly from untrusted count headers. Capacities are clamped to `buffer.len() / min_element_size`, preventing memory exhaustion bombs from tiny payload inputs.
+5. **Canonical LEB128 Varint Encoding**:
+   - All varint decoders enforce minimal byte length canonicality, rejecting over-long or padded encodings (`ProtocolError::NonCanonicalVarint`) to prevent payload smuggling or signature evasion.
+
+### Running Protocol Fuzzing
+
+#### Automated Multi-Suite Runner
+To execute the comprehensive in-process protocol fuzzing suite, live server actor fuzzer, and seed corpus boundary matrix:
+```bash
+./scripts/fuzz.sh
+```
+
+#### Running Specific In-Process Test Suites
+```bash
+# In-process deterministic property-based fuzzer (100,000+ iterations across all 26+ message decoders, frame decoders, and sync primitives)
+cargo test -p velcrux-core --test protocol_fuzzing -- --nocapture
+
+# Live ServerConn connection and actor stream fuzzer (adversarial streams, truncated handshakes, oversized declarations)
+cargo test -p velcrux-server --test server_fuzzing -- --nocapture
+
+# Committed seed corpus and adversarial boundary matrix
+cargo test -p velcrux-server --test fuzz_corpus -- --nocapture
+```
+
+#### Continuous Coverage-Guided libFuzzer Execution
+When `cargo-fuzz` is installed on developer or CI workstations, coverage-guided LLVM libFuzzer engines can be executed across all six fuzzing targets (`frame_decoder`, `manifest_decoder`, `path_validator`, `config_parser`, `cert_identity`, `vbatch_decoder`):
+```bash
+# Run 30 seconds per target:
+./scripts/fuzz.sh --libfuzzer 30
+
+# Or execute an individual target directly:
+cd fuzz
+cargo fuzz run frame_decoder -- -max_total_time=60
+```
