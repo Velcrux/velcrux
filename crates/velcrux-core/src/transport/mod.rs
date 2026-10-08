@@ -7,17 +7,26 @@
 //! The trait surface mirrors `ARCHITECTURE.md` §2 so higher layers do not
 //! depend on quinn types.
 
+pub mod benchmarks;
 pub mod flow_control;
 pub mod identity;
+pub mod impairment;
 pub mod interface;
 pub mod quic;
 pub mod stats;
 
+pub use benchmarks::{
+    BaselineComparator, BenchmarkMetrics, BenchmarkScenario, WanMatrixReport, WanMatrixRunner,
+};
 pub use flow_control::{
     AdaptiveFlowController, BdpEstimator, PacingController, DEFAULT_BDP_MULTIPLIER,
     MAX_RECEIVE_WINDOW, MIN_RECEIVE_WINDOW,
 };
 pub use identity::Identity;
+pub use impairment::{
+    DeterministicLossPrng, ImpairedChannel, ImpairedRecvStream, ImpairedSendStream,
+    ImpairmentProfile, ImpairmentStats, ImpairmentStatsSnapshot, TokenBucket,
+};
 pub use interface::{find_interface, list_interfaces, resolve_bind_addr, InterfaceInfo};
 pub use quic::{
     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,

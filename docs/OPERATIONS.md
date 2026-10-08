@@ -590,4 +590,57 @@ VELCRUX_STORAGE_BACKEND=memory velcruxd --config /etc/velcrux/server.toml
 - **Same-Filesystem Check Exemption**: The physical same-device check between `storage.root` and `storage.staging` (Section 2) is automatically bypassed when `backend = "memory"`, allowing arbitrary virtual path roots.
 - **Content-Addressed Deduplication**: `MemoryStorageBackend` includes a built-in content-addressed chunk store supporting chunk caching, dedup indexing, and hash-based retrieval.
 
+## 19. WAN Impairment Simulation & Multi-Protocol Benchmark Suite
+
+Velcrux includes an automated, in-process WAN impairment simulation and multi-protocol benchmarking harness (`REQUIREMENTS.md` §45–§48, §91, §92). It allows operators and CI pipelines to benchmark high-latency, packet-lossy, and bandwidth-constrained WAN links deterministically on macOS and Linux without requiring root permissions or Linux network namespaces.
+
+### Link Impairment Matrix Parameters
+
+Link profiles (`ImpairmentProfile`) simulate combinations of real-world WAN topologies:
+
+| Profile Name | Round-Trip Latency (RTT) | Loss Rate | Bandwidth Limit | Simulated Environment |
+| :--- | :--- | :--- | :--- | :--- |
+| **LAN / Local DC** | 1 ms | 0.0% | 10 Gbps | Low-latency local NVMe data center |
+| **Metro WAN** | 20 ms | 0.1% | 1 Gbps | Urban regional interconnect / cross-town fiber |
+| **Regional WAN** | 50 ms | 0.1% | 1 Gbps | Inter-state data center WAN |
+| **Transcontinental WAN** | 100 ms | 0.5% | 1 Gbps | Coast-to-coast long haul (e.g. NYC to SFO) |
+| **Cross-Pacific 10G (§48)**| 150 ms | 0.5% | 10 Gbps | Subsea trans-oceanic link (US to Tokyo / Sydney) |
+| **Intercontinental WAN** | 200 ms | 1.0% | 1 Gbps | Europe to Asia-Pacific route |
+| **Satellite Link** | 300 ms | 2.0% | 100 Mbps | GEO satellite / remote edge deployment |
+| **Hostile WAN** | 200 ms | 5.0% | 100 Mbps | High-loss, congested wireless / tactical network |
+
+### Running the Matrix Benchmarks
+
+#### Automated Shell Runner
+```bash
+# Execute automated WAN impairment matrix and print formatted comparative table
+./scripts/netsim.sh matrix
+
+# Output is stored in:
+# - benches/results/wan_matrix_latest_report.json (machine-readable)
+# - benches/results/wan_matrix_latest_report.md   (GitHub markdown table)
+```
+
+#### In-Process Rust Test Suite
+```bash
+# Run WAN matrix sweep and report generation tests
+cargo test -p velcrux-server --test server_wan_matrix -- --nocapture
+
+# Run the flagship §48 benchmark scenario directly
+cargo test -p velcrux-server --test server_wan_matrix -- test_scenario_48_flagship_wan_benchmark --nocapture
+```
+
+### Inspecting Benchmark Reports
+The generated benchmark results can be analyzed using `scripts/bench-report.py`:
+```bash
+python3 scripts/bench-report.py benches/results
+```
+
+### Interpreting Metrics
+- **Goodput (Mbps)**: Effective logical transfer speed ($8 \times \text{File Size} / \text{Duration}$). For delta transfers with 99% match, goodput can exceed physical wire link speed by tens of gigabits per second.
+- **Wire Efficiency (%)**: Percentage of transfer data saved through CDC chunk reuse and delta reconciliation ($(\text{Avoided Bytes} / \text{File Size}) \times 100\%$).
+- **Speedup Factor**: Relative speedup compared to legacy un-chunked TCP streaming under identical RTT and packet loss conditions ($\text{Duration}_{\text{TCP}} / \text{Duration}_{\text{Velcrux}}$).
+- **Peak RSS**: Peak working set memory. In accordance with `CLAUDE.md` §1 invariant #3, memory consumption remains strictly bounded (≤ 48 MiB) regardless of whether transferring 100 MB, 10 GB, or 1 TB.
+
+
 

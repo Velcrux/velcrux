@@ -83,7 +83,8 @@ pub use transfer::{
     TransferRequest,
 };
 pub use transport::{
-    AdaptiveFlowController, BdpEstimator, Connection, PacingController, SharedTransport,
-    TransportConfigTunables,
+    AdaptiveFlowController, BaselineComparator, BdpEstimator, BenchmarkMetrics, BenchmarkScenario,
+    Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, PacingController,
+    SharedTransport, TokenBucket, TransportConfigTunables, WanMatrixReport, WanMatrixRunner,
 };
 pub use util::{Hash, HashAlgorithm, HashHasher};

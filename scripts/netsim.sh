@@ -32,6 +32,7 @@ Usage: $0 [command] [options]
 Commands:
   run       Run a specific network simulation scenario
   ci        Run fast CI-tier WAN impairment verification
+  matrix    Run automated WAN latency/loss matrix benchmark & comparative report
   nightly   Run nightly high-latency multi-run matrix
   release   Run full hardware release benchmark matrix
   status    Check network namespace and netem status
@@ -222,6 +223,13 @@ case "${CMD}" in
         else
             run_simulation_fallback "Non-root or macOS environment; skipping Linux netns per DEVELOPMENT.md §1."
         fi
+        ;;
+    matrix)
+        echo "==> Running automated WAN latency/loss matrix benchmark & comparative report..."
+        cd "${REPO_ROOT}"
+        cargo test -p velcrux-server --test server_wan_matrix -- test_wan_matrix_json_and_markdown_report_emission --nocapture
+        echo "==> Emitted benchmark reports to ${RESULTS_DIR}"
+        python3 "${SCRIPT_DIR}/bench-report.py" "${RESULTS_DIR}"
         ;;
     nightly)
         echo "==> Running Nightly WAN impairment matrix (DEVELOPMENT.md §7)..."

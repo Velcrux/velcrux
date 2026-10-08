@@ -59,6 +59,22 @@ def main():
     print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
     for fname, data in records:
+        if "results" in data and isinstance(data["results"], list):
+            for item in data["results"]:
+                scen = item.get("scenario", "unknown")
+                rtt = f"{item.get('rtt_ms', 0)}ms"
+                loss = f"{item.get('loss_pct', 0.0):.1f}%"
+                bw = f"{item.get('bandwidth_mbps', 0)}Mbps"
+                streams = 1
+                wire_bytes = format_bytes(item.get("wire_bytes", 0))
+                avoided_bytes = format_bytes(item.get("avoided_bytes", 0))
+                duration = f"{item.get('duration_secs', 0.0):.2f} s"
+                goodput = f"{item.get('goodput_mbps', 0.0):.1f} Mbps"
+                efficiency = f"{item.get('efficiency_pct', 0.0):.1f}%"
+                bdp = format_bytes(384 * 1024 * 1024)
+                print(f"| `{scen}` | {rtt} | {loss} | {bw} | {streams} | {wire_bytes} | {avoided_bytes} | {duration} | **{goodput}** | {efficiency} | {bdp} |")
+            continue
+
         scen = data.get("scenario", "unknown")
         params = data.get("parameters", {})
         metrics = data.get("metrics", {})
