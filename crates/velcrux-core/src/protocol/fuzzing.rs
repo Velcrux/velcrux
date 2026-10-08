@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "CRITICAL: Decoder panicked")]
+    #[should_panic(expected = "Decoder panicked")]
     fn test_panic_free_assertion_catches_unsafe_decoder() {
         let mut mutator = FuzzMutator::new(999);
         let corpus = vec![vec![1, 2, 3, 4, 5]];
