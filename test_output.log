@@ -1,0 +1,389 @@
+[1m[92m   Compiling[0m velcrux-core v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-core)
+[1m[92m   Compiling[0m velcrux-server v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-server)
+[1m[92m   Compiling[0m velcrux-client v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-client)
+[1m[33mwarning[0m[1m: unused import: `std::path::PathBuf`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m2_roundtrip.rs:25:5
+   [1m[94m|[0m
+[1m[94m25[0m [1m[94m|[0m use std::path::PathBuf;
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unused import: `QuicTransport`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:23:52
+   [1m[94m|[0m
+[1m[94m23[0m [1m[94m|[0m     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,
+   [1m[94m|[0m                                                    [1m[33m^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: function `wrap_64` is never used[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:63:4
+   [1m[94m|[0m
+[1m[94m63[0m [1m[94m|[0m fn wrap_64(s: &str) -> Vec<String> {
+   [1m[94m|[0m    [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: field `key_der` is never read[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:75:5
+   [1m[94m|[0m
+[1m[94m73[0m [1m[94m|[0m struct DevCa {
+   [1m[94m|[0m        [1m[94m-----[0m [1m[94mfield in this struct[0m
+[1m[94m74[0m [1m[94m|[0m     cert_pem: String,
+[1m[94m75[0m [1m[94m|[0m     key_der: Vec<u8>,
+   [1m[94m|[0m     [1m[33m^^^^^^^[0m
+
+[1m[33mwarning[0m: `velcrux-core` (test "m2_roundtrip") generated 1 warning (run `cargo fix --test "m2_roundtrip" -p velcrux-core` to apply 1 suggestion)
+[1m[33mwarning[0m: `velcrux-core` (test "hello_roundtrip") generated 3 warnings (run `cargo fix --test "hello_roundtrip" -p velcrux-core` to apply 1 suggestion)
+[1m[33mwarning[0m[1m: unused import: `tokio::time::timeout`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m3_resume.rs:29:5
+   [1m[94m|[0m
+[1m[94m29[0m [1m[94m|[0m use tokio::time::timeout;
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unused import: `Bye as ByeMsg`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m3_resume.rs:38:5
+   [1m[94m|[0m
+[1m[94m38[0m [1m[94m|[0m     Bye as ByeMsg, Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message,
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `velcrux-core` (test "m3_resume") generated 2 warnings (run `cargo fix --test "m3_resume" -p velcrux-core` to apply 2 suggestions)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 50.71s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/velcrux-ea107be8ef63fe2c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/cli_dedup.rs (target/debug/deps/cli_dedup-26ba0f3a3244dbc4)
+
+running 1 test
+[2m2026-10-08T09:20:42.543996Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m connecting [3maddr[0m[2m=[0m127.0.0.1:49734 [3msni[0m[2m=[0mlocalhost [3mpath[0m[2m=[0m"/file_a.bin"
+[2m2026-10-08T09:20:42.552388Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-08T09:20:42.553974Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-08T09:20:42.555031Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-08T09:20:42.555083Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-08T09:20:42.555461Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-08T09:20:42.555473Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mtestclient
+[2m2026-10-08T09:20:42.555480Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m HELLO_ACK [3mversion[0m[2m=[0m1
+[01M4DD182DNP9ZGE606HMW9CNE] 512.00 KB / 512.00 KB (100.0%) — 30.15 MB/s
+transfer_id: 01M4DD182DNP9ZGE606HMW9CNE
+upload: committed 524288 bytes (transferred 524288 bytes); server hash matches: true
+[2m2026-10-08T09:20:42.950370Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m connecting [3maddr[0m[2m=[0m127.0.0.1:49734 [3msni[0m[2m=[0mlocalhost [3mpath[0m[2m=[0m"/file_b.bin"
+[2m2026-10-08T09:20:42.953698Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-08T09:20:42.953745Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-08T09:20:42.954798Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-08T09:20:42.954920Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-08T09:20:42.955703Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-08T09:20:42.955714Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mtestclient
+[2m2026-10-08T09:20:42.955721Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m HELLO_ACK [3mversion[0m[2m=[0m1
+[01M4DD18ECKM05DD7C7VHZM5Y1] 512.00 KB / 512.00 KB (100.0%) — 34.80 MB/s
+transfer_id: 01M4DD18ECKM05DD7C7VHZM5Y1
+download: committed to "/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpTuLvVK/downloaded_file_b.bin", hash 0000000000000000000000000000000000000000000000000000000000000000
+test test_network_chunk_store_deduplication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+[1m[92m     Running[0m tests/cli_delta.rs (target/debug/deps/cli_delta-33f74b30f1aeb2ad)
+
+running 2 tests
+test test_delta_download_transfers_only_delta ... ok
+test test_delta_upload_transfers_only_delta ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+[1m[92m     Running[0m tests/cli_e2e.rs (target/debug/deps/cli_e2e-0f8a60f0c01bb81b)
+
+running 2 tests
+test test_client_config_file_cli ... ok
+server state_store.get_transfer for 01M4DD195CG4H789B4HHXN5NXT: Ok(TransferRecord { transfer_id: TransferId(01M4DD195CG4H789B4HHXN5NXT), idempotency_key: "01M4DD195CP3N295AX88JCCC5A", role: Server, direction: Upload, status: Committed, remote_path: "data/uploaded.bin", local_path: "", file_size: 1048618, file_hash: Hash(4b6b662c35713662c54aeccafcd44b2e8ee161b65bd011348aee3528cf833701), verified_up_to: 1048618, last_checkpoint_ms: 1791451243734, bytes_completed: 1048618, staging_relpath: "01M4DD195CG4H789B4HHXN5NXT/data/uploaded.bin", created_ms: 1791451243693, updated_ms: 1791451243765 })
+test test_cli_e2e_full_flow ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+[1m[92m     Running[0m tests/cli_parallel.rs (target/debug/deps/cli_parallel-1f868ba5e86936d9)
+
+running 1 test
+test test_cli_multi_stream_parallel_transfer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
+
+[1m[92m     Running[0m tests/cli_ratelimit.rs (target/debug/deps/cli_ratelimit-4901c090fe24ea50)
+
+running 1 test
+test test_cli_bandwidth_rate_limiting ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.74s
+
+[1m[92m     Running[0m tests/cli_sync.rs (target/debug/deps/cli_sync-2acad77e7a640e27)
+
+running 11 tests
+test test_cli_bind_flags ... ok
+test test_cli_direct_io_flags ... ok
+test test_cli_batch_small_files_flags ... ok
+test test_cli_priority_and_concurrency_flags ... ok
+test test_cli_network_sync_download_and_json ... ok
+test test_cli_sync_cdc_and_dedup ... ok
+--- CLI Dry-Run Output ---
+Files unchanged:                1
+Files modified:                 1
+Files added:                    1
+Files deleted:                  1
+
+Data already present:        14 B
+Data to transfer:            33 B
+Estimated reduction:        29.8%
+Batched: 2 small files in 1 streaming containers (1 roundtrips saved)
+
+test test_cli_sync_dry_run ... ok
+test test_cli_sync_full_execute_and_delete_modes ... ok
+test test_cli_sync_mode_flags ... ok
+test test_cli_sync_posix_metadata_and_symlinks ... ok
+test test_cli_network_sync_dry_run_and_upload ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/velcrux_core-aebf95c5a34b9507)
+
+running 217 tests
+test auth::crl::tests::test_crl_store_manual_serials ... ok
+test auth::pubkey::tests::test_channel_bound_auth_token_roundtrip ... ok
+test auth::crl::tests::test_crl_pem_der_parsing_with_rcgen ... ok
+test auth::pubkey::tests::test_authorized_keys_parsing_and_authentication ... ok
+test auth::tests::cross_identity_isolation ... ok
+test auth::tests::component_boundary_matching ... ok
+test auth::tests::admin_does_not_imply_transfer_perms ... ok
+test auth::tests::deny_by_default ... ok
+test auth::tests::granted_permissions_empty_unknown ... ok
+test auth::tests::granted_permission_allows ... ok
+test auth::tests::granted_permissions_union ... ok
+test auth::tests::longest_prefix_wins ... ok
+test auth::tests::missing_permission_denies ... ok
+test auth::tests::mtls_authenticator_passes_through ... ok
+test auth::tests::path_validation_rejects_absolute ... ok
+test auth::tests::path_validation_rejects_traversal ... ok
+test auth::tests::whole_root_grant ... ok
+test chunking::fastcdc::tests::test_fastcdc_exact_reconstruction ... ok
+test chunking::fastcdc::tests::test_gear_64_deterministic ... ok
+test chunking::tests::boundary_stability_under_prefix_insertion ... ok
+test auth::tests::toml_unknown_permission_fails ... ok
+test auth::tests::toml_invalid_grant_path_fails ... ok
+test chunking::tests::chunk_engine_reader_streaming ... ok
+test chunking::tests::create_chunker_factory ... ok
+test chunking::tests::double_finish_is_an_error ... ok
+test chunking::tests::empty_input_yields_zero_chunks ... ok
+test chunking::tests::empty_input_yields_zero_chunks_fixed ... ok
+test chunking::tests::fixed_chunker_arbitrary_buffer_slicing ... ok
+test chunking::tests::gear_table_is_a_permutation ... ok
+test chunking::tests::params_fixed_constructor_and_helpers ... ok
+test chunking::tests::params_validation ... ok
+test chunking::tests::push_after_finish_is_an_error ... ok
+test chunking::tests::reuse_stats_calculation ... ok
+test chunking::tests::concatenation_reproduces_input_rolling ... ok
+test chunking::tests::rolling_chunker_respects_min ... ok
+test chunking::tests::test_chunk_reader_sparse_hole_detection ... ok
+test chunking::tests::test_is_all_zeros ... ok
+test manifest::codec::tests::directory_entry_roundtrip ... ok
+test manifest::codec::tests::file_entry_roundtrip ... ok
+test manifest::codec::tests::file_entry_xattrs_roundtrip ... ok
+test manifest::codec::tests::hardlink_entry_roundtrip ... ok
+test manifest::codec::tests::reject_traversal_path ... ok
+test manifest::codec::tests::symlink_entry_roundtrip ... ok
+test manifest::tests::batch_decoder_roundtrip ... ok
+test manifest::tests::tampered_manifest_hash_is_rejected ... ok
+test chunking::tests::concatenation_reproduces_input_fixed ... ok
+test protocol::capabilities::tests::intersect_basic ... ok
+test protocol::capabilities::tests::intersection_must_have_blake3 ... ok
+test protocol::capabilities::tests::intersection_must_have_chunking ... ok
+test protocol::capabilities::tests::reserved_bits_masked_on_wire ... ok
+test protocol::compression::tests::test_compress_if_beneficial ... ok
+test protocol::compression::tests::test_compression_roundtrip ... ok
+test protocol::compression::tests::test_decompression_bomb_ratio_limit ... ok
+test protocol::compression::tests::test_decompression_bomb_size_limit ... ok
+test protocol::compression::tests::test_invalid_and_corrupt_payload ... ok
+test protocol::error::tests::detail_is_truncated ... ok
+test protocol::error::tests::not_found_and_denied_share_detail ... ok
+test protocol::error::tests::retryability_table ... ok
+test protocol::error::tests::roundtrip_codes ... ok
+test protocol::error::tests::unknown_code_falls_back ... ok
+test protocol::frame::tests::data_frame_compressed_roundtrip ... ok
+test protocol::frame::tests::data_frame_rejects_oversized_chunk_len ... ok
+test protocol::frame::tests::data_frame_rejects_reserved_bits ... ok
+test protocol::frame::tests::data_frame_roundtrip ... ok
+test protocol::frame::tests::data_preamble_rejects_truncated ... ok
+test protocol::frame::tests::data_preamble_roundtrip ... ok
+test protocol::frame::tests::empty_payload_roundtrip ... ok
+test protocol::frame::tests::flags_roundtrip ... ok
+test protocol::frame::tests::rejects_oversized_length ... ok
+test protocol::frame::tests::rejects_truncated_buffer ... ok
+test protocol::frame::tests::rejects_version_mismatch ... ok
+test protocol::frame::tests::small_payload_roundtrip ... ok
+test protocol::fuzzing::tests::test_mutator_determinism_and_operations ... ok
+
+thread 'protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder' (13747) panicked at crates/velcrux-core/src/protocol/fuzzing.rs:278:17:
+boom: unhandled byte 0xFF
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder' (13747) panicked at crates/velcrux-core/src/protocol/fuzzing.rs:200:9:
+Decoder panicked on single byte 0xff
+test protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder - should panic ... FAILED
+test protocol::fuzzing::tests::test_panic_free_assertion_with_safe_decoder ... ok
+test protocol::limits::tests::raven_protocol_constants ... ok
+test protocol::message::tests::bye_roundtrip ... ok
+test protocol::message::tests::cancel_roundtrip ... ok
+test protocol::message::tests::checkpoint_rejects_non_monotonic ... ok
+test protocol::message::tests::checkpoint_roundtrip ... ok
+test protocol::message::tests::commit_roundtrip ... ok
+test protocol::message::tests::committed_roundtrip ... ok
+test protocol::message::tests::delta_messages_roundtrip ... ok
+test protocol::message::tests::error_roundtrip ... ok
+test protocol::message::tests::hello_ack_roundtrip ... ok
+test protocol::message::tests::hello_roundtrip ... ok
+test protocol::message::tests::list_query_roundtrip ... ok
+test protocol::message::tests::list_result_roundtrip ... ok
+test protocol::message::tests::manifest_messages_roundtrip ... ok
+test protocol::message::tests::message_enum_full_roundtrip ... ok
+test protocol::message::tests::message_enum_hello_roundtrip ... ok
+test protocol::message::tests::message_enum_routes_all_m2_variants ... ok
+test protocol::message::tests::ping_roundtrip ... ok
+test protocol::message::tests::rejects_overlong_agent ... ok
+test protocol::message::tests::rejects_truncated_hello ... ok
+test protocol::message::tests::resume_roundtrip ... ok
+test protocol::message::tests::resume_state_roundtrip ... ok
+test protocol::message::tests::session_init_roundtrip ... ok
+test protocol::message::tests::stat_query_roundtrip ... ok
+test protocol::message::tests::stat_result_roundtrip ... ok
+test protocol::message::tests::transfer_begin_roundtrip ... ok
+test protocol::message::tests::transfer_create_rejects_truncated ... ok
+test protocol::message::tests::transfer_create_roundtrip ... ok
+test protocol::message::tests::transfer_created_roundtrip ... ok
+test protocol::message::tests::transfer_op_roundtrip ... ok
+test protocol::message::tests::transfer_plan_roundtrip ... ok
+test protocol::message::tests::verify_result_roundtrip ... ok
+test protocol::message::tests::verify_roundtrip ... ok
+test protocol::varint::tests::max_u64_roundtrip ... ok
+test protocol::varint::tests::rejects_non_canonical ... ok
+test protocol::varint::tests::rejects_overflow ... ok
+test protocol::varint::tests::rejects_truncated ... ok
+test protocol::varint::tests::small_roundtrip ... ok
+test protocol::varint::tests::zero_roundtrip ... ok
+test state::bitmap::tests::bytes_completed_saturates ... ok
+test state::bitmap::tests::encode_rejects_oversized_set ... ok
+test state::bitmap::tests::first_missing_from ... ok
+test state::bitmap::tests::mark_complete_idempotent ... ok
+test state::bitmap::tests::missing_count_bounded_by_total ... ok
+test state::bitmap::tests::reject_duplicate_indices ... ok
+test state::bitmap::tests::reject_non_monotonic ... ok
+test state::bitmap::tests::reject_oversized_count ... ok
+test state::bitmap::tests::reject_truncated ... ok
+test state::bitmap::tests::roundtrip_empty ... ok
+test state::bitmap::tests::roundtrip_sparse ... ok
+test state::mock::tests::bitmap_roundtrip ... ok
+test state::mock::tests::delete_transfer_removes_everything ... ok
+test state::mock::tests::journal_recovery_split ... ok
+test state::mock::tests::update_not_found ... ok
+test state::mock::tests::upsert_inserts_then_reuses ... ok
+test state::mock::tests::upsert_rejects_mismatched_retry ... ok
+test state::sqlite::tests::bitmap_replace_is_whole ... ok
+test state::sqlite::tests::bitmap_roundtrip_through_sqlite ... ok
+test state::sqlite::tests::delete_cascades_to_bitmap_and_journal ... ok
+test state::sqlite::tests::journal_recovery_split ... ok
+test state::sqlite::tests::list_by_path_filters_and_orders ... ok
+test state::sqlite::tests::new_creates_db_at_absolute_path ... ok
+test state::sqlite::tests::new_rejects_relative_path ... ok
+test state::sqlite::tests::state_survives_drop_and_reopen ... ok
+test state::sqlite::tests::upsert_rejects_mismatched_retry ... ok
+test state::sqlite::tests::upsert_reuses_idempotency_key ... ok
+test manifest::tests::writer_reader_roundtrip ... ok
+test state::sqlite::tests::upsert_then_get_by_id ... ok
+test storage::chunk_store::tests::chunk_store_rejects_checksum_mismatch ... ok
+test storage::chunk_store::tests::chunk_store_put_get_has ... ok
+test storage::gc::tests::test_gc_staging_orphans ... ok
+test storage::sparse::tests::test_create_sparse_file ... ok
+test storage::sparse::tests::test_detect_extents_interleaved ... ok
+test storage::sparse::tests::test_is_zero_slice ... ok
+test storage::tests::local_backend_commit_replaces_existing ... ok
+test storage::tests::local_backend_round_trip ... ok
+test storage::tests::local_backend_symlink_and_hardlink_creation ... ok
+test storage::tests::vpath_validate_accepts_simple ... ok
+test storage::tests::vpath_validate_rejects_absolute_and_empty ... ok
+test storage::tests::vpath_validate_rejects_null_and_control ... ok
+test storage::tests::vpath_validate_rejects_overlong_component ... ok
+test storage::gc::tests::test_gc_chunk_store_unreferenced ... ok
+test storage::tests::vpath_validate_rejects_traversal ... ok
+test storage::tests::vpath_validate_rejects_overlong_total ... ok
+test storage::tests::vpath_validate_symlink_target_contained ... ok
+test storage::tests::vpath_validate_symlink_target_escapes_rejected ... ok
+test sync::bloom::tests::bloom_roundtrip_and_query ... ok
+test sync::directory::tests::test_diff_manifest_readers_streaming_reconciliation ... ok
+test sync::directory::tests::test_format_display ... ok
+test sync::directory::tests::test_plan_directory_diff_reconciliation ... ok
+test sync::directory::tests::test_plan_directory_diff_symlinks_and_hardlinks ... ok
+test sync::estimator::tests::estimator_high_reuse_selects_delta ... ok
+test sync::estimator::tests::estimator_matches_skips ... ok
+test sync::estimator::tests::estimator_small_file_prefers_full ... ok
+test sync::bloom::tests::bloom_false_positive_rate ... ok
+test sync::reconstruct::tests::reconstruct_corruption_aborts_and_cleans_up ... ok
+test sync::inventory::tests::inventory_from_file ... ok
+test sync::reconstruct::tests::reconstruct_hybrid_local_and_wire ... ok
+test sync::rle::tests::rle_empty ... ok
+test sync::rle::tests::rle_roundtrip_various_patterns ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_errors ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_plain ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_units ... ok
+test sync::reconstruct::tests::reconstruct_sparse_file_with_holes ... ok
+test chunking::tests::rolling_chunker_is_bounded_by_max ... ok
+test transfer::rate_limit::tests::test_rate_limiter_unlimited ... ok
+test transport::benchmarks::tests::test_scenario_48_flagship_requirements ... ok
+test transport::benchmarks::tests::test_wan_matrix_report_generation ... ok
+test transport::flow_control::tests::test_adaptive_flow_controller_dispatch_gating ... ok
+test transport::flow_control::tests::test_bdp_estimator_lan_wan_profiles ... ok
+test transport::flow_control::tests::test_optimal_concurrency_calculation ... ok
+test transport::flow_control::tests::test_pacing_controller ... ok
+test transport::impairment::tests::test_deterministic_loss_prng ... ok
+test transport::impairment::tests::test_impaired_channel_queue_and_loss ... ok
+test transport::impairment::tests::test_impairment_profile_bdp_calculations ... ok
+test transport::impairment::tests::test_token_bucket_rate_limiter ... ok
+test transport::quic::tests::empty_chain_is_rejected ... ok
+test transport::quic::tests::falls_back_to_common_name ... ok
+test transport::quic::tests::non_velcrux_san_uri_falls_back_to_cn ... ok
+test transport::quic::tests::san_uri_identity_wins_over_cn ... ok
+test transport::quic::tests::single_cert_chain_issuer_equals_leaf_fingerprint ... ok
+test transport::quic::tests::validate_identity_name_accepts_reasonable ... ok
+test transport::quic::tests::validate_identity_name_rejects_control_chars ... ok
+test transport::quic::tests::validate_identity_name_rejects_empty ... ok
+test transport::quic::tests::validate_identity_name_rejects_oversize ... ok
+test util::hash::tests::algo_name_is_stable ... ok
+test util::hash::tests::display_is_64_hex_chars ... ok
+test util::hash::tests::from_bytes_rejects_wrong_length ... ok
+test util::hash::tests::from_bytes_roundtrip ... ok
+test util::hash::tests::hash_of_empty_is_blake3_empty ... ok
+test util::hash::tests::of_zeros_matches_full_vector ... ok
+test util::hash::tests::streaming_matches_one_shot ... ok
+test util::hash::tests::zero_hash_is_zero ... ok
+test util::redacted::tests::debug_redacts ... ok
+test util::redacted::tests::display_redacts ... ok
+test util::redacted::tests::expose_returns_value ... ok
+test util::ulid::tests::display_is_26_chars ... ok
+test util::ulid::tests::from_bytes_rejects_wrong_length ... ok
+test util::ulid::tests::from_bytes_roundtrip ... ok
+test util::ulid::tests::generate_is_unique ... ok
+test transfer::rate_limit::tests::test_rate_limiter_hierarchical_and_hit_counter ... ok
+test transfer::rate_limit::tests::test_rate_limiter_throttle ... ok
+
+failures:
+
+---- protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder stdout ----
+note: panic did not contain expected string
+      panic message: "Decoder panicked on single byte 0xff"
+ expected substring: "CRITICAL: Decoder panicked"
+
+failures:
+    protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder
+
+test result: FAILED. 216 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+[1m[91merror[0m: test failed, to rerun pass `-p velcrux-core --lib`
