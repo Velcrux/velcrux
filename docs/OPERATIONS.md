@@ -854,5 +854,88 @@ Adaptive compression provides real-time telemetry via `AdaptiveCompressionStats`
 - `raw_bytes` vs `wire_bytes`: True wire byte reduction across mixed streams.
 - `cpu_time_saved_us_est`: Cumulative CPU time saved by avoiding futile zstd compression cycles.
 
+---
+
+## 24. Multi-Path QUIC Connection Migration & Failover Gating
+
+Velcrux supports dynamic **QUIC Connection Migration & Path Failover Gating** conforming strictly to RFC 9000 §9 ("Connection Migration"), `REQUIREMENTS.md` §11, §41, §70, `SECURITY.md` §2, §3, and `OPERATIONS.md` §4.
+
+### Motivation & RFC 9000 §9 Conformance
+
+In traditional TCP-based transfer systems, a change in client IP or port (such as roaming between Wi-Fi and 5G cellular networks, VPN reconnection, or NAT rebinds) terminates the underlying transport 4-tuple, aborting in-flight transfers and requiring expensive session renegotiation.
+
+Under QUIC:
+1. **Connection ID Stability**: Connections are uniquely identified by cryptographically authenticated QUIC Connection IDs rather than the IP/UDP 4-tuple.
+2. **Seamless Interface Roaming**: When a client changes its local network interface or port, packets arrive at the server with the new source address. QUIC path validation and non-probing frame reception update the active path without resetting control or data streams.
+3. **Continuous Transfer Ingestion**: Active chunk streaming and bitmap synchronization continue without interruption across network migrations.
+
+```
++-----------------------------------------------------------------------------------+
+|                           QUIC Connection Migration Flow                          |
+|                                                                                   |
+|  [Client] (Port A)                                           [Velcrux Server]     |
+|     │                                                               │             |
+|     ├─────── TRANSFER_CREATE / BEGIN / Chunk 0 (Port A) ───────────>│             |
+|     │                                                               ├─ Active Path|
+|     │    ===> Client Local Interface Rebinds (Port B) ===>          │  Remote: A  |
+|     │                                                               │             |
+|     ├─────── Chunk 1 / Commit (Port B) ────────────────────────────>│             |
+|     │                                                               ├─ Migration! |
+|     │                                                               ├─ Evaluate   |
+|     │                                                               │  Policy     |
+|     │                                                               ├─ Pass       |
+|     │<────── Committed / COMMITTED Frame (Port B) ──────────────────┤             |
++-----------------------------------------------------------------------------------+
+```
+
+### Failover Gating Policies (`MigrationPolicyMode`)
+
+To prevent connection hijacking, amplification attacks, and unauthorized path hopping in secure enterprise environments, the server enforces strict migration governance:
+
+| Policy Mode | Behavior | Use Case |
+| :--- | :--- | :--- |
+| **`Permissive`** (Default) | Allows all valid QUIC path migrations regardless of source IP/port changes. | Mobile clients, laptop field engineers, multi-homed WAN uplinks. |
+| **`Gated`** | Enforces rate limits (e.g. max 5 migrations per 60s) and/or optional CIDR subnet allowlists. Rejects excessive or out-of-subnet transitions. | High-security enterprise enclaves, DMZ gateways. |
+| **`Disabled`** | Strictly forbids any connection migration. Any detected path change triggers immediate `PROTOCOL_VIOLATION` session termination. | Fixed datacenter-to-datacenter backup replication. |
+
+### Configuration (`MigrationPolicy`)
+
+```rust
+pub struct MigrationPolicy {
+    /// Policy enforcement mode.
+    pub mode: MigrationPolicyMode,
+    /// Maximum allowed address transitions within the time window.
+    pub max_migrations_per_window: usize,
+    /// Sliding time window in seconds for migration rate limiting.
+    pub rate_window_secs: u64,
+    /// Optional CIDR subnets permitted to migrate (empty = all subnets allowed).
+    pub allowed_subnets: Vec<ipnet::IpNet>,
+}
+```
+
+### Telemetry & Event Broadcast (`MigrationCoordinator`)
+
+Operators and observability pipelines can subscribe to real-time migration events via Tokio broadcast channels:
+
+```rust
+let mut event_rx = coordinator.subscribe_events();
+while let Ok(event) = event_rx.recv().await {
+    tracing::info!(
+        conn_id = event.connection_id,
+        from = %event.prev_addr,
+        to = %event.new_addr,
+        identity = ?event.peer_identity,
+        rtt_ms = event.measured_rtt.as_millis(),
+        "Client connection migrated successfully"
+    );
+}
+```
+
+#### Metrics Tracked (`MigrationStats`):
+- `migrations_total`: Total detected endpoint transitions across all connections.
+- `migrations_accepted`: Total migrations successfully approved and routed.
+- `migrations_rejected`: Migrations rejected due to policy restrictions (`Disabled`, rate limit exceeded, or subnet violation).
+
+
 
 

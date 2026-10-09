@@ -328,6 +328,11 @@ impl QuicTransport {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.endpoint.local_addr()
     }
+
+    /// Rebind the underlying UDP socket to a new local socket (e.g. during interface migration).
+    pub fn rebind(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        self.endpoint.rebind(socket)
+    }
 }
 
 #[async_trait]
@@ -382,6 +387,11 @@ impl QuicConnection {
     /// Remote socket address of the connection.
     pub fn remote_addr(&self) -> SocketAddr {
         self.inner.remote_address()
+    }
+
+    /// Stable numeric connection ID preserved across migrations.
+    pub fn stable_id(&self) -> usize {
+        self.inner.stable_id()
     }
 }
 
@@ -452,6 +462,10 @@ impl Connection for QuicConnection {
 
     fn remote_addr(&self) -> Option<SocketAddr> {
         Some(self.inner.remote_address())
+    }
+
+    fn stable_id(&self) -> usize {
+        self.inner.stable_id()
     }
 }
 

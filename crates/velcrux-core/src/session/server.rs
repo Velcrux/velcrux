@@ -22,6 +22,7 @@ use crate::state::{Direction, IdempotencyLedger, StateStore, TransferStatus};
 use crate::storage::{FileMeta, LocalChunkStore, Staging, StorageBackend, VPath};
 use crate::transfer::CheckpointPolicy;
 use crate::transport::identity::Identity;
+use crate::transport::migration::MigrationCoordinator;
 use crate::transport::{BiRecvStream, Connection};
 use std::sync::Arc;
 
@@ -268,6 +269,8 @@ pub struct ServerConn {
     idempotency_ledger: Option<Arc<IdempotencyLedger>>,
     /// Checkpoint policy configuring durable flush triggers (Option AN).
     checkpoint_policy: Option<CheckpointPolicy>,
+    /// Optional connection migration coordinator (Option AP).
+    migration_coordinator: Option<Arc<MigrationCoordinator>>,
 }
 
 async fn next_frame(
@@ -385,6 +388,7 @@ impl ServerConn {
             compression: false,
             idempotency_ledger: None,
             checkpoint_policy: None,
+            migration_coordinator: None,
         }
     }
 
@@ -463,6 +467,15 @@ impl ServerConn {
         self
     }
 
+    /// Attach an optional migration coordinator (Option AP).
+    pub fn with_migration_coordinator(
+        mut self,
+        migration_coordinator: Option<Arc<MigrationCoordinator>>,
+    ) -> Self {
+        self.migration_coordinator = migration_coordinator;
+        self
+    }
+
     /// Returns true if an operator kill signal has been received for this session.
     pub fn is_killed(&self) -> bool {
         self.kill_signal
@@ -483,11 +496,39 @@ impl ServerConn {
         // Extract the peer identity from the TLS connection.
         let peer_identity = conn.peer_identity();
 
+        let conn_stable_id = conn.stable_id();
+        if let Some(ref coord) = self.migration_coordinator {
+            if let Some(remote) = conn.remote_addr() {
+                coord.register_connection(
+                    conn_stable_id,
+                    remote,
+                    peer_identity.as_ref().map(|id| id.name.clone()),
+                );
+            }
+        }
+
         // The identity verified during AWAIT_AUTH, carried into SERVING so
         // every operation is authorized against it. `None` until AUTH_OK.
         let mut authenticated_identity: Option<Identity> = None;
 
         loop {
+            if let Some(ref coord) = self.migration_coordinator {
+                if let Some(current_remote) = conn.remote_addr() {
+                    let rtt = conn
+                        .stats()
+                        .rtt
+                        .unwrap_or(std::time::Duration::from_millis(50));
+                    let decision = coord.evaluate_migration(conn_stable_id, current_remote, rtt);
+                    if !decision.is_allowed() {
+                        conn.close(
+                            crate::protocol::error::ErrorCode::ProtocolViolation.to_wire(),
+                            b"connection migration rejected by policy",
+                        );
+                        state = ServerState::Closed;
+                        break;
+                    }
+                }
+            }
             match state {
                 ServerState::AwaitHello => {
                     let frame = match next_frame(recv.as_mut(), &mut drain_signal, &mut kill_signal)
@@ -992,6 +1033,9 @@ impl ServerConn {
                     ));
                 }
             }
+        }
+        if let Some(ref coord) = self.migration_coordinator {
+            coord.unregister_connection(conn_stable_id);
         }
         Ok(state)
     }

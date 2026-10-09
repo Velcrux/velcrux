@@ -12,6 +12,7 @@ pub mod flow_control;
 pub mod identity;
 pub mod impairment;
 pub mod interface;
+pub mod migration;
 pub mod quic;
 pub mod stats;
 
@@ -28,6 +29,10 @@ pub use impairment::{
     ImpairmentProfile, ImpairmentStats, ImpairmentStatsSnapshot, TokenBucket,
 };
 pub use interface::{find_interface, list_interfaces, resolve_bind_addr, InterfaceInfo};
+pub use migration::{
+    MigrationCoordinator, MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode,
+    MigrationStats,
+};
 pub use quic::{
     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,
     TransportConfigTunables,
@@ -98,6 +103,11 @@ pub trait Connection: Send + Sync {
     /// Remote peer socket address of the connection, if known.
     fn remote_addr(&self) -> Option<SocketAddr> {
         None
+    }
+
+    /// Stable unique numeric ID identifying this connection across migrations.
+    fn stable_id(&self) -> usize {
+        0
     }
 }
 

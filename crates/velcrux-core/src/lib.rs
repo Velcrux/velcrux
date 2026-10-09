@@ -92,8 +92,10 @@ pub use transfer::{
 
 pub use transport::{
     AdaptiveFlowController, BaselineComparator, BdpEstimator, BenchmarkMetrics, BenchmarkScenario,
-    Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, PacingController,
-    SharedTransport, TokenBucket, TransportConfigTunables, WanMatrixReport, WanMatrixRunner,
+    Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, MigrationCoordinator,
+    MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode, MigrationStats,
+    PacingController, SharedTransport, TokenBucket, TransportConfigTunables, WanMatrixReport,
+    WanMatrixRunner,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, VectorizedScanner,
