@@ -18,7 +18,9 @@
 use serde::{Deserialize, Serialize};
 
 pub mod fastcdc;
+pub mod pipeline;
 pub use fastcdc::{generate_gear_64, FastCdcChunker, GEAR_64};
+pub use pipeline::{PipelinedChunk, PipelinedChunker};
 
 use crate::error::{ProtocolError, Result};
 use crate::manifest::entry::ChunkDesc;

@@ -25,7 +25,7 @@ use velcrux_core::protocol::frame::{
 };
 use velcrux_core::storage::VPath;
 use velcrux_core::sync::{CostEstimator, RleBitmap};
-use velcrux_core::util::Hash;
+use velcrux_core::util::{Hash, ParallelHasher, SimdFeatures, VectorizedScanner};
 
 fn generate_data(size: usize, seed: u64) -> Vec<u8> {
     let mut data = vec![0u8; size];
@@ -233,13 +233,82 @@ fn bench_estimator() {
     println!("  estimator:        {:>7.1} ns/eval (grid decision)", ns);
 }
 
+fn bench_simd_vectorized_scanner() {
+    let size = 128 * 1024 * 1024; // 128 MiB zero buffer
+    let zeros = vec![0u8; size];
+    let iterations = 10;
+
+    let t0 = Instant::now();
+    for _ in 0..iterations {
+        let is_zero = VectorizedScanner::is_all_zeros(&zeros);
+        assert!(is_zero);
+    }
+    let elapsed = t0.elapsed();
+    let gbps = (size as f64 * iterations as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
+    println!(
+        "  simd_zero_scan:   {:>7.2} GB/s ({:?} / 128MB)",
+        gbps,
+        elapsed / iterations
+    );
+}
+
+fn bench_parallel_hasher_batched() {
+    let hasher = ParallelHasher::default();
+    let num_chunks = 32;
+    let chunk_size = 1024 * 1024; // 1 MiB each
+    let raw_buffers: Vec<Vec<u8>> = (0..num_chunks)
+        .map(|i| generate_data(chunk_size, i as u64))
+        .collect();
+    let slices: Vec<&[u8]> = raw_buffers.iter().map(|b| b.as_slice()).collect();
+    let iterations = 5;
+
+    let t0 = Instant::now();
+    for _ in 0..iterations {
+        let hashes = hasher.hash_chunks_batched(&slices);
+        assert_eq!(hashes.len(), num_chunks);
+    }
+    let elapsed = t0.elapsed();
+    let total_bytes = num_chunks * chunk_size * iterations as usize;
+    let gbps = (total_bytes as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
+    println!(
+        "  hash_batched_simd:{:>7.2} GB/s ({} cores, 32x1MB)",
+        gbps,
+        hasher.concurrency()
+    );
+}
+
+fn bench_parallel_tree_hash() {
+    let hasher = ParallelHasher::default().with_tree_threshold(1024 * 1024);
+    let size = 32 * 1024 * 1024; // 32 MiB
+    let payload = generate_data(size, 42);
+    let iterations = 10;
+
+    let t0 = Instant::now();
+    for _ in 0..iterations {
+        let _ = hasher.hash_tree_parallel(&payload);
+    }
+    let elapsed = t0.elapsed();
+    let gbps = (size as f64 * iterations as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
+    println!(
+        "  hash_tree_parallel:{:>6.2} GB/s ({} cores, 32MB payload)",
+        gbps,
+        hasher.concurrency()
+    );
+}
+
 fn main() {
+    let simd = SimdFeatures::detect();
     println!("\n=======================================================");
     println!("       velcrux Microbenchmark Suite (PERFORMANCE.md §3)  ");
+    println!("       SIMD Acceleration: {:<30}", simd.description());
     println!("=======================================================\n");
 
     bench_hash_blake3();
     bench_hash_sha256();
+    bench_parallel_hasher_batched();
+    bench_parallel_tree_hash();
+    bench_simd_vectorized_scanner();
+
     bench_chunk_fixed();
     bench_chunk_cdc();
     bench_manifest_encode_decode();

@@ -117,6 +117,14 @@ pub enum ProtocolError {
     /// Storage volume has insufficient free space or reached reservation margin.
     #[error("disk full: {0}")]
     DiskFull(String),
+
+    /// A cryptographic checksum or content hash mismatch.
+    #[error("checksum mismatch for chunk {chunk_index}: expected {expected}, actual {actual}")]
+    ChecksumMismatch {
+        chunk_index: u64,
+        expected: crate::util::Hash,
+        actual: crate::util::Hash,
+    },
 }
 
 /// Transport-level errors. These wrap the underlying QUIC errors and add

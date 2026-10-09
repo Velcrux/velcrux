@@ -178,7 +178,9 @@ impl From<ProtocolError> for ErrorDetail {
             ProtocolError::QuotaExceeded(_) => "quota exceeded",
             ProtocolError::DecompressionBomb(_) => "decompression limit exceeded",
             ProtocolError::DiskFull(_) => "disk full",
+            ProtocolError::ChecksumMismatch { .. } => "checksum mismatch",
         };
+
         Self::new(s)
     }
 }

@@ -140,7 +140,13 @@ where
         .build(addr)?;
     let stats = Arc::new(ServerStats::default());
     let registry: Arc<SessionRegistry> = SessionRegistry::new();
-    info!(%addr, "velcruxd listening");
+    let simd_features = velcrux_core::SimdFeatures::detect();
+    info!(
+        %addr,
+        simd = %simd_features.description(),
+        tier = %simd_features.tier.name(),
+        "velcruxd listening with hardware acceleration"
+    );
 
     let limits_manager = Arc::new(LimitsManager::new(
         cfg.network.max_bandwidth.as_deref(),

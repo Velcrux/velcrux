@@ -40,9 +40,10 @@ pub use auth::{
 };
 pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
-    Chunker, FastCdcChunker, FixedChunker, ReuseStats, RollingChunker, CHUNK_DEFAULT_MAX,
-    CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
+    Chunker, FastCdcChunker, FixedChunker, PipelinedChunk, PipelinedChunker, ReuseStats,
+    RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
 };
+
 pub use error::{Result, VelcruxError};
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
@@ -87,4 +88,6 @@ pub use transport::{
     Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, PacingController,
     SharedTransport, TokenBucket, TransportConfigTunables, WanMatrixReport, WanMatrixRunner,
 };
-pub use util::{Hash, HashAlgorithm, HashHasher};
+pub use util::{
+    Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, VectorizedScanner,
+};

@@ -260,6 +260,8 @@ enum Cmd {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
     },
+    /// Display host hardware SIMD vector acceleration and CPU capabilities.
+    Hardware,
 }
 
 fn init_tracing(format: &str) {
@@ -602,6 +604,35 @@ async fn main() -> anyhow::Result<()> {
             clap_complete::generate(*shell, &mut cmd, "velcrux", &mut std::io::stdout());
             return Ok(());
         }
+        Cmd::Hardware => {
+            let features = velcrux_core::SimdFeatures::detect();
+            if cli_log_json(&cli) {
+                let out = serde_json::json!({
+                    "arch": features.arch,
+                    "tier": features.tier.name(),
+                    "vector_width_bits": features.tier.vector_width_bits(),
+                    "avx512f": features.has_avx512f,
+                    "avx2": features.has_avx2,
+                    "sse41": features.has_sse41,
+                    "neon": features.has_neon,
+                    "carryless_mul": features.has_carryless_mul,
+                    "aes": features.has_aes,
+                    "description": features.description(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Hardware Acceleration Profile:");
+                println!("  Architecture:      {}", features.arch);
+                println!(
+                    "  Acceleration Tier: {} ({} bits)",
+                    features.tier.name(),
+                    features.tier.vector_width_bits()
+                );
+                println!("  Features:          {}", features.description());
+            }
+            return Ok(());
+        }
+
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
             let sni = get_sni(&cli, url);
