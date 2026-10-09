@@ -184,6 +184,8 @@ impl DataFrameFlags {
     pub const HOLE: Self = Self(0x0001);
     /// Bit 1: payload is zstd-compressed (PROTOCOL.md §3).
     pub const COMPRESSED: Self = Self(0x0002);
+    /// Bit 2: payload is authenticated AEAD encrypted (Zero-Knowledge client-side encryption) (PROTOCOL.md §3; REQUIREMENTS.md §37, §65).
+    pub const ENCRYPTED: Self = Self(0x0004);
 
     pub const fn bits(self) -> u16 {
         self.0
@@ -193,6 +195,9 @@ impl DataFrameFlags {
     }
     pub const fn compressed(self) -> bool {
         (self.0 & 0x0002) != 0
+    }
+    pub const fn encrypted(self) -> bool {
+        (self.0 & 0x0004) != 0
     }
     pub const fn is_hole(self) -> bool {
         (self.0 & 0x0001) != 0
@@ -463,6 +468,80 @@ pub fn encode_data_frame_adaptive(
     }
 }
 
+/// Encode a DATA frame with optional zstd compression followed by AEAD chunk encryption (Option AQ).
+///
+/// Implements REQUIREMENTS.md §65 order of operations:
+/// raw chunk -> optional compression -> client-side AEAD encryption -> DATA frame
+pub fn encode_data_frame_encrypted(
+    chunk_offset: u64,
+    chunk_index: u32,
+    transfer_id: &crate::util::TransferId,
+    chunk_hash: &crate::util::Hash,
+    payload: &[u8],
+    enable_compression: bool,
+    encryptor: &crate::crypto::ChunkEncryptor,
+) -> Result<Vec<u8>, crate::crypto::CryptoError> {
+    let mut flags = DataFrameFlags::NONE;
+    let maybe_compressed: std::borrow::Cow<'_, [u8]> = if enable_compression {
+        if let Some(comp) = crate::protocol::compression::compress_if_beneficial(
+            payload,
+            crate::protocol::compression::DEFAULT_MIN_SAVINGS,
+        ) {
+            flags = DataFrameFlags::from_bits_truncate(
+                flags.bits() | DataFrameFlags::COMPRESSED.bits(),
+            );
+            std::borrow::Cow::Owned(comp)
+        } else {
+            std::borrow::Cow::Borrowed(payload)
+        }
+    } else {
+        std::borrow::Cow::Borrowed(payload)
+    };
+
+    let ciphertext_envelope =
+        encryptor.encrypt_chunk(transfer_id, chunk_offset, chunk_index, &maybe_compressed)?;
+
+    flags = DataFrameFlags::from_bits_truncate(flags.bits() | DataFrameFlags::ENCRYPTED.bits());
+
+    let buf = encode_data_frame(
+        chunk_offset,
+        ciphertext_envelope.len() as u32,
+        flags,
+        chunk_hash,
+        &ciphertext_envelope,
+    );
+
+    Ok(buf)
+}
+
+/// Decode and authenticate an encrypted DATA frame payload.
+///
+/// Validates AEAD authentication tag and Associated Authenticated Data (AAD),
+/// returning the decrypted and decompressed plain chunk payload.
+pub fn decode_data_frame_encrypted(
+    header: &DataFrameHeader,
+    chunk_index: u32,
+    transfer_id: &crate::util::TransferId,
+    raw_payload: &[u8],
+    decryptor: &crate::crypto::ChunkDecryptor,
+) -> Result<Vec<u8>, crate::crypto::CryptoError> {
+    let plain_or_compressed =
+        decryptor.decrypt_chunk(transfer_id, header.chunk_offset, chunk_index, raw_payload)?;
+
+    if header.flags.compressed() {
+        let decompressed = zstd::bulk::decompress(
+            &plain_or_compressed,
+            DATA_MAX_CHUNK_LEN as usize,
+        )
+        .map_err(|e| {
+            crate::crypto::CryptoError::Unspecified(format!("zstd decompression failed: {e}"))
+        })?;
+        Ok(decompressed)
+    } else {
+        Ok(plain_or_compressed)
+    }
+}
+
 /// Encode a frame into `out`. Returns the number of bytes written.
 ///
 /// `out` must be sized for the full frame: `header_size_for(length) + length`.
@@ -658,5 +737,50 @@ mod tests {
         assert!(!hdr_raw.flags.compressed());
         assert_eq!(hdr_raw.chunk_len, original_data.len() as u32);
         assert_eq!(payload_raw, original_data.as_slice());
+    }
+
+    #[test]
+    fn data_frame_encrypted_roundtrip() {
+        use crate::crypto::{ChunkDecryptor, ChunkEncryptor, CipherSuite, TransferKey};
+        use crate::util::TransferId;
+
+        let key = TransferKey::from_bytes([0x77u8; 32]);
+        let encryptor = ChunkEncryptor::new(CipherSuite::ChaCha20Poly1305, &key).unwrap();
+        let decryptor = ChunkDecryptor::new(CipherSuite::ChaCha20Poly1305, &key).unwrap();
+
+        let transfer_id = TransferId::from_bytes(&[0x55; 16]).unwrap();
+        let chunk_data = b"Sensitive payload encrypted before leaving client host".repeat(20);
+        let chunk_hash = crate::util::Hash::of(&chunk_data);
+
+        // 1. Encrypt and encode into DATA frame (with compression enabled)
+        let wire_bytes = encode_data_frame_encrypted(
+            8192,
+            2,
+            &transfer_id,
+            &chunk_hash,
+            &chunk_data,
+            true,
+            &encryptor,
+        )
+        .expect("encode encrypted");
+
+        let (hdr, encrypted_payload) = decode_data_frame_header(&wire_bytes).unwrap();
+        assert_eq!(hdr.chunk_offset, 8192);
+        assert_eq!(hdr.chunk_hash, chunk_hash);
+        assert!(hdr.flags.encrypted());
+
+        // 2. Decode and decrypt
+        let recovered =
+            decode_data_frame_encrypted(&hdr, 2, &transfer_id, encrypted_payload, &decryptor)
+                .expect("decode encrypted");
+
+        assert_eq!(recovered, chunk_data);
+        assert_eq!(crate::util::Hash::of(&recovered), chunk_hash);
+
+        // 3. Verify tampering in payload is rejected
+        let mut tampered = encrypted_payload.to_vec();
+        tampered[15] ^= 0xFF; // flip bit in ciphertext
+        let err = decode_data_frame_encrypted(&hdr, 2, &transfer_id, &tampered, &decryptor);
+        assert!(err.is_err());
     }
 }

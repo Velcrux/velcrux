@@ -30,6 +30,8 @@ pub enum Capability {
     Hardlinks = 8,
     /// Bloom filter inventory hint.
     InventoryBloom = 9,
+    /// Client-side zero-knowledge AEAD chunk encryption (ChaCha20-Poly1305 / AES-256-GCM).
+    ChunkEncryption = 10,
 }
 
 /// The set of capabilities. Backed by a u32 bitset.
@@ -120,6 +122,7 @@ impl std::fmt::Display for Capabilities {
             (Capability::Symlinks, "symlinks"),
             (Capability::Hardlinks, "hardlinks"),
             (Capability::InventoryBloom, "bloom"),
+            (Capability::ChunkEncryption, "encryption"),
         ];
         for (cap, name) in all {
             if self.has(cap) {

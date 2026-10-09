@@ -22,6 +22,7 @@
 #[allow(missing_docs)]
 pub mod auth;
 pub mod chunking;
+pub mod crypto;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
@@ -42,6 +43,10 @@ pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
     Chunker, FastCdcChunker, FixedChunker, PipelinedChunk, PipelinedChunker, ReuseStats,
     RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
+};
+pub use crypto::{
+    build_chunk_aad, derive_key_from_passphrase, derive_transfer_key, ChunkDecryptor,
+    ChunkEncryptor, CipherSuite, CryptoError, TransferKey, ENVELOPE_OVERHEAD, NONCE_LEN, TAG_LEN,
 };
 
 pub use error::{Result, VelcruxError};

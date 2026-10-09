@@ -936,6 +936,79 @@ while let Ok(event) = event_rx.recv().await {
 - `migrations_accepted`: Total migrations successfully approved and routed.
 - `migrations_rejected`: Migrations rejected due to policy restrictions (`Disabled`, rate limit exceeded, or subnet violation).
 
+---
+
+## 25. Zero-Knowledge Client-Side Chunk Encryption & AEAD Tamper-Proof Storage
+
+Velcrux provides native **Zero-Knowledge Client-Side Chunk Encryption** conforming strictly to `REQUIREMENTS.md` §37 ("Chunk Encryption / Security"), §65 ("Encryption Ordering"), and `SECURITY.md` §2, §3, §8.
+
+### Threat Model & Architecture
+
+While QUIC enforces transport-layer TLS 1.3 encryption across the network wire, zero-knowledge chunk encryption protects datasets against:
+1. **Untrusted Intermediate Gateways / Proxies**: Storage relays and edge nodes cannot inspect payload contents.
+2. **Untrusted Storage Providers**: Staging files and chunk repositories on servers are held exclusively as ciphertext blobs.
+3. **Chunk Injection & Splicing Attacks**: Cryptographically authenticated Associated Data (AAD) prevents malicious or accidental reordering, byte substitution, or cross-transfer splicing.
+4. **Data Corruption & Bit-Rot**: 128-bit Poly1305 or GHASH tags detect and reject single-bit corruptions before data touches memory or disk.
+
+```
++-----------------------------------------------------------------------------------+
+|               Zero-Knowledge Chunk Encryption Pipeline (RFC 8439)                 |
+|                                                                                   |
+|  [Source File] ──> FastCDC / Fixed Chunker                                        |
+|                          │                                                        |
+|                          ▼                                                        |
+|                   [Chunk Payload]                                                 |
+|                          │                                                        |
+|                          ├──> (Optional) Zstandard Compression (Level 1..7)       |
+|                          │                                                        |
+|                          ▼                                                        |
+|                   [Compressed Slice]                                              |
+|                          │                                                        |
+|                          ├──> AEAD Envelope Seal (ChaCha20-Poly1305 / AES-256-GCM)|
+|                          │    • 96-bit Secure Nonce                               |
+|                          │    • AAD: [TransferId: 16B][Offset: 8B][Index: 4B]     |
+|                          │    • 128-bit Authentication Tag                        |
+|                          ▼                                                        |
+|                   [Encrypted DATA Frame] (Flag: 0x0004 ENCRYPTED)                 |
+|                          │                                                        |
+|                          ▼                                                        |
+|                   [QUIC Transport TLS 1.3] ──> UDP Wire                           |
++-----------------------------------------------------------------------------------+
+```
+
+### Encryption Ordering Guarantee (`REQUIREMENTS.md` §65)
+
+Encrypted data is cryptographically indistinguishable from high-entropy white noise and cannot be compressed. Velcrux guarantees the strict order of operations:
+1. **Delta / Content Chunking**: Identifies boundary hashes from plain data.
+2. **Optional Compression**: Chunks are compressed before encryption while redundancy remains visible.
+3. **AEAD Envelope Encryption**: Seals compressed or raw chunk into ciphertext.
+4. **QUIC Wire Encryption**: Transmits frames inside authenticated QUIC packets.
+
+### Wire Envelope Format
+
+Every encrypted chunk carries a compact 28-byte overhead:
+```text
++-------------------+-----------------------------------+-------------------+
+| Nonce (12 bytes)  |      Ciphertext (N bytes)         |  Tag (16 bytes)   |
++-------------------+-----------------------------------+-------------------+
+```
+
+### Cryptographic Binding via Associated Authenticated Data (AAD)
+
+To prevent chunk reordering or cross-session injection attacks, each chunk cryptographically incorporates 28 bytes of immutable context into the AEAD tag:
+
+$$\text{AAD} = \text{TransferId (16 bytes)} \parallel \text{chunk\_offset (8 bytes LE)} \parallel \text{chunk\_index (4 bytes LE)}$$
+
+If an adversary alters the chunk index, shifts the offset, or attempts to substitute chunk $i$ for chunk $j$, decryption fails immediately with `CryptoError::AuthenticationFailed`.
+
+### Key Derivation (`derive_transfer_key`, `derive_key_from_passphrase`)
+
+- **Master Key Derivation**: Passphrases derive 256-bit master keys using PBKDF2-HMAC-SHA256 with 100,000 iterations and salt.
+- **Per-Transfer Domain Separation**: Each transfer derives an isolated 256-bit key using BLAKE3 KDF:
+  $$\text{Key}_{\text{transfer}} = \text{BLAKE3-KDF}(\text{MasterKey}, \text{"velcrux-zero-knowledge-transfer-v1"}, \text{TransferId})$$
+- **Zeroize on Drop**: Key structs zero their memory buffers upon destruction.
+
+
 
 
 
