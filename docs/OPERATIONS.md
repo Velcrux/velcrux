@@ -754,3 +754,62 @@ To evaluate hashing and scanner throughput on the current host machine:
 cargo bench -p velcrux-core --bench microbenchmarks
 ```
 
+---
+
+## 22. Transfer Idempotency, Session Replay Protection & Checkpoint Coordination
+
+To eliminate duplicate transfer execution, eliminate race conditions on network reconnects, and survive unexpected interruptions without data corruption, Velcrux implements a two-tier **Idempotency Ledger** combined with an autonomous **Checkpoint Coordinator** (`REQUIREMENTS.md` §67, §68, §69, §70; `ADR-005`).
+
+### Idempotency Key Semantics
+
+Every `TRANSFER_CREATE` packet includes a unique `idempotency_key` (typically client-generated ULID or deterministic application UUID). The server tracks the key across both memory and persistent storage:
+
+1. **In-Memory Fast-Path (`IdempotencyLedger`)**:
+   - Maintains an active cache of in-flight and recently completed transfers indexed by `(Role, IdempotencyKey)`.
+   - Protects against concurrent race conditions when duplicate `TRANSFER_CREATE` frames arrive concurrently across streams.
+2. **Persistent Fallback (`StateStore` / `sqlite`)**:
+   - If an idempotency key is not in the in-memory cache (e.g. after daemon restart), the server queries the SQLite state database (`get_transfer_by_idempotency`).
+   - If found, the transfer state is dynamically reloaded into the in-memory ledger.
+
+### Session Replay Actions
+
+When receiving a `TRANSFER_CREATE` request:
+- **`ProceedNew`**:
+  - The key has never been seen. The server generates a fresh ULID `TransferId`, records it in the ledger as `Active`, and begins transfer negotiation.
+- **`ReplayActive`**:
+  - The key is currently active on an existing connection or stream. The server rejoins the transfer, returning `TRANSFER_CREATED` with `resumed = true` and the reusable byte offset, avoiding duplicate worker spawn.
+- **`ReplayCommitted`**:
+  - The key represents a transfer that has already finished and committed. The server **immediately** returns a `COMMITTED` message frame without touching staging disk I/O or streaming duplicate chunks.
+- **`ResumeExisting`**:
+  - The key matches a previously interrupted transfer in `Resumable` state. The server reports the existing `TransferId` and bitmap progress to resume incrementally.
+- **`Conflict` (Fail-Closed Rejection)**:
+  - If a caller supplies an existing idempotency key but alters the destination path (`dst_path`) or expected file size (`file_size`), the server rejects the request immediately with `ErrorCode::ProtocolViolation (1003)`.
+
+### Checkpoint Coordination (`CheckpointCoordinator`)
+
+Long-running transfers maintain bounded recovery windows via the `CheckpointCoordinator`:
+
+```
+Chunk Received ──> Observe Chunk ──> Threshold Reached?
+                                            │
+                                            ├── [No]  ──> Continue Streaming
+                                            │
+                                            └── [Yes] ──> fsync Staging (optional)
+                                                      ──> Commit Bitmap to StateStore
+                                                      ──> Update bytes_completed / timestamp
+```
+
+- **Byte Milestone Threshold (`bytes_threshold`)**: Defaults to **256 MiB** (configurable up to 1 GiB for extreme WAN transfers). Triggers checkpoint after every milestone.
+- **Time Elapsed Interval (`time_interval`)**: Defaults to **10 seconds**. Guarantees regular checkpoints even on low-bandwidth connections.
+- **Chunk Count Threshold (`chunk_threshold`)**: Defaults to **1,024 chunks**.
+- **Staging Sync (`fsync_staging`)**: When enabled, performs a disk fsync on the staging file before persisting the checkpoint in the state store, guaranteeing crash consistency across power loss events.
+
+### Graceful Shutdown & Drain Integration
+
+During server graceful shutdown (`SIGTERM` / `SIGINT` drain cycle):
+1. In-flight transfers are signalled via drain watch channels.
+2. The `CheckpointCoordinator` immediately performs a terminal checkpoint write, syncing all completed chunk extents to `sqlite`.
+3. Active entries in the `IdempotencyLedger` transition to `Resumable`.
+4. Subsequent reconnection requests using the same idempotency key pick up exactly where the transfer was stopped without re-transmitting verified chunks.
+
+

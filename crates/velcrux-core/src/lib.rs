@@ -51,10 +51,12 @@ pub use manifest::{
 };
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
-    ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, JournalRecovery, MockStateStore,
-    Role, SqliteStateStore, StateStore, StateStoreError, StateStoreResult, TransferRecord,
-    TransferStatus, UpsertOutcome, MAX_WIRE_CHUNKS,
+    ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, IdempotencyAction, IdempotencyLedger,
+    JournalRecovery, LedgerEntry, MockStateStore, Role, SqliteStateStore, StateStore,
+    StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
+    MAX_WIRE_CHUNKS,
 };
+
 pub use storage::{
     gc_chunk_store, gc_staging, AlignedSectorBuffer, ChunkStore, ChunkStoreGcReport,
     DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
@@ -79,10 +81,11 @@ pub use transfer::{
     parse_rate_limit, server_download_session, server_download_session_with_delta,
     server_download_session_with_limits, server_staging_path, server_upload_session,
     server_upload_session_with_delta, server_upload_session_with_limits,
-    server_upload_session_with_state, ConcurrentTransferLimiter, PipelineConfig, PriorityScheduler,
-    RateLimiter, ScheduledTask, TransferDir, TransferKind, TransferPermit, TransferPriority,
-    TransferRequest,
+    server_upload_session_with_state, CheckpointCoordinator, CheckpointPolicy, CheckpointStats,
+    ConcurrentTransferLimiter, PipelineConfig, PriorityScheduler, RateLimiter, ScheduledTask,
+    TransferDir, TransferKind, TransferPermit, TransferPriority, TransferRequest,
 };
+
 pub use transport::{
     AdaptiveFlowController, BaselineComparator, BdpEstimator, BenchmarkMetrics, BenchmarkScenario,
     Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, PacingController,

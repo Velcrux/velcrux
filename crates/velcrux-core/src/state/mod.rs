@@ -20,10 +20,12 @@
 //!   half-renamed destination.
 
 pub mod bitmap;
+pub mod ledger;
 pub mod mock;
 pub mod sqlite;
 
 pub use bitmap::{ChunkBitmap, MAX_WIRE_CHUNKS};
+pub use ledger::{IdempotencyAction, IdempotencyLedger, LedgerEntry};
 pub use mock::MockStateStore;
 pub use sqlite::SqliteStateStore;
 

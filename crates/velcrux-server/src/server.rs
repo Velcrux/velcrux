@@ -305,6 +305,8 @@ where
         None => None,
     };
 
+    let idempotency_ledger = Arc::new(velcrux_core::state::IdempotencyLedger::new());
+
     let crl_store = Arc::new(CrlStore::new());
     if let Some(ref crl_path) = cfg.security.crl {
         match std::fs::read(crl_path) {
@@ -441,6 +443,7 @@ where
                 )
                 .with_chunk_store(chunk_store.clone())
                 .with_limits_provider(Some(Arc::clone(&limits_provider)))
+                .with_idempotency_ledger(Some(Arc::clone(&idempotency_ledger)))
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))
@@ -535,6 +538,7 @@ where
                 )
                 .with_chunk_store(chunk_store.clone())
                 .with_limits_provider(Some(Arc::clone(&limits_provider)))
+                .with_idempotency_ledger(Some(Arc::clone(&idempotency_ledger)))
                 .with_drain_signal(Some(drain_rx.clone()))
                 .with_conn_id(id)
                 .with_kill_signal(Some(kill_rx))

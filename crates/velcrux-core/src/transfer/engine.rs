@@ -396,7 +396,10 @@ pub async fn client_upload_stream(
             let total_chunks = file_size.div_ceil(chunk_size);
             let mut file = tokio::fs::File::open(&local_path).await?;
             let mut next_chunk = bitmap.first_missing_from(0).unwrap_or(total_chunks);
-            let mut last_checkpoint_bytes = bitmap.bytes_completed();
+            let mut checkpoint_coord = crate::transfer::checkpoint::CheckpointCoordinator::new(
+                crate::transfer::checkpoint::CheckpointPolicy::default(),
+                Arc::new(crate::transfer::checkpoint::CheckpointStats::default()),
+            );
 
             if let Some(tx) = &progress_tx {
                 let already = bitmap.bytes_completed();
@@ -432,13 +435,13 @@ pub async fn client_upload_stream(
                 }
 
                 if let Some(s) = &store {
-                    if bitmap
-                        .bytes_completed()
-                        .saturating_sub(last_checkpoint_bytes)
-                        >= 16 * 1024 * 1024
-                    {
-                        let _ = s.write_bitmap(transfer_id, &bitmap);
-                        last_checkpoint_bytes = bitmap.bytes_completed();
+                    if checkpoint_coord.observe_chunk(read as u64) {
+                        let _ = checkpoint_coord.commit_checkpoint(
+                            transfer_id,
+                            bitmap.bytes_completed(),
+                            &bitmap,
+                            s.as_ref(),
+                        );
                     }
                 }
 
@@ -996,7 +999,10 @@ pub async fn server_upload_session_with_limits(
             .await?;
 
         let mut bytes_received = bitmap.bytes_completed();
-        let mut last_checkpoint_bytes = bytes_received;
+        let mut checkpoint_coord = crate::transfer::checkpoint::CheckpointCoordinator::new(
+            crate::transfer::checkpoint::CheckpointPolicy::default(),
+            Arc::new(crate::transfer::checkpoint::CheckpointStats::default()),
+        );
 
         loop {
             let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
@@ -1050,9 +1056,16 @@ pub async fn server_upload_session_with_limits(
                 lim.acquire(payload_len).await;
             }
             if let Some(s) = &store {
-                if bytes_received.saturating_sub(last_checkpoint_bytes) >= 16 * 1024 * 1024 {
-                    let _ = s.write_bitmap(transfer_id, &bitmap);
-                    last_checkpoint_bytes = bytes_received;
+                if checkpoint_coord.observe_chunk(hdr.chunk_len as u64) {
+                    if checkpoint_coord.policy().fsync_staging {
+                        let _ = writer.fsync().await;
+                    }
+                    let _ = checkpoint_coord.commit_checkpoint(
+                        transfer_id,
+                        bytes_received,
+                        &bitmap,
+                        s.as_ref(),
+                    );
                 }
             }
         }

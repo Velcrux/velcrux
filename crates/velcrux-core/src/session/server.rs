@@ -18,8 +18,9 @@ use crate::auth::{Authenticator, Authorizer, FileAuthorizer, MtlsAuthenticator, 
 use crate::error::{Result, VelcruxError};
 use crate::protocol::capabilities::Capabilities;
 use crate::protocol::message::{Auth, AuthOk, Hello, HelloAck, Message, Ping};
-use crate::state::{Direction, StateStore, TransferStatus};
+use crate::state::{Direction, IdempotencyLedger, StateStore, TransferStatus};
 use crate::storage::{FileMeta, LocalChunkStore, Staging, StorageBackend, VPath};
+use crate::transfer::CheckpointPolicy;
 use crate::transport::identity::Identity;
 use crate::transport::{BiRecvStream, Connection};
 use std::sync::Arc;
@@ -263,6 +264,10 @@ pub struct ServerConn {
     auth_attempts: u32,
     /// Enable wire-level zstd compression (Option Q).
     compression: bool,
+    /// Idempotency ledger protecting against duplicate requests and racing retries (Option AN).
+    idempotency_ledger: Option<Arc<IdempotencyLedger>>,
+    /// Checkpoint policy configuring durable flush triggers (Option AN).
+    checkpoint_policy: Option<CheckpointPolicy>,
 }
 
 async fn next_frame(
@@ -378,6 +383,8 @@ impl ServerConn {
             max_auth_attempts: 3,
             auth_attempts: 0,
             compression: false,
+            idempotency_ledger: None,
+            checkpoint_policy: None,
         }
     }
 
@@ -438,6 +445,21 @@ impl ServerConn {
         notifier: Option<Arc<dyn Fn(u64, &str) + Send + Sync>>,
     ) -> Self {
         self.auth_notifier = notifier;
+        self
+    }
+
+    /// Attach an optional idempotency ledger (Option AN).
+    pub fn with_idempotency_ledger(
+        mut self,
+        idempotency_ledger: Option<Arc<IdempotencyLedger>>,
+    ) -> Self {
+        self.idempotency_ledger = idempotency_ledger;
+        self
+    }
+
+    /// Attach an optional checkpoint policy (Option AN).
+    pub fn with_checkpoint_policy(mut self, checkpoint_policy: Option<CheckpointPolicy>) -> Self {
+        self.checkpoint_policy = checkpoint_policy;
         self
     }
 
@@ -815,6 +837,8 @@ impl ServerConn {
                                 &self.state,
                                 &self.chunk_store,
                                 &self.limits_provider,
+                                &self.idempotency_ledger,
+                                &self.checkpoint_policy,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -996,6 +1020,8 @@ async fn handle_transfer_create(
     state: &Option<Arc<dyn StateStore>>,
     chunk_store: &Option<Arc<LocalChunkStore>>,
     limits_provider: &Option<Arc<dyn LimitsProvider>>,
+    idempotency_ledger: &Option<Arc<IdempotencyLedger>>,
+    _checkpoint_policy: &Option<CheckpointPolicy>,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -1013,6 +1039,30 @@ async fn handle_transfer_create(
     let create = TransferCreate::decode(payload)?;
 
     if create.op == TransferOp::Delete {
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            match ledger.evaluate_transfer_create(
+                crate::state::Role::Server,
+                &create.idempotency_key,
+                &create.dst_path,
+                0,
+                state.as_deref(),
+            ) {
+                crate::state::IdempotencyAction::ReplayCommitted { transfer_id, files } => {
+                    let committed = Committed { transfer_id, files };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::Conflict(reason) => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::ProtocolViolation,
+                        format!("idempotency conflict: {reason}"),
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         let dst = match authorizer.check(identity, Op::Delete, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
@@ -1029,6 +1079,9 @@ async fn handle_transfer_create(
         };
         let transfer_id = TransferId::generate();
         let _ = backend.remove(&dst).await;
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
+        }
         let committed = Committed {
             transfer_id,
             files: 1,
@@ -1038,6 +1091,30 @@ async fn handle_transfer_create(
     }
 
     if create.op == TransferOp::Symlink {
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            match ledger.evaluate_transfer_create(
+                crate::state::Role::Server,
+                &create.idempotency_key,
+                &create.dst_path,
+                0,
+                state.as_deref(),
+            ) {
+                crate::state::IdempotencyAction::ReplayCommitted { transfer_id, files } => {
+                    let committed = Committed { transfer_id, files };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::Conflict(reason) => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::ProtocolViolation,
+                        format!("idempotency conflict: {reason}"),
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         let dst = match authorizer.check(identity, Op::Upload, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
@@ -1077,6 +1154,9 @@ async fn handle_transfer_create(
             return Ok(());
         }
 
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
+        }
         let committed = Committed {
             transfer_id,
             files: 1,
@@ -1086,6 +1166,30 @@ async fn handle_transfer_create(
     }
 
     if create.op == TransferOp::Hardlink {
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            match ledger.evaluate_transfer_create(
+                crate::state::Role::Server,
+                &create.idempotency_key,
+                &create.dst_path,
+                0,
+                state.as_deref(),
+            ) {
+                crate::state::IdempotencyAction::ReplayCommitted { transfer_id, files } => {
+                    let committed = Committed { transfer_id, files };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::Conflict(reason) => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::ProtocolViolation,
+                        format!("idempotency conflict: {reason}"),
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         let src = match authorizer.check(identity, Op::Upload, &create.src_path) {
             Ok(p) => p,
             Err(_) => {
@@ -1139,6 +1243,9 @@ async fn handle_transfer_create(
             return Ok(());
         }
 
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
+        }
         let committed = Committed {
             transfer_id,
             files: 1,
@@ -1148,6 +1255,30 @@ async fn handle_transfer_create(
     }
 
     if create.op == TransferOp::SetXattr {
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            match ledger.evaluate_transfer_create(
+                crate::state::Role::Server,
+                &create.idempotency_key,
+                &create.dst_path,
+                0,
+                state.as_deref(),
+            ) {
+                crate::state::IdempotencyAction::ReplayCommitted { transfer_id, files } => {
+                    let committed = Committed { transfer_id, files };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::Conflict(reason) => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::ProtocolViolation,
+                        format!("idempotency conflict: {reason}"),
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         let dst = match authorizer.check(identity, Op::Upload, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
@@ -1216,6 +1347,9 @@ async fn handle_transfer_create(
             return Ok(());
         }
 
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
+        }
         let committed = Committed {
             transfer_id,
             files: 1,
@@ -1296,29 +1430,6 @@ async fn handle_transfer_create(
         }
     };
 
-    stats
-        .transfers_active
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _active_guard = ActiveTransferGuard(&stats.transfers_active);
-
-    let (transfer_id, resumed, bytes_reusable) = match state {
-        Some(store) => {
-            match store
-                .get_transfer_by_idempotency(crate::state::Role::Server, &create.idempotency_key)
-            {
-                Ok(existing) => {
-                    let reusable = match store.read_bitmap(existing.transfer_id) {
-                        Ok(bm) => bm.bytes_completed(),
-                        Err(_) => 0,
-                    };
-                    (existing.transfer_id, true, reusable)
-                }
-                Err(_) => (TransferId::generate(), false, 0),
-            }
-        }
-        None => (TransferId::generate(), false, 0),
-    };
-
     let bytes_total = match create.op {
         TransferOp::Upload => create.file_size,
         TransferOp::Download => match backend.stat(&dst).await? {
@@ -1334,6 +1445,68 @@ async fn handle_transfer_create(
         },
         _ => unreachable!(),
     };
+
+    let (transfer_id, resumed, bytes_reusable) =
+        if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+            match ledger.evaluate_transfer_create(
+                crate::state::Role::Server,
+                &create.idempotency_key,
+                &create.dst_path,
+                bytes_total,
+                state.as_deref(),
+            ) {
+                crate::state::IdempotencyAction::ReplayCommitted { transfer_id, files } => {
+                    let committed = Committed { transfer_id, files };
+                    write_frame(send, &Message::Committed(committed), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::Conflict(reason) => {
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::ProtocolViolation,
+                        format!("idempotency conflict: {reason}"),
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+                crate::state::IdempotencyAction::ReplayActive(existing_id) => {
+                    let reusable = state
+                        .as_ref()
+                        .and_then(|s| s.read_bitmap(existing_id).ok())
+                        .map(|bm| bm.bytes_completed())
+                        .unwrap_or(0);
+                    (existing_id, true, reusable)
+                }
+                crate::state::IdempotencyAction::ResumeExisting {
+                    transfer_id: existing_id,
+                    bytes_completed,
+                } => (existing_id, true, bytes_completed),
+                crate::state::IdempotencyAction::ProceedNew(new_id) => (new_id, false, 0),
+            }
+        } else {
+            match state {
+                Some(store) => {
+                    match store.get_transfer_by_idempotency(
+                        crate::state::Role::Server,
+                        &create.idempotency_key,
+                    ) {
+                        Ok(existing) => {
+                            let reusable = match store.read_bitmap(existing.transfer_id) {
+                                Ok(bm) => bm.bytes_completed(),
+                                Err(_) => 0,
+                            };
+                            (existing.transfer_id, true, reusable)
+                        }
+                        Err(_) => (TransferId::generate(), false, 0),
+                    }
+                }
+                None => (TransferId::generate(), false, 0),
+            }
+        };
+
+    stats
+        .transfers_active
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _active_guard = ActiveTransferGuard(&stats.transfers_active);
 
     if let Some(limits) = limits_provider {
         if let Err(reason) = limits.check_quota(Some(&identity.name), bytes_total) {
@@ -1515,6 +1688,15 @@ async fn handle_transfer_create(
                             let _ = store.update_transfer(&record);
                         }
                         let _ = store.mark_journal_committed(transfer_id, 1);
+                    }
+                    if let (Some(ledger), false) =
+                        (idempotency_ledger, create.idempotency_key.is_empty())
+                    {
+                        ledger.mark_committed(
+                            crate::state::Role::Server,
+                            &create.idempotency_key,
+                            1,
+                        );
                     }
                 }
             }
@@ -1732,6 +1914,15 @@ async fn handle_transfer_create(
                             );
                         }
                     }
+                    if let (Some(ledger), false) =
+                        (idempotency_ledger, create.idempotency_key.is_empty())
+                    {
+                        ledger.mark_committed(
+                            crate::state::Role::Server,
+                            &create.idempotency_key,
+                            1,
+                        );
+                    }
                     return Ok(());
                 }
 
@@ -1784,6 +1975,19 @@ async fn handle_transfer_create(
                     stats
                         .checksum_mismatches
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if let (Some(ledger), false) =
+                    (idempotency_ledger, create.idempotency_key.is_empty())
+                {
+                    if res.is_ok() {
+                        ledger.mark_committed(
+                            crate::state::Role::Server,
+                            &create.idempotency_key,
+                            1,
+                        );
+                    } else {
+                        ledger.mark_resumable(crate::state::Role::Server, &create.idempotency_key);
+                    }
                 }
                 return res;
             }
@@ -1975,6 +2179,14 @@ async fn handle_transfer_create(
                 record.updated_ms = now;
                 let _ = store.update_transfer(&record);
             }
+        }
+    }
+
+    if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
+        if res.is_ok() {
+            ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
+        } else {
+            ledger.mark_resumable(crate::state::Role::Server, &create.idempotency_key);
         }
     }
 

@@ -14,11 +14,16 @@
 //!     Byte count is never a success signal.
 //!   - Storage is staged, then atomically renamed into place.
 
+pub mod checkpoint;
 pub mod engine;
 pub mod engine_m3;
 pub mod rate_limit;
 pub mod scheduler;
 
+pub use checkpoint::{
+    CheckpointCoordinator, CheckpointPolicy, CheckpointStats, DEFAULT_CHECKPOINT_BYTES,
+    DEFAULT_CHECKPOINT_INTERVAL,
+};
 pub use rate_limit::{parse_rate_limit, RateLimiter};
 pub use scheduler::{
     ConcurrentTransferLimiter, PriorityScheduler, ScheduledTask, TransferPermit, TransferPriority,

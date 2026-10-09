@@ -72,7 +72,7 @@ impl ParallelHasher {
 
         thread::scope(|s| {
             let chunk_count = chunk_slice.len();
-            let step = (chunk_count + num_workers - 1) / num_workers;
+            let step = chunk_count.div_ceil(num_workers);
 
             let out_slices = results.chunks_mut(step);
 
@@ -118,7 +118,7 @@ impl ParallelHasher {
         let num_workers = self.concurrency.min(items.len());
         let mut failure: Option<(usize, Hash, Hash)> = None;
 
-        let step = (items.len() + num_workers - 1) / num_workers;
+        let step = items.len().div_ceil(num_workers);
 
         thread::scope(|s| {
             let mut handles = Vec::new();
@@ -175,11 +175,11 @@ impl ParallelHasher {
         }
 
         const SUB_BLOCK_SIZE: usize = 1024 * 1024; // 1 MiB sub-blocks
-        let num_blocks = (data.len() + SUB_BLOCK_SIZE - 1) / SUB_BLOCK_SIZE;
+        let num_blocks = data.len().div_ceil(SUB_BLOCK_SIZE);
 
         let mut sub_hashes = vec![Hash::ZERO; num_blocks];
         let num_workers = self.concurrency.min(num_blocks);
-        let step = (num_blocks + num_workers - 1) / num_workers;
+        let step = num_blocks.div_ceil(num_workers);
 
         thread::scope(|s| {
             for (worker_idx, out_chunk) in sub_hashes.chunks_mut(step).enumerate() {
