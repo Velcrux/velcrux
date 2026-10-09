@@ -812,4 +812,47 @@ During server graceful shutdown (`SIGTERM` / `SIGINT` drain cycle):
 3. Active entries in the `IdempotencyLedger` transition to `Resumable`.
 4. Subsequent reconnection requests using the same idempotency key pick up exactly where the transfer was stopped without re-transmitting verified chunks.
 
+---
+
+## 23. Dynamic Adaptive Compression & Shannon Entropy Sampling
+
+To prevent CPU exhaustion on incompressible streams (such as video, audio, compressed archives, and encrypted payloads) while maximizing compression ratios on compressible text, logs, and structured files, Velcrux implements a **Dynamic Adaptive Compression Selector** (`PROTOCOL.md` §3; `OPERATIONS.md` §4; `SECURITY.md` §8, §10; `REQUIREMENTS.md` §21, §32).
+
+### Shannon Entropy Sampling (`estimate_entropy`)
+
+Before committing CPU cycles to full Zstandard compression passes, chunks are screened using a sub-microsecond Shannon entropy estimator:
+
+$$H(X) = - \sum_{i=0}^{255} p_i \log_2(p_i) \quad \text{where } p_i = \frac{\text{count}(i)}{N}$$
+
+For chunks exceeding 32 KiB, the sampler inspects representative slices from the start, middle, and end, completing the evaluation in under **10 microseconds** without heap allocation.
+
+### Multi-Tier Compression Classification (`EntropyTier`)
+
+Based on the measured Shannon entropy, the chunk is mapped into an optimal processing tier:
+
+| Entropy Range ($H$) | Classification | Action | Zstandard Level | Target Data Types |
+| :--- | :--- | :--- | :--- | :--- |
+| **$H < 3.0$** | `UltraRepetitive` | Maximum ratio | **Level 7** | Zero-filled blocks, ASCII tables, repetitive logs |
+| **$3.0 \le H < 6.0$** | `Standard` | Balanced ratio | **Level 3** | Source code, configuration, markdown, JSON |
+| **$6.0 \le H < 7.5$** | `Marginal` | Fast throughput | **Level 1** | Compiled binaries, packed proto buffers |
+| **$H \ge 7.5$** | `Incompressible` | **Immediate Bypass** | *None* | MP4/MKV, JPEG/PNG, `.tar.gz`, encrypted blobs |
+
+### Historical Stream Backoff & Probing (`AdaptiveCompressionSelector`)
+
+To eliminate sampling overhead across large contiguous streams of incompressible data:
+1. **Failure Tracking**: If `backoff_failure_threshold` (default 3) consecutive chunks fail to achieve minimum byte savings (`min_savings`, default 16 bytes), the stream enters **Cooldown Backoff**.
+2. **Backoff Cooldown**: During cooldown, the selector bypasses compression for `backoff_cooldown_chunks` (default 6) without invoking the compression engine.
+3. **Adaptive Probe**: When the cooldown expires, the next chunk is probed. If the probe achieves minimum savings, compression is instantly restored. If it fails, cooldown resumes.
+
+### Runtime Telemetry & Saved CPU Tracking
+
+Adaptive compression provides real-time telemetry via `AdaptiveCompressionStats`:
+- `total_chunks`: Total chunks evaluated.
+- `bypassed_entropy`: Chunks where compression was skipped based on high Shannon entropy.
+- `bypassed_backoff`: Chunks skipped during historical backoff cooldown.
+- `compressed_chunks`: Chunks successfully compressed and transmitted over the wire.
+- `raw_bytes` vs `wire_bytes`: True wire byte reduction across mixed streams.
+- `cpu_time_saved_us_est`: Cumulative CPU time saved by avoiding futile zstd compression cycles.
+
+
 

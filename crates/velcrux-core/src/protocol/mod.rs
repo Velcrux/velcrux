@@ -22,12 +22,18 @@ pub mod varint;
 
 pub use capabilities::{Capabilities, Capability};
 pub use compression::{
-    compress_if_beneficial, compress_payload, decompress_payload_bounded, DEFAULT_ZSTD_LEVEL,
+    compress_if_beneficial, compress_payload, compute_shannon_entropy, decompress_payload_bounded,
+    estimate_entropy, AdaptiveCompressionConfig, AdaptiveCompressionSelector,
+    AdaptiveCompressionStats, CompressionDecision, EntropyTier, DEFAULT_ENTROPY_BYPASS_THRESHOLD,
+    DEFAULT_ZSTD_LEVEL, FAST_ZSTD_LEVEL, HIGH_ZSTD_LEVEL,
 };
 pub use error::{ErrorCode, ErrorDetail, ERROR_CODE_NAMES};
 pub use frame::{
-    DataFrame, DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags,
-    DATA_FRAME_HEADER_LEN, DATA_MAX_CHUNK_LEN, DATA_PREAMBLE_LEN, FRAME_HEADER_LEN,
+    decode_data_frame_header, decode_data_preamble, decode_frame, encode_data_frame,
+    encode_data_frame_adaptive, encode_data_frame_header, encode_data_frame_maybe_compressed,
+    encode_data_preamble, encode_frame, header_size_for, max_message_size, DataFrame,
+    DataFrameFlags, DataFrameHeader, DataPreamble, Frame, FrameFlags, DATA_FRAME_HEADER_LEN,
+    DATA_MAX_CHUNK_LEN, DATA_PREAMBLE_LEN, FRAME_HEADER_LEN,
 };
 pub use fuzzing::{assert_decoder_panic_free, assert_no_panic, FuzzMutator};
 pub use limits::*;

@@ -49,6 +49,10 @@ pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,
 };
+pub use protocol::{
+    compute_shannon_entropy, estimate_entropy, AdaptiveCompressionConfig,
+    AdaptiveCompressionSelector, AdaptiveCompressionStats, CompressionDecision, EntropyTier,
+};
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, IdempotencyAction, IdempotencyLedger,

@@ -57,9 +57,11 @@ use tokio::sync::mpsc;
 
 use crate::chunking::{create_chunker, ChunkMode, ChunkParams, Chunker, RollingChunker};
 use crate::error::{Result, VelcruxError};
+use crate::protocol::compression::AdaptiveCompressionSelector;
 use crate::protocol::frame::{
-    decode_data_frame_header, decode_data_preamble, encode_data_frame_maybe_compressed,
-    encode_data_preamble, DataPreamble, DATA_FRAME_HEADER_LEN, DATA_PREAMBLE_LEN,
+    decode_data_frame_header, decode_data_preamble, encode_data_frame_adaptive,
+    encode_data_frame_maybe_compressed, encode_data_preamble, DataPreamble, DATA_FRAME_HEADER_LEN,
+    DATA_PREAMBLE_LEN,
 };
 use crate::protocol::limits::MAX_CHUNK_SIZE;
 use crate::protocol::message::{
@@ -326,6 +328,7 @@ pub async fn client_upload_stream(
                     let mut file = tokio::fs::File::open(&*local_path).await?;
                     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
+                    let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
                     loop {
                         let work_idx =
                             next_work_idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -339,12 +342,13 @@ pub async fn client_upload_stream(
                         let mut buf = vec![0u8; want];
                         file.read_exact(&mut buf).await?;
                         let hash = Hash::of(&buf);
-                        let (bytes, _) = encode_data_frame_maybe_compressed(
-                            offset,
-                            &hash,
-                            &buf,
-                            cfg.compression,
-                        );
+                        let (bytes, _) = if cfg.compression {
+                            let (b, c, _) =
+                                encode_data_frame_adaptive(offset, &hash, &buf, &mut comp_selector);
+                            (b, c)
+                        } else {
+                            encode_data_frame_maybe_compressed(offset, &hash, &buf, false)
+                        };
                         if let Some(ref lim) = limiter_clone {
                             lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
@@ -408,6 +412,7 @@ pub async fn client_upload_stream(
                 }
             }
 
+            let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
             while next_chunk < total_chunks {
                 let offset = next_chunk * chunk_size;
                 let want = (file_size - offset).min(chunk_size) as usize;
@@ -423,8 +428,13 @@ pub async fn client_upload_stream(
                 }
                 let hash = Hash::of(&buf);
                 bitmap.mark_complete(next_chunk, read as u64);
-                let (bytes, _) =
-                    encode_data_frame_maybe_compressed(offset, &hash, &buf, cfg.compression);
+                let (bytes, _) = if cfg.compression {
+                    let (b, c, _) =
+                        encode_data_frame_adaptive(offset, &hash, &buf, &mut comp_selector);
+                    (b, c)
+                } else {
+                    encode_data_frame_maybe_compressed(offset, &hash, &buf, false)
+                };
                 if let Some(ref lim) = cfg.rate_limiter {
                     lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                 }
@@ -1635,6 +1645,7 @@ pub async fn server_download_session_with_compression(
                     .await?;
 
                 if file_size > 0 {
+                    let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
                     loop {
                         let work_idx =
                             next_work_idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1656,12 +1667,22 @@ pub async fn server_download_session_with_compression(
                             read_bytes += n;
                         }
                         let hash = hash_bytes(&buf[..read_bytes]);
-                        let (bytes, _) = encode_data_frame_maybe_compressed(
-                            offset,
-                            &hash,
-                            &buf[..read_bytes],
-                            comp,
-                        );
+                        let (bytes, _) = if comp {
+                            let (b, c, _) = encode_data_frame_adaptive(
+                                offset,
+                                &hash,
+                                &buf[..read_bytes],
+                                &mut comp_selector,
+                            );
+                            (b, c)
+                        } else {
+                            encode_data_frame_maybe_compressed(
+                                offset,
+                                &hash,
+                                &buf[..read_bytes],
+                                false,
+                            )
+                        };
                         if let Some(ref lim) = limiter_clone {
                             lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
@@ -1708,6 +1729,7 @@ pub async fn server_download_session_with_compression(
                 (file_size + chunk_size - 1) / chunk_size
             };
             let mut next_chunk = bm.first_missing_from(0).unwrap_or(total_chunks);
+            let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
             while next_chunk < total_chunks {
                 let offset = next_chunk * chunk_size;
                 let want = ((file_size - offset).min(chunk_size)) as usize;
@@ -1723,12 +1745,17 @@ pub async fn server_download_session_with_compression(
                     read_bytes += n;
                 }
                 let hash = hash_bytes(&buf[..read_bytes]);
-                let (bytes, _) = encode_data_frame_maybe_compressed(
-                    offset,
-                    &hash,
-                    &buf[..read_bytes],
-                    compression,
-                );
+                let (bytes, _) = if compression {
+                    let (b, c, _) = encode_data_frame_adaptive(
+                        offset,
+                        &hash,
+                        &buf[..read_bytes],
+                        &mut comp_selector,
+                    );
+                    (b, c)
+                } else {
+                    encode_data_frame_maybe_compressed(offset, &hash, &buf[..read_bytes], false)
+                };
                 if let Some(ref lim) = rate_limiter {
                     lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                 }
@@ -1752,6 +1779,7 @@ pub async fn server_download_session_with_compression(
             // `pending`; it equals the file offset of the first unread byte.
             let mut file_offset: u64 = 0;
             let mut pending_offset: u64 = 0;
+            let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
 
             loop {
                 let n = reader.read_at(file_offset, &mut read_buf).await?;
@@ -1759,12 +1787,22 @@ pub async fn server_download_session_with_compression(
                     // EOF: emit trailing chunk if any.
                     if !pending.is_empty() {
                         let hash = hash_bytes(&pending);
-                        let (bytes, _) = encode_data_frame_maybe_compressed(
-                            pending_offset,
-                            &hash,
-                            &pending,
-                            compression,
-                        );
+                        let (bytes, _) = if compression {
+                            let (b, c, _) = encode_data_frame_adaptive(
+                                pending_offset,
+                                &hash,
+                                &pending,
+                                &mut comp_selector,
+                            );
+                            (b, c)
+                        } else {
+                            encode_data_frame_maybe_compressed(
+                                pending_offset,
+                                &hash,
+                                &pending,
+                                false,
+                            )
+                        };
                         if let Some(ref lim) = rate_limiter {
                             lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                         }
@@ -1781,12 +1819,17 @@ pub async fn server_download_session_with_compression(
                     let need = (target - pending_offset) as usize;
                     let hash = hash_bytes(&pending[..need]);
                     let payload = pending.drain(..need).collect::<Vec<u8>>();
-                    let (bytes, _) = encode_data_frame_maybe_compressed(
-                        pending_offset,
-                        &hash,
-                        &payload,
-                        compression,
-                    );
+                    let (bytes, _) = if compression {
+                        let (b, c, _) = encode_data_frame_adaptive(
+                            pending_offset,
+                            &hash,
+                            &payload,
+                            &mut comp_selector,
+                        );
+                        (b, c)
+                    } else {
+                        encode_data_frame_maybe_compressed(pending_offset, &hash, &payload, false)
+                    };
                     if let Some(ref lim) = rate_limiter {
                         lim.acquire(bytes.len() - DATA_FRAME_HEADER_LEN).await;
                     }

@@ -425,6 +425,44 @@ pub fn encode_data_frame_maybe_compressed(
     (buf, false)
 }
 
+/// Encode a DATA frame with dynamic adaptive compression selection (Option AO).
+///
+/// Evaluates payload entropy and historical stream compressibility, selecting
+/// the optimal compression tier or bypassing compression completely.
+///
+/// Returns `(wire_bytes, was_compressed, decision)`.
+pub fn encode_data_frame_adaptive(
+    chunk_offset: u64,
+    chunk_hash: &crate::util::Hash,
+    payload: &[u8],
+    selector: &mut crate::protocol::compression::AdaptiveCompressionSelector,
+) -> (
+    Vec<u8>,
+    bool,
+    crate::protocol::compression::CompressionDecision,
+) {
+    let (maybe_compressed, decision) = selector.process_payload(payload);
+    if let Some(compressed) = maybe_compressed {
+        let buf = encode_data_frame(
+            chunk_offset,
+            compressed.len() as u32,
+            DataFrameFlags::COMPRESSED,
+            chunk_hash,
+            &compressed,
+        );
+        (buf, true, decision)
+    } else {
+        let buf = encode_data_frame(
+            chunk_offset,
+            payload.len() as u32,
+            DataFrameFlags::NONE,
+            chunk_hash,
+            payload,
+        );
+        (buf, false, decision)
+    }
+}
+
 /// Encode a frame into `out`. Returns the number of bytes written.
 ///
 /// `out` must be sized for the full frame: `header_size_for(length) + length`.
