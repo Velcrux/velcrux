@@ -1077,6 +1077,56 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-009](adr/ADR-009-zero-knowledge-chunk-encryption.md)**: Zero-Knowledge Client-Side Chunk Encryption & AEAD Tamper-Proof Storage
 - **[ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md)**: QUIC Connection Migration & Failover Gating
 
+---
+
+## 27. Dynamic Multi-Tenant Bandwidth Allocator & Fairness Scheduler
+
+In conformance with `REQUIREMENTS.md` §28 ("Bandwidth Control"), §29 ("Fairness"), and `ARCHITECTURE.md` §5, Velcrux provides a hierarchical bandwidth allocator and priority fairness scheduler.
+
+### 1. Hierarchical Multi-Tier Bandwidth Allocation
+
+Velcrux enforces three hierarchical rate limiting tiers:
+1. **Global Server Ceiling**: Hard server-wide aggregate bandwidth ceiling (e.g. `10Gbps`).
+2. **Per-Tenant / Per-User Ceiling**: Bandwidth quota allocated to an authenticated client identity or organization (e.g. `1Gbps`).
+3. **Per-Transfer Session Ceiling**: Rate limit specified on an individual transfer invocation (e.g. `100Mbps`).
+
+#### Composition Rule
+The effective transmission rate for any chunk write is the strict mathematical minimum across all three active tiers:
+$$\text{EffectiveRate}(t) = \min\left(R_{\text{global}}, R_{\text{user}}, R_{\text{transfer}}\right)$$
+
+### 2. Token Bucket Pacing (No Arbitrary Thread Sleep)
+
+Arbitrary thread sleeping produces bursty, loss-inducing traffic that destabilizes QUIC congestion control. Velcrux employs a fine-grained token bucket with a bounded 100ms burst window. If a tenant exceeds their quota, tokens enter a deficit state:
+$$\Delta t = \frac{\text{Bytes} - \text{Tokens}_{\text{available}}}{\text{Rate}_{\text{bytes/sec}}}$$
+
+The scheduler paces writes asynchronously using non-blocking event-driven timers (`tokio::time::sleep`), guaranteeing smooth packet transmission without starvation or UDP flooding.
+
+### 3. Strict Priority Classes & 4:1 Weighted Round-Robin (WRR)
+
+Transfers and metadata are classified into three distinct priority levels:
+- **`PriorityClass::High`**: Control messages, small metadata chunks, and interactive CLI sync commands. **High priority queues are drained to complete exhaustion first.**
+- **`PriorityClass::Normal`**: Standard bulk data transfers and file streams.
+- **`PriorityClass::Low`**: Background synchronization, automated archival, and non-blocking maintenance runs.
+
+#### 4:1 Weighted Round-Robin Interleaving
+When `High` priority queues are empty, bandwidth is dynamically shared between `Normal` and `Low` priorities using Weighted Round-Robin with a **4:1 ratio**:
+```text
+[Step 1] Normal Chunk
+[Step 2] Normal Chunk
+[Step 3] Normal Chunk
+[Step 4] Normal Chunk
+[Step 5] Low Chunk
+(Repeats modulo 5)
+```
+If either queue runs dry, the scheduler yields 100% of the remaining cycles to the active queue without stalling or latency penalties.
+
+### 4. Sequential Chunk Offset Preservation
+
+Within any individual transfer session, chunks are strictly queued and dispatched in sequential byte offset order:
+$$\text{Offset}_0 < \text{Offset}_1 < \dots < \text{Offset}_n$$
+This guarantees sequential disk writes on the receiving peer, maximizing NVMe/SSD streaming bandwidth and eliminating costly random I/O head contention.
+
+
 
 
 

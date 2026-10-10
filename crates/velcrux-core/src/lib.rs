@@ -26,6 +26,7 @@ pub mod crypto;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
+pub mod scheduler;
 pub mod session;
 pub mod state;
 pub mod storage;
@@ -66,6 +67,10 @@ pub use state::{
     MAX_WIRE_CHUNKS,
 };
 
+pub use scheduler::{
+    BandwidthRate, FairnessScheduler, HierarchicalBandwidthAllocator, ParseBandwidthError,
+    PriorityClass, ScheduledItem,
+};
 pub use storage::{
     gc_chunk_store, gc_staging, AlignedSectorBuffer, ChunkStore, ChunkStoreGcReport,
     DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
