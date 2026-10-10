@@ -1,0 +1,34 @@
+[Unit]
+Description=velcrux bulk transfer client worker
+Documentation=https://github.com/Velcrux/velcrux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=velcrux
+Group=velcrux
+EnvironmentFile=-/etc/velcrux/velcrux.env
+ExecStart=/usr/local/bin/velcrux sync --config /etc/velcrux/client.toml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60
+
+# Graceful drain: finish in-flight chunks, flush SQLite checkpoints
+KillSignal=SIGTERM
+
+# Security hardening (systemd-analyze security score > 9.0)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/velcrux
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=4G
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

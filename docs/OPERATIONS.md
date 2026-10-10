@@ -1008,6 +1008,76 @@ If an adversary alters the chunk index, shifts the offset, or attempts to substi
   $$\text{Key}_{\text{transfer}} = \text{BLAKE3-KDF}(\text{MasterKey}, \text{"velcrux-zero-knowledge-transfer-v1"}, \text{TransferId})$$
 - **Zeroize on Drop**: Key structs zero their memory buffers upon destruction.
 
+---
+
+## 26. Enterprise Production Deployment Packaging & ADR Index
+
+Conforming to `REQUIREMENTS.md` §76 ("Deployment"), §77 ("Docker"), §78 ("Configuration Security"), and §80 ("Architecture Decision Records"), Velcrux provides production deployment manifests and an automated packaging generator CLI.
+
+### 1. Automated CLI Manifest Generator (`velcrux package`)
+
+Operators can generate production-grade, validated service units and deployment manifests directly from the client CLI:
+
+```bash
+# Generate Linux systemd server daemon unit
+velcrux package systemd --server --memory-max 16G --nofile 131072 > /etc/systemd/system/velcruxd.service
+
+# Generate Linux systemd client worker unit
+velcrux package systemd --user velcrux --config /etc/velcrux/client.toml > /etc/systemd/system/velcrux.service
+
+# Generate macOS launchd daemon plist
+velcrux package launchd --log-path /var/log/velcrux/velcruxd.log > /Library/LaunchDaemons/com.velcrux.velcruxd.plist
+
+# Generate Kubernetes StatefulSet & LoadBalancer Service manifest
+velcrux package k8s --image ghcr.io/velcrux/velcrux:v0.1.0 > velcrux-statefulset.yaml
+
+# Generate hardened multi-stage Dockerfile
+velcrux package docker > Dockerfile
+```
+
+### 2. Linux Systemd Service Units (`packaging/systemd/`)
+
+Both server (`velcruxd.service`) and client (`velcrux.service`) include security hardening complying with `systemd-analyze security`:
+- **Unprivileged User**: Runs strictly under `User=velcrux`, `Group=velcrux`.
+- **Capability Isolation**: `NoNewPrivileges=true`, `PrivateTmp=true`.
+- **Filesystem Isolation**: `ProtectSystem=strict`, `ProtectHome=true`, with restricted `ReadWritePaths` for data directories only.
+- **Resource Limits**: `MemoryMax` hard memory caps and `LimitNOFILE=65536` file descriptor headroom.
+- **Graceful Shutdown**: `KillSignal=SIGTERM` and `TimeoutStopSec=120` ensuring active transfers flush checkpoints and sync SQLite WAL files.
+
+### 3. Secret References & Environment Overrides (`packaging/systemd/velcruxd.env`)
+
+In compliance with §78 ("Configuration Security"), sensitive TLS keys and passphrases are decoupled from configuration files:
+```bash
+VELCRUX_LISTEN_ADDR=0.0.0.0:7443
+VELCRUX_METRICS_ADDR=127.0.0.1:9443
+VELCRUX_TLS_CERT=/etc/velcrux/certs/server.crt
+VELCRUX_TLS_KEY=/etc/velcrux/certs/server.key
+VELCRUX_CLIENT_CA=/etc/velcrux/certs/ca.crt
+```
+
+### 4. Kubernetes Production StatefulSet (`packaging/k8s/`)
+
+The Kubernetes manifest deploys `velcruxd` with:
+- **Zero-Privilege Container**: `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, and all Linux capabilities dropped (`drop: [ALL]`).
+- **Telemetry Probes**: Native readiness and liveness HTTP probes against `/metrics` on port 9443.
+- **Persistent Volume Claims**: Separate dedicated storage volumes for bulk files (`1Ti`) and SQLite WAL state database (`50Gi`).
+
+### 5. Complete Architecture Decision Records Catalog (`docs/adr/`)
+
+Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with problem definition, evaluated alternatives, decision rationale, and consequences:
+
+- **[ADR-001](adr/ADR-001-quic-transport.md)**: QUIC as Transport Protocol
+- **[ADR-002](adr/ADR-002-rust.md)**: Rust Implementation Language & Memory Safety
+- **[ADR-003](adr/ADR-003-blake3.md)**: BLAKE3 Cryptographic Tree Hashing
+- **[ADR-004](adr/ADR-004-chunking.md)**: FastCDC Gear Hash vs Fixed Chunking
+- **[ADR-005](adr/ADR-005-persistence.md)**: SQLite WAL State & Streaming Manifests
+- **[ADR-006](adr/ADR-006-chunk-store.md)**: Content-Addressed Chunk Store (CAS) & Generational GC
+- **[ADR-007](adr/ADR-007-stream-model.md)**: One QUIC Stream Per File Model
+- **[ADR-008](adr/ADR-008-versioning.md)**: Protocol Versioning & Capability Negotiation Floor
+- **[ADR-009](adr/ADR-009-zero-knowledge-chunk-encryption.md)**: Zero-Knowledge Client-Side Chunk Encryption & AEAD Tamper-Proof Storage
+- **[ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md)**: QUIC Connection Migration & Failover Gating
+
+
 
 
 

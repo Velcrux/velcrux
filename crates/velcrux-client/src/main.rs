@@ -13,6 +13,7 @@ use velcrux_core::session::ClientSession;
 use velcrux_core::transport::quic::{ClientBuilder, ClientIdentity, QuicConnection};
 use velcrux_core::transport::SharedTransport;
 
+mod package;
 mod ping;
 
 /// velcrux — high-throughput bulk transfer over QUIC.
@@ -262,6 +263,11 @@ enum Cmd {
     },
     /// Display host hardware SIMD vector acceleration and CPU capabilities.
     Hardware,
+    /// Generate production service units and deployment manifests (systemd, launchd, docker, k8s).
+    Package {
+        #[command(subcommand)]
+        target: package::PackageTarget,
+    },
 }
 
 fn init_tracing(format: &str) {
@@ -630,6 +636,10 @@ async fn main() -> anyhow::Result<()> {
                 );
                 println!("  Features:          {}", features.description());
             }
+            return Ok(());
+        }
+        Cmd::Package { target } => {
+            package::execute_package_target(target.clone(), cli_log_json(&cli))?;
             return Ok(());
         }
 
