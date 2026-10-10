@@ -104,8 +104,10 @@ pub use transport::{
     AdaptiveFlowController, BaselineComparator, BdpEstimator, BenchmarkMetrics, BenchmarkScenario,
     Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, MigrationCoordinator,
     MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode, MigrationStats,
-    PacingController, SharedTransport, TokenBucket, TransportConfigTunables, WanMatrixReport,
-    WanMatrixRunner,
+    NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator, PacingController, PmtuConfig,
+    PmtuCoordinator, PmtuState, PmtuStats, SharedTransport, TokenBucket, TransportConfigTunables,
+    WanMatrixReport, WanMatrixRunner, BASE_PLPMTU, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU,
+    JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, VectorizedScanner,

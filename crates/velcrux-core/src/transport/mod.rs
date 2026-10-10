@@ -13,6 +13,7 @@ pub mod identity;
 pub mod impairment;
 pub mod interface;
 pub mod migration;
+pub mod pmtu;
 pub mod quic;
 pub mod stats;
 
@@ -32,6 +33,11 @@ pub use interface::{find_interface, list_interfaces, resolve_bind_addr, Interfac
 pub use migration::{
     MigrationCoordinator, MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode,
     MigrationStats,
+};
+pub use pmtu::{
+    NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator, PmtuConfig, PmtuCoordinator,
+    PmtuState, PmtuStats, BASE_PLPMTU, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU, JUMBO_FRAME_MTU,
+    STANDARD_ETHERNET_MTU,
 };
 pub use quic::{
     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,

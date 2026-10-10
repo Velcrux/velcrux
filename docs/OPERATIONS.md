@@ -1126,6 +1126,47 @@ Within any individual transfer session, chunks are strictly queued and dispatche
 $$\text{Offset}_0 < \text{Offset}_1 < \dots < \text{Offset}_n$$
 This guarantees sequential disk writes on the receiving peer, maximizing NVMe/SSD streaming bandwidth and eliminating costly random I/O head contention.
 
+---
+
+## 28. Network Path MTU Discovery (PMTU / DPLPMTUD RFC 8899), Blackhole Detection & NAT Firewall Traversal
+
+Per `REQUIREMENTS.md` §75 ("NAT and Firewall Considerations") and RFC 8899 / RFC 9000, Velcrux provides robust transport-layer path adaptation for heterogenous enterprise WANs, firewalls, and NAT gateways.
+
+### 1. Datagram Packetization Layer PMTU Discovery (DPLPMTUD)
+
+Velcrux implements Datagram Packetization Layer Path MTU Discovery (DPLPMTUD RFC 8899) across QUIC datagrams:
+- **Baseline Floor**: 1200 bytes (`BASE_PLPMTU`), conforming to RFC 9000 guaranteed baseline across all IPv4 and IPv6 routes.
+- **Probe Step Hierarchy**: Candidate packet sizes are progressively probed in ascending order:
+  $$\text{Candidates} = [1200, 1280, 1420, 1500, 2048, 4096, 9000]$$
+- **Verification via Probe ACKs**: Probing datagrams are dispatched without blocking the data stream. Upon confirmation via QUIC ACK, the transport MTU ceiling is raised to the validated size. If a probe size fails three consecutive attempts, probing terminates and locks to the highest validated MTU.
+
+### 2. Path MTU Blackhole Detection & Downshift
+
+When intermediate WAN routing tables change dynamically (e.g. BGP failover to a path with lower MTU or broken ICMP packet-too-big blackholes), large packets are dropped silently without ICMP generation:
+- **Detection Trigger**: If consecutive data packet loss reaches the threshold (default: 4 losses at $>1200$ byte MTU), the coordinator triggers a blackhole alert.
+- **Emergency Downshift**: Immediately collapses `current_mtu` to 1200 bytes (`BASE_PLPMTU`) and enters `BlackholeRecovery` state.
+- **Zero Session Reset**: Resumes streaming smaller packets immediately without resetting or re-authenticating the TLS/QUIC session.
+
+### 3. Stateful NAT Pinhole & Adaptive Keepalive Scaling
+
+Stateful NAT and firewall devices purge UDP mapping entries when idle:
+- **Baseline Interval**: Default 15s keepalive ping interval keeps state tables alive for typical 30s-120s timeouts.
+- **Adaptive Tightening**: Upon observing NAT rebinding events (source port changes, mobile roaming, or path migration), the coordinator dynamically scales down the keepalive interval (15s $\rightarrow$ 10s $\rightarrow$ 5s) to guarantee persistent pinholes.
+- **Inactivity Reset**: Normal data packet transfers automatically refresh the last activity timer, eliminating unnecessary keepalive overhead during active data streaming.
+
+### 4. Firewall Deployment & Administrator Checklist
+
+For production enterprise deployment behind firewalls and edge load balancers:
+
+| Configuration Item | Recommended Value | Operational Rationale |
+| :--- | :--- | :--- |
+| **Ingress UDP Port** | `7443/UDP` | Primary QUIC transport listen port. |
+| **Firewall UDP State Timeout** | $\ge 60\text{ seconds}$ | Prevents premature NAT table eviction during momentary idle pauses. |
+| **ICMP Type 3 Code 4** | Permit Inbound | Allows PMTU Fragmentation Needed messages to reach endpoints. |
+| **Jumbo Frames** | `MTU 9000` (LAN/Private WAN) | DPLPMTUD will automatically probe and utilize 9000 byte frames for reduced CPU overhead. |
+| **Symmetric NAT Handling** | Enabled | Velcrux QUIC Connection ID migration automatically handles port/IP rebinding. |
+
+
 
 
 
