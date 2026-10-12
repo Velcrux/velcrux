@@ -80,15 +80,16 @@ pub use storage::{
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
-    plan_directory_diff, plan_directory_sync, recv_directory_manifest, resume_interrupted_commit,
-    scan_dir_entries, send_directory_manifest, AdaptiveCostEstimator, BatchContainerReader,
-    BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, BloomFilter, ChunkExtent, CostBreakdown,
-    CostDecision, CostEstimator, DeleteMode, DeltaProgress, DeltaReconstructor, DeltaSyncReport,
-    DeviceProfile, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult,
-    FileAction, FileActionType, LocalInventory, NetworkProfile, RleBitmap, RleRun, ScannedEntry,
+    matches_glob, plan_directory_diff, plan_directory_sync, recv_directory_manifest,
+    resume_interrupted_commit, scan_dir_entries, send_directory_manifest, AdaptiveCostEstimator,
+    BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, BloomFilter,
+    ChunkExtent, CostBreakdown, CostDecision, CostEstimator, DeleteGuardrails, DeleteMode,
+    DeleteSafetyError, DeltaProgress, DeltaReconstructor, DeltaSyncReport, DeviceProfile,
+    DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction,
+    FileActionType, LocalInventory, NetworkProfile, PathFilter, RleBitmap, RleRun, ScannedEntry,
     SmallFileBatch, SmallFileBatchConfig, SmallFileBatchPlanner, SyncDecision, SyncError, SyncPlan,
-    TransferMode, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES, DEFAULT_BATCH_MAX_FILES,
-    DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
+    TransferMode, TransferPlan, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES,
+    DEFAULT_BATCH_MAX_FILES, DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
 };
 pub use telemetry::{
     sample_current_process_rss, BottleneckDiagnosis, BottleneckKind, ComponentKind,

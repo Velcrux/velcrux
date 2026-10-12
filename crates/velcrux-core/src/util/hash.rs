@@ -139,6 +139,25 @@ impl AsRef<[u8]> for Hash {
         &self.0
     }
 }
+
+impl serde::Serialize for Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Hash::from_hex(&s).ok_or_else(|| serde::de::Error::custom("invalid 64-char hex hash"))
+    }
+}
 /// Streaming BLAKE3-256 hasher. Construct with [`HashHasher::new`], feed
 /// bytes with [`HashHasher::feed`], finalise with [`HashHasher::finalize`].
 ///

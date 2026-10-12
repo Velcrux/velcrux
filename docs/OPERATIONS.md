@@ -1244,6 +1244,80 @@ BOTTLENECK DIAGNOSIS & ACTIONABLE TUNING RECOMMENDATIONS:
 ========================================================================================
 ```
 
+---
+
+## 30. Transfer Planning, Dry-Run Previews & Safe Delete Semantics (Option AV)
+
+Per `REQUIREMENTS.md` §57 ("Transfer Plan"), §58 ("Dry Run"), §59 ("Delete Semantics"), §60 ("Security of Synchronization"), §61 ("Transactional Synchronization"), and `ADR-012`:
+
+Velcrux provides a deterministic pre-flight transfer planning engine, full zero-mutation dry-run execution preview, multi-mode deletion sequencing, and safety threshold guardrails to protect against catastrophic data loss.
+
+### 1. Key Capabilities
+
+| Feature | CLI Flag / Command | Operational Behaviour |
+| :--- | :--- | :--- |
+| **Transfer Plan** | `velcrux plan <src> <dst>` | Pre-computes reconciliation diff, file counts, reusable bytes, wire transfer bytes, and bandwidth reduction percentage without modifying destination. |
+| **Dry Run** | `velcrux sync ... --dry-run` | Runs full planning and small-file batching preview; guarantees zero bytes written or deleted at destination. |
+| **Post-Commit Delete** | `--delete` or `--delete-after` | Deletes extraneous files only after all staged files are transferred, verified, and committed. Safe default for deletions. |
+| **Pre-Transfer Delete** | `--delete-before` | Deletes extraneous destination files before transfer begins. Reclaims disk space on capacity-constrained destination volumes. |
+| **Exclude Deletion** | `--delete-excluded` | Deletes extraneous destination files AND any files on destination matching active `--exclude` glob filters. |
+| **Pattern Filters** | `--exclude <glob>` | Ignores matching files from source sync (supports `*.tmp`, `build/**`, `node_modules/*`, etc.). |
+| **Deletion Guardrails** | `--max-delete <N>`<br>`--max-delete-pct <P>` | Aborts sync before any file is deleted if scheduled deletions exceed absolute count $N$ or percentage $P\%$ of destination files. |
+| **Safety Override** | `--force-delete` | Bypasses threshold limits when bulk deletion is explicitly intended by operator. |
+
+### 2. Operational CLI Commands
+
+```bash
+# 1. Preview transfer plan and estimated bandwidth savings
+velcrux plan /local/dataset /backup/dataset
+
+# 2. Preview transfer plan with machine-readable JSON for CI automation
+velcrux --json plan /local/dataset /backup/dataset
+
+# 3. Dry-run directory sync with pattern exclusions
+velcrux sync /local/dataset /backup/dataset --dry-run --exclude "*.tmp" --exclude ".git/**"
+
+# 4. Standard safe synchronization with post-commit deletions
+velcrux sync /local/dataset /backup/dataset --delete-after
+
+# 5. Disk-constrained sync reclaiming disk space before transfer begins
+velcrux sync /local/dataset /backup/dataset --delete-before
+
+# 6. Synchronization with threshold safety guardrail (abort if >50 files would be deleted)
+velcrux sync /local/dataset /backup/dataset --delete --max-delete 50
+
+# 7. Operator override to force deletion of large batch
+velcrux sync /local/dataset /backup/dataset --delete --max-delete 50 --force-delete
+
+# 8. Clean temporary files on destination matching exclusion filters
+velcrux sync /local/dataset /backup/dataset --exclude "*.log" --delete-excluded
+```
+
+### 3. Sample Transfer Plan Output
+
+```text
+========================================================================================
+                   VELCRUX TRANSFER PLAN (DRY-RUN EXECUTION PREVIEW)                   
+========================================================================================
+Source Directory     : /data/dataset
+Destination Directory: /backup/dataset
+Deletion Policy      : DeleteAfter (post-commit verified deletion)
+----------------------------------------------------------------------------------------
+Files total:                    12,431
+Files unchanged:                12,218
+Files modified:                    182
+Files added:                        31
+Files deleted:                       7
+----------------------------------------------------------------------------------------
+Total source data:             5.00 TB
+Data already present:          4.82 TB
+Data to transfer:               183 GB
+Estimated reduction:             96.4%
+========================================================================================
+NOTE: Running in dry-run mode. Destination data was NOT modified.
+```
+
+
 
 
 

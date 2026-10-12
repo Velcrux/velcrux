@@ -11,6 +11,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 use crate::chunking::{ChunkEngine, ChunkMode, ChunkParams};
 use crate::state::{CommitJournalEntry, CommitStatus, StateStore};
 use crate::storage::LocalChunkStore;
@@ -20,23 +22,12 @@ use crate::sync::reconstruct::DeltaReconstructor;
 use crate::sync::SyncError;
 use crate::util::{Hash, TransferId};
 
-/// Explicit deletion mode for directory synchronization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeleteMode {
-    /// Safe default: never delete destination files, even if absent on source.
-    None,
-    /// Delete extraneous destination files only after all transfers and commits have succeeded.
-    DeleteAfter,
-}
-
-impl Default for DeleteMode {
-    fn default() -> Self {
-        DeleteMode::None
-    }
-}
+pub use crate::sync::plan::{
+    DeleteGuardrails, DeleteMode, DeleteSafetyError, PathFilter, TransferPlan,
+};
 
 /// Action determined for an individual file during directory reconciliation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileActionType {
     /// File is identical on source and destination (same size and hash).
     Unchanged,
@@ -49,7 +40,7 @@ pub enum FileActionType {
 }
 
 /// A planned file action with transfer and reuse estimations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileAction {
     /// Path relative to the sync root (using forward slashes).
     pub rel_path: String,
@@ -68,7 +59,7 @@ pub struct FileAction {
 }
 
 /// Summary metrics of a directory reconciliation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectoryDiffSummary {
     /// Number of files with identical content.
     pub files_unchanged: usize,
@@ -128,7 +119,7 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// A complete plan for directory synchronization.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectoryPlan {
     /// List of per-file actions in deterministic sorted order.
     pub actions: Vec<FileAction>,
@@ -159,6 +150,10 @@ pub struct DirectorySyncOptions {
     pub small_file_threshold: u64,
     /// Maximum container data bytes per batch (default: 32 MiB).
     pub batch_max_bytes: u64,
+    /// Deletion safety guardrails to prevent accidental destructive operations.
+    pub delete_guardrails: DeleteGuardrails,
+    /// Optional pattern filter for include/exclude rules.
+    pub filter: Option<PathFilter>,
 }
 
 impl Default for DirectorySyncOptions {
@@ -174,11 +169,31 @@ impl Default for DirectorySyncOptions {
             batch_small_files: true,
             small_file_threshold: crate::sync::batch::DEFAULT_SMALL_FILE_THRESHOLD,
             batch_max_bytes: crate::sync::batch::DEFAULT_BATCH_MAX_BYTES,
+            delete_guardrails: DeleteGuardrails::default(),
+            filter: None,
         }
     }
 }
 
 impl DirectorySyncOptions {
+    /// Configure deletion mode.
+    pub fn with_delete_mode(mut self, mode: DeleteMode) -> Self {
+        self.delete_mode = mode;
+        self
+    }
+
+    /// Configure deletion guardrails.
+    pub fn with_delete_guardrails(mut self, guardrails: DeleteGuardrails) -> Self {
+        self.delete_guardrails = guardrails;
+        self
+    }
+
+    /// Configure path filter.
+    pub fn with_filter(mut self, filter: PathFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
     /// Configure dry-run mode.
     pub fn with_dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
@@ -1173,14 +1188,32 @@ pub fn plan_directory_sync(
 
     // Collect all relative paths
     let mut all_paths = BTreeMap::new();
+    let filter = options.filter.as_ref();
+
     for (p, sf) in &src_files {
+        if let Some(flt) = filter {
+            if flt.is_excluded(p) {
+                continue;
+            }
+        }
         all_paths.insert(p.clone(), (Some(sf), None));
     }
+
     for (p, df) in &dst_files {
-        all_paths
-            .entry(p.clone())
-            .and_modify(|pair| pair.1 = Some(df))
-            .or_insert((None, Some(df)));
+        let is_excluded = filter.map(|f| f.is_excluded(p)).unwrap_or(false);
+        if is_excluded {
+            if options.delete_mode == DeleteMode::DeleteExcluded {
+                all_paths
+                    .entry(p.clone())
+                    .and_modify(|pair| pair.1 = Some(df))
+                    .or_insert((None, Some(df)));
+            }
+        } else {
+            all_paths
+                .entry(p.clone())
+                .and_modify(|pair| pair.1 = Some(df))
+                .or_insert((None, Some(df)));
+        }
     }
 
     for (rel_path, (sf_opt, df_opt)) in all_paths {
@@ -1471,6 +1504,41 @@ pub fn execute_directory_sync(
             batch_containers: batched_plan.batch_containers_count,
             roundtrips_saved: batched_plan.roundtrips_saved,
         });
+    }
+
+    // Scan destination file count for safety guardrails
+    let dst_entries = scan_dir_entries(dst_dir).unwrap_or_default();
+    let total_dst_files = dst_entries.len();
+
+    // Check deletion safety guardrails if any deletion mode is active
+    if options.delete_mode != DeleteMode::None && plan.summary.files_deleted > 0 {
+        options
+            .delete_guardrails
+            .validate_deletions(total_dst_files, plan.summary.files_deleted)?;
+
+        for action in &plan.actions {
+            if action.action == FileActionType::Delete {
+                DeleteGuardrails::validate_deletion_path(&action.rel_path, dst_dir)?;
+            }
+        }
+    }
+
+    // If DeleteBefore is requested, execute safe deletions before staging and transferring
+    let mut files_deleted = 0usize;
+    if options.delete_mode == DeleteMode::DeleteBefore {
+        for action in &plan.actions {
+            if action.action == FileActionType::Delete {
+                let target = dst_dir.join(&action.rel_path);
+                if target.symlink_metadata().is_ok() {
+                    let _ = std::fs::remove_file(&target);
+                    let sidecar = crate::storage::xattr_sidecar_path(&target);
+                    if sidecar.symlink_metadata().is_ok() {
+                        let _ = std::fs::remove_file(&sidecar);
+                    }
+                    files_deleted += 1;
+                }
+            }
+        }
     }
 
     let transfer_id = TransferId::generate();
@@ -1837,9 +1905,10 @@ pub fn execute_directory_sync(
         files_committed += 1;
     }
 
-    // --- DELETIONS PHASE ---
-    let mut files_deleted = 0usize;
-    if options.delete_mode == DeleteMode::DeleteAfter {
+    // --- POST-COMMIT DELETIONS PHASE ---
+    if options.delete_mode == DeleteMode::DeleteAfter
+        || options.delete_mode == DeleteMode::DeleteExcluded
+    {
         for action in &plan.actions {
             if action.action == FileActionType::Delete {
                 let target = dst_dir.join(&action.rel_path);

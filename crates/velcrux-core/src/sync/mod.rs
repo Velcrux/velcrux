@@ -13,6 +13,8 @@ pub mod inventory;
 pub mod reconstruct;
 pub mod rle;
 
+pub mod plan;
+
 pub use batch::{
     BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, SmallFileBatch,
     SmallFileBatchConfig, SmallFileBatchPlanner, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES,
@@ -26,12 +28,15 @@ pub use directory::{
     compute_file_hash, diff_local_dir_with_manifest, diff_manifest_readers,
     diff_manifest_spill_files, execute_directory_sync, plan_directory_diff, plan_directory_sync,
     recv_directory_manifest, recv_streaming_manifest_to_spill, resume_interrupted_commit,
-    scan_dir_entries, send_directory_manifest, send_streaming_manifest_from_spill, DeleteMode,
+    scan_dir_entries, send_directory_manifest, send_streaming_manifest_from_spill,
     DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction,
     FileActionType, ScannedEntry,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use inventory::{ChunkExtent, LocalInventory};
+pub use plan::{
+    matches_glob, DeleteGuardrails, DeleteMode, DeleteSafetyError, PathFilter, TransferPlan,
+};
 pub use reconstruct::{DeltaProgress, DeltaReconstructor};
 pub use rle::{RleBitmap, RleRun};
 
@@ -64,6 +69,10 @@ pub enum SyncError {
         /// Actual computed BLAKE3 digest.
         actual: String,
     },
+
+    /// Deletion safety guardrail error.
+    #[error("Delete safety error: {0}")]
+    DeleteSafety(#[from] crate::sync::plan::DeleteSafetyError),
 
     /// Underlying I/O error.
     #[error("I/O error: {0}")]

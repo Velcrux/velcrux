@@ -219,6 +219,49 @@ enum Cmd {
         /// URL prefix, e.g. `velcrux://host:7443/data/`.
         url_prefix: String,
     },
+    /// Calculate and display a transfer plan and reconciliation diff without modifying destination (REQUIREMENTS.md §57).
+    Plan {
+        /// Source directory or URL.
+        source: String,
+        /// Destination directory or URL.
+        destination: String,
+        /// Deletion mode: none, delete-before, delete-after, delete-excluded.
+        #[arg(long, default_value = "none")]
+        delete_mode: String,
+        /// Delete extraneous destination files before transfers begin.
+        #[arg(long)]
+        delete_before: bool,
+        /// Delete extraneous destination files after commits succeed.
+        #[arg(long)]
+        delete_after: bool,
+        /// Alias for --delete-after.
+        #[arg(long)]
+        delete: bool,
+        /// Delete extraneous files and any destination files matching exclude patterns.
+        #[arg(long)]
+        delete_excluded: bool,
+        /// Exclude files matching glob pattern (can be specified multiple times).
+        #[arg(long = "exclude")]
+        excludes: Vec<String>,
+        /// Maximum number of files permitted to be deleted before aborting.
+        #[arg(long)]
+        max_delete: Option<usize>,
+        /// Maximum percentage of destination files permitted to be deleted before aborting (0-100).
+        #[arg(long)]
+        max_delete_pct: Option<f64>,
+        /// Bypass deletion safety threshold guardrails.
+        #[arg(long)]
+        force_delete: bool,
+        /// Use content-defined chunking (FastCDC) instead of fixed chunking.
+        #[arg(long)]
+        cdc: bool,
+        /// Enable content-addressed chunk store deduplication.
+        #[arg(long)]
+        dedup: bool,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+    },
     /// Synchronize a directory tree incrementally (M9).
     Sync {
         /// Source directory or URL.
@@ -228,12 +271,30 @@ enum Cmd {
         /// Calculate changes and print summary without modifying destination.
         #[arg(long)]
         dry_run: bool,
+        /// Delete extraneous destination files before transfers begin.
+        #[arg(long)]
+        delete_before: bool,
         /// Delete extraneous destination files after all commits succeed.
         #[arg(long)]
         delete_after: bool,
         /// Alias for --delete-after.
         #[arg(long)]
         delete: bool,
+        /// Delete extraneous files and any destination files matching exclude patterns.
+        #[arg(long)]
+        delete_excluded: bool,
+        /// Exclude files matching glob pattern (can be specified multiple times).
+        #[arg(long = "exclude")]
+        excludes: Vec<String>,
+        /// Maximum number of files permitted to be deleted before aborting.
+        #[arg(long)]
+        max_delete: Option<usize>,
+        /// Maximum percentage of destination files permitted to be deleted before aborting (0-100).
+        #[arg(long)]
+        max_delete_pct: Option<f64>,
+        /// Bypass deletion safety threshold guardrails.
+        #[arg(long)]
+        force_delete: bool,
         /// Use content-defined chunking (FastCDC) instead of fixed chunking.
         #[arg(long)]
         cdc: bool,
@@ -740,12 +801,53 @@ async fn main() -> anyhow::Result<()> {
             let clean_prefix = path.trim_start_matches('/').to_string();
             run_list(&cli, &mut session, &clean_prefix).await?;
         }
+        Cmd::Plan {
+            source,
+            destination,
+            delete_mode,
+            delete_before,
+            delete_after,
+            delete,
+            delete_excluded,
+            excludes,
+            max_delete,
+            max_delete_pct,
+            force_delete,
+            cdc,
+            dedup,
+            chunk_store,
+        } => {
+            run_plan(
+                &cli,
+                source,
+                destination,
+                delete_mode,
+                *delete_before,
+                *delete_after,
+                *delete,
+                *delete_excluded,
+                excludes,
+                *max_delete,
+                *max_delete_pct,
+                *force_delete,
+                *cdc,
+                *dedup,
+                chunk_store,
+            )
+            .await?;
+        }
         Cmd::Sync {
             source,
             destination,
             dry_run,
+            delete_before,
             delete_after,
             delete,
+            delete_excluded,
+            excludes,
+            max_delete,
+            max_delete_pct,
+            force_delete,
             cdc,
             dedup,
             chunk_store,
@@ -760,8 +862,14 @@ async fn main() -> anyhow::Result<()> {
                 source,
                 destination,
                 *dry_run,
+                *delete_before,
                 *delete_after,
                 *delete,
+                *delete_excluded,
+                excludes,
+                *max_delete,
+                *max_delete_pct,
+                *force_delete,
                 *cdc,
                 *dedup,
                 chunk_store,
@@ -2358,13 +2466,138 @@ async fn run_remote_download_sync(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn run_plan(
+    cli: &Cli,
+    source: &str,
+    destination: &str,
+    delete_mode_str: &str,
+    delete_before: bool,
+    delete_after: bool,
+    delete: bool,
+    delete_excluded: bool,
+    excludes: &[String],
+    max_delete: Option<usize>,
+    max_delete_pct: Option<f64>,
+    force_delete: bool,
+    cdc: bool,
+    dedup: bool,
+    chunk_store_path: &Option<PathBuf>,
+) -> anyhow::Result<()> {
+    use std::str::FromStr;
+    use velcrux_core::chunking::{ChunkMode, ChunkParams};
+    use velcrux_core::storage::LocalChunkStore;
+    use velcrux_core::sync::{
+        plan_directory_sync, DeleteGuardrails, DeleteMode, DirectorySyncOptions, PathFilter,
+        TransferPlan,
+    };
+
+    let src_path = PathBuf::from(source);
+    let dst_path = PathBuf::from(destination);
+
+    if !src_path.exists() {
+        anyhow::bail!("source path does not exist: {}", src_path.display());
+    }
+
+    let delete_mode = if delete_before {
+        DeleteMode::DeleteBefore
+    } else if delete_excluded {
+        DeleteMode::DeleteExcluded
+    } else if delete_after || delete {
+        DeleteMode::DeleteAfter
+    } else {
+        DeleteMode::from_str(delete_mode_str).unwrap_or(DeleteMode::None)
+    };
+
+    let guardrails = DeleteGuardrails {
+        max_delete_files: max_delete,
+        max_delete_pct,
+        force_delete,
+    };
+
+    let mut filter = PathFilter::new();
+    for exc in excludes {
+        filter.add_exclude(exc);
+    }
+
+    let mode = if cdc {
+        ChunkMode::Cdc
+    } else {
+        ChunkMode::Fixed
+    };
+
+    let params = if cdc {
+        ChunkParams::new(256 * 1024, 1024 * 1024, 4 * 1024 * 1024)
+            .ok_or_else(|| anyhow::anyhow!("invalid CDC chunk params"))?
+    } else {
+        ChunkParams::new(1024 * 1024, 1024 * 1024, 1024 * 1024)
+            .ok_or_else(|| anyhow::anyhow!("invalid fixed chunk params"))?
+    };
+
+    let options = DirectorySyncOptions {
+        mode,
+        params,
+        delete_mode,
+        dry_run: true,
+        read_buffer_size: 2 * 1024 * 1024,
+        transfer_mode: get_transfer_mode(cli),
+        min_delta_size: cli.min_delta_size,
+        batch_small_files: false,
+        small_file_threshold: velcrux_core::sync::DEFAULT_SMALL_FILE_THRESHOLD,
+        batch_max_bytes: velcrux_core::sync::DEFAULT_BATCH_MAX_BYTES,
+        delete_guardrails: guardrails.clone(),
+        filter: if excludes.is_empty() {
+            None
+        } else {
+            Some(filter)
+        },
+    };
+
+    let store = if dedup {
+        let store_dir = chunk_store_path
+            .clone()
+            .unwrap_or_else(|| dst_path.join(".velcrux-chunks"));
+        Some(LocalChunkStore::new(&store_dir).await?)
+    } else {
+        None
+    };
+
+    let plan = plan_directory_sync(&src_path, &dst_path, &options, store.as_ref())
+        .map_err(|e| anyhow::anyhow!("plan generation failed: {e}"))?;
+
+    let transfer_plan = TransferPlan::from_directory_plan(
+        &src_path,
+        &dst_path,
+        &plan,
+        delete_mode,
+        guardrails,
+        0,
+        true,
+    );
+
+    if cli_log_json(cli) {
+        let json_val = transfer_plan.to_json_value();
+        println!("{json_val}");
+    } else {
+        println!("{}", transfer_plan.format_display());
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_sync(
     cli: &Cli,
     source: &str,
     destination: &str,
     dry_run: bool,
+    delete_before: bool,
     delete_after: bool,
     delete: bool,
+    delete_excluded: bool,
+    excludes: &[String],
+    max_delete: Option<usize>,
+    max_delete_pct: Option<f64>,
+    force_delete: bool,
     cdc: bool,
     dedup: bool,
     chunk_store_path: &Option<PathBuf>,
@@ -2380,18 +2613,33 @@ async fn run_sync(
     }
 
     if dst_is_remote {
-        return run_remote_upload_sync(cli, source, destination, dry_run, delete_after || delete)
-            .await;
+        return run_remote_upload_sync(
+            cli,
+            source,
+            destination,
+            dry_run,
+            delete_before || delete_after || delete || delete_excluded,
+        )
+        .await;
     }
 
     if src_is_remote {
-        return run_remote_download_sync(cli, source, destination, dry_run, delete_after || delete)
-            .await;
+        return run_remote_download_sync(
+            cli,
+            source,
+            destination,
+            dry_run,
+            delete_before || delete_after || delete || delete_excluded,
+        )
+        .await;
     }
 
     use velcrux_core::chunking::{ChunkMode, ChunkParams};
     use velcrux_core::storage::LocalChunkStore;
-    use velcrux_core::sync::{execute_directory_sync, DeleteMode, DirectorySyncOptions};
+    use velcrux_core::sync::{
+        execute_directory_sync, DeleteGuardrails, DeleteMode, DirectorySyncOptions, PathFilter,
+        TransferPlan,
+    };
 
     let src_path = PathBuf::from(source);
     let dst_path = PathBuf::from(destination);
@@ -2400,11 +2648,26 @@ async fn run_sync(
         anyhow::bail!("source path does not exist: {}", src_path.display());
     }
 
-    let delete_mode = if delete_after || delete {
+    let delete_mode = if delete_before {
+        DeleteMode::DeleteBefore
+    } else if delete_excluded {
+        DeleteMode::DeleteExcluded
+    } else if delete_after || delete {
         DeleteMode::DeleteAfter
     } else {
         DeleteMode::None
     };
+
+    let guardrails = DeleteGuardrails {
+        max_delete_files: max_delete,
+        max_delete_pct,
+        force_delete,
+    };
+
+    let mut filter = PathFilter::new();
+    for exc in excludes {
+        filter.add_exclude(exc);
+    }
 
     let mode = if cdc {
         ChunkMode::Cdc
@@ -2432,6 +2695,12 @@ async fn run_sync(
         small_file_threshold: small_file_threshold
             .unwrap_or(velcrux_core::sync::DEFAULT_SMALL_FILE_THRESHOLD),
         batch_max_bytes: batch_max_bytes.unwrap_or(velcrux_core::sync::DEFAULT_BATCH_MAX_BYTES),
+        delete_guardrails: guardrails.clone(),
+        filter: if excludes.is_empty() {
+            None
+        } else {
+            Some(filter)
+        },
     };
 
     let store = if dedup {
@@ -2448,42 +2717,70 @@ async fn run_sync(
 
     let is_json = cli_log_json(cli);
     if is_json {
-        let actions: Vec<_> = result
-            .plan
-            .actions
-            .iter()
-            .map(|a| {
-                serde_json::json!({
-                    "action": format!("{:?}", a.action).to_lowercase(),
-                    "path": a.rel_path,
-                    "size": a.src_size,
-                    "reused": a.bytes_reusable,
-                })
-            })
-            .collect();
-        let out = serde_json::json!({
-            "v": 1,
-            "event": "sync_summary",
-            "dry_run": dry_run,
-            "source": source,
-            "destination": destination,
-            "files_unchanged": result.plan.summary.files_unchanged,
-            "files_modified": result.plan.summary.files_modified,
-            "files_added": result.plan.summary.files_added,
-            "files_deleted": result.plan.summary.files_deleted,
-            "data_present": result.plan.summary.data_present,
-            "data_to_transfer": result.plan.summary.data_to_transfer,
-            "files_transferred": result.files_transferred,
-            "files_committed": result.files_committed,
-            "files_deleted_count": result.files_deleted,
-            "small_files_batched": result.small_files_batched,
-            "batch_containers": result.batch_containers,
-            "roundtrips_saved": result.roundtrips_saved,
-            "actions": actions,
-        });
-        println!("{out}");
+        let transfer_plan = TransferPlan::from_directory_plan(
+            &src_path,
+            &dst_path,
+            &result.plan,
+            delete_mode,
+            guardrails,
+            0,
+            dry_run,
+        );
+        let mut json_val = transfer_plan.to_json_value();
+        if let Some(obj) = json_val.as_object_mut() {
+            obj.insert(
+                "files_transferred".to_string(),
+                serde_json::json!(result.files_transferred),
+            );
+            obj.insert(
+                "files_committed".to_string(),
+                serde_json::json!(result.files_committed),
+            );
+            obj.insert(
+                "files_deleted_count".to_string(),
+                serde_json::json!(result.files_deleted),
+            );
+            obj.insert(
+                "wire_bytes_transferred".to_string(),
+                serde_json::json!(result.wire_bytes_transferred),
+            );
+            obj.insert(
+                "local_bytes_reused".to_string(),
+                serde_json::json!(result.local_bytes_reused),
+            );
+            obj.insert(
+                "store_bytes_reused".to_string(),
+                serde_json::json!(result.store_bytes_reused),
+            );
+            obj.insert(
+                "small_files_batched".to_string(),
+                serde_json::json!(result.small_files_batched),
+            );
+            obj.insert(
+                "batch_containers".to_string(),
+                serde_json::json!(result.batch_containers),
+            );
+            obj.insert(
+                "roundtrips_saved".to_string(),
+                serde_json::json!(result.roundtrips_saved),
+            );
+        }
+        println!("{json_val}");
     } else {
-        println!("{}", result.plan.summary.format_display());
+        if dry_run {
+            let transfer_plan = TransferPlan::from_directory_plan(
+                &src_path,
+                &dst_path,
+                &result.plan,
+                delete_mode,
+                guardrails,
+                0,
+                true,
+            );
+            println!("{}", transfer_plan.format_display());
+        } else {
+            println!("{}", result.plan.summary.format_display());
+        }
 
         if result.small_files_batched > 0 {
             println!(
