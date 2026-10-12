@@ -5,7 +5,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 
@@ -339,6 +339,99 @@ enum Cmd {
     Package {
         #[command(subcommand)]
         target: package::PackageTarget,
+    },
+    /// S3-compatible cloud object storage gateway backend (REQUIREMENTS.md §42, §43).
+    S3 {
+        #[command(subcommand)]
+        sub: S3SubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum S3SubCmd {
+    /// List objects in an S3 bucket or prefix (s3://bucket/prefix).
+    Ls {
+        /// S3 URL (e.g. s3://bucket/ or s3://bucket/prefix).
+        s3_url: String,
+        /// Optional delimiter (e.g. "/").
+        #[arg(long)]
+        delimiter: Option<String>,
+        /// S3 endpoint override (e.g. http://127.0.0.1:9000).
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override (e.g. us-east-1).
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Inspect metadata for a single S3 object (s3://bucket/key).
+    Stat {
+        /// S3 URL (e.g. s3://bucket/key).
+        s3_url: String,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Upload a local file to S3.
+    Put {
+        /// Local file to upload.
+        local: PathBuf,
+        /// Target S3 URL (e.g. s3://bucket/key).
+        s3_url: String,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
+        /// Multipart part size in bytes (default: 8 MiB).
+        #[arg(long)]
+        multipart_size: Option<usize>,
+    },
+    /// Download an object from S3 to a local file.
+    Get {
+        /// Source S3 URL (e.g. s3://bucket/key).
+        s3_url: String,
+        /// Local destination file path.
+        local: PathBuf,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
+        /// Optional byte range start (inclusive).
+        #[arg(long)]
+        range_start: Option<u64>,
+        /// Optional byte range end (inclusive).
+        #[arg(long)]
+        range_end: Option<u64>,
+    },
+    /// Delete an object from S3.
+    Delete {
+        /// S3 URL to delete (e.g. s3://bucket/key).
+        s3_url: String,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Synchronize between local filesystem and S3 bucket prefix.
+    Sync {
+        /// Source path or S3 URL (e.g. ./data or s3://bucket/prefix).
+        source: String,
+        /// Destination path or S3 URL (e.g. s3://bucket/prefix or ./data).
+        destination: String,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
     },
 }
 
@@ -720,6 +813,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Package { target } => {
             package::execute_package_target(target.clone(), cli_log_json(&cli))?;
+            return Ok(());
+        }
+        Cmd::S3 { sub } => {
+            run_s3(&cli, sub).await?;
             return Ok(());
         }
 
@@ -2608,6 +2705,19 @@ async fn run_sync(
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
 
+    if destination.starts_with("s3://") || source.starts_with("s3://") {
+        return run_s3(
+            cli,
+            &S3SubCmd::Sync {
+                source: source.to_string(),
+                destination: destination.to_string(),
+                endpoint: None,
+                region: None,
+            },
+        )
+        .await;
+    }
+
     if src_is_remote && dst_is_remote {
         anyhow::bail!("cross-server sync between two remote URLs is not supported");
     }
@@ -2970,5 +3080,286 @@ async fn run_profile(
         print!("{}", report.format_ascii_table());
     }
 
+    Ok(())
+}
+
+async fn run_s3(cli: &Cli, sub: &S3SubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        S3SubCmd::Ls {
+            s3_url,
+            delimiter,
+            endpoint,
+            region,
+        } => {
+            let (bucket, prefix) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            let objects = backend
+                .list_objects(&prefix, delimiter.as_deref())
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&objects)?);
+            } else {
+                println!("{:<40} {:>12}  {:<64}", "KEY", "SIZE", "ETAG / HASH");
+                println!("{:-<40} {:-<12}  {:-<64}", "", "", "");
+                for obj in &objects {
+                    let hash_str = obj
+                        .blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| obj.etag.clone());
+                    println!("{:<40} {:>12}  {:<64}", obj.key, obj.size, hash_str);
+                }
+            }
+        }
+        S3SubCmd::Stat {
+            s3_url,
+            endpoint,
+            region,
+        } => {
+            let (bucket, key) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            let meta = backend
+                .head_object(&key)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+                .ok_or_else(|| anyhow::anyhow!("object s3://{}/{} not found", bucket, key))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!("S3 Object Metadata: s3://{}/{}", bucket, key);
+                println!("  Size:          {} bytes", meta.size);
+                println!("  ETag:          {}", meta.etag);
+                println!(
+                    "  BLAKE3:        {}",
+                    meta.blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!("  Last Modified: {} (unix sec)", meta.last_modified_sec);
+            }
+        }
+        S3SubCmd::Put {
+            local,
+            s3_url,
+            endpoint,
+            region,
+            multipart_size,
+        } => {
+            let (bucket, key) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            if let Some(mps) = multipart_size {
+                cfg.part_size_bytes = *mps;
+            }
+            let data = std::fs::read(local)
+                .with_context(|| format!("reading local file {}", local.display()))?;
+            let hash = velcrux_core::Hash::of(&data);
+
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            let meta = backend
+                .put_object_multipart(&key, &data, Some(hash))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!(
+                    "Successfully uploaded {} ({} bytes) to s3://{}/{} [etag: {}]",
+                    local.display(),
+                    meta.size,
+                    bucket,
+                    meta.key,
+                    meta.etag
+                );
+            }
+        }
+        S3SubCmd::Get {
+            s3_url,
+            local,
+            endpoint,
+            region,
+            range_start,
+            range_end,
+        } => {
+            let (bucket, key) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            let data = match (range_start, range_end) {
+                (Some(s), Some(e)) => backend
+                    .get_object_range(&key, *s, *e)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+                _ => backend
+                    .get_object(&key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+            };
+
+            if let Some(parent) = local.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(local, &data)
+                .with_context(|| format!("writing to local file {}", local.display()))?;
+
+            if is_json {
+                let out = serde_json::json!({
+                    "s3_url": s3_url,
+                    "local": local.display().to_string(),
+                    "bytes": data.len(),
+                    "blake3": velcrux_core::Hash::of(&data).to_hex(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "Successfully downloaded s3://{}/{} ({} bytes) to {}",
+                    bucket,
+                    key,
+                    data.len(),
+                    local.display()
+                );
+            }
+        }
+        S3SubCmd::Delete {
+            s3_url,
+            endpoint,
+            region,
+        } => {
+            let (bucket, key) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            backend
+                .delete_object(&key)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                let out = serde_json::json!({
+                    "deleted": s3_url,
+                    "success": true,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Successfully deleted s3://{}/{}", bucket, key);
+            }
+        }
+        S3SubCmd::Sync {
+            source,
+            destination,
+            endpoint,
+            region,
+        } => {
+            let src_is_s3 = source.starts_with("s3://");
+            let dst_is_s3 = destination.starts_with("s3://");
+
+            if src_is_s3 && !dst_is_s3 {
+                // S3 -> Local sync
+                let (bucket, prefix) = velcrux_core::storage::S3Config::parse_s3_url(source)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                    .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(reg) = region {
+                    cfg.region = reg.clone();
+                }
+                let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+                let report = backend
+                    .sync_to_local(&prefix, Path::new(destination))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("S3 Download Sync Complete: {} -> {}", source, destination);
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Downloaded:  {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else if dst_is_s3 && !src_is_s3 {
+                // Local -> S3 sync
+                let (bucket, prefix) = velcrux_core::storage::S3Config::parse_s3_url(destination)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                    .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(reg) = region {
+                    cfg.region = reg.clone();
+                }
+                let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+                let report = backend
+                    .sync_from_local(Path::new(source), &prefix)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("S3 Upload Sync Complete: {} -> {}", source, destination);
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Uploaded:    {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else {
+                anyhow::bail!(
+                    "s3 sync requires one local path and one s3:// URL (got '{}' and '{}')",
+                    source,
+                    destination
+                );
+            }
+        }
+    }
     Ok(())
 }

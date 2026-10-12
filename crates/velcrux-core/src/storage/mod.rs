@@ -25,6 +25,7 @@ pub mod chunk_store;
 pub mod direct_io;
 pub mod gc;
 pub mod memory;
+pub mod s3;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use direct_io::{
@@ -33,6 +34,7 @@ pub use direct_io::{
 };
 pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
 pub use memory::{MemoryFile, MemoryStorageBackend};
+pub use s3::{S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer};
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
 use crate::error::{ProtocolError, VelcruxError};

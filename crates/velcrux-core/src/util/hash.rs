@@ -83,6 +83,12 @@ impl Hash {
         Some(Self(out))
     }
 
+    /// Format as 64-character lowercase hex string.
+    #[inline]
+    pub fn to_hex(&self) -> String {
+        self.to_string()
+    }
+
     /// True if this is the all-zero hash.
     #[inline]
     pub fn is_zero(&self) -> bool {

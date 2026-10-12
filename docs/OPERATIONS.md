@@ -1313,16 +1313,88 @@ Total source data:             5.00 TB
 Data already present:          4.82 TB
 Data to transfer:               183 GB
 Estimated reduction:             96.4%
-========================================================================================
-NOTE: Running in dry-run mode. Destination data was NOT modified.
+---
+
+## 31. S3-Compatible Cloud Object Storage Gateway Backend (Option AW)
+
+Per `REQUIREMENTS.md` §42 ("S3 Compatibility") and §43 ("Object Storage Gateway"), Velcrux provides a native, pure-Rust S3-compatible cloud object storage gateway backend, bridging local NVMe filesystems with cloud object stores (AWS S3, MinIO, Cloudflare R2, Ceph, Wasabi).
+
+### 1. Key Capabilities & Zero-Dependency Architecture
+
+1. **Pure-Rust AWS SigV4 Request Signing**: Computes canonical request strings, signed headers, date scopes, and HMAC-SHA256 authorization signatures using workspace cryptography (`ring`, `sha2`) with zero external cloud SDKs or C libraries.
+2. **Unified URL Scheme**: Canonical `s3://<bucket>/<key>` addressing with automatic bucket/key parsing and prefix resolution.
+3. **Multipart Upload Pipeline**: Files exceeding the configured part size (default: 8 MiB) are uploaded in sequential or concurrent parts with cryptographic multipart ETags (`<hash>-<part_count>`).
+4. **Random Byte Range Reads**: Full support for `Range: bytes=start-end` HTTP queries, enabling delta-synchronization, partial chunk reconstruction, and streaming reads without downloading multi-gigabyte objects.
+5. **Bidirectional Directory Synchronization**: Fast directory synchronization between local POSIX file hierarchies and flat S3 object namespaces, detecting identical files via size and BLAKE3 checksums to eliminate redundant transfers.
+6. **Strict Safety**: Enforces `#![forbid(unsafe_code)]` across the entire storage gateway stack.
+
+### 2. Configuration & Authentication Environment
+
+The gateway automatically resolves credentials from standard environment variables with customizable CLI overrides:
+
+| Environment Variable | CLI Parameter | Default | Description |
+|----------------------|---------------|---------|-------------|
+| `AWS_ACCESS_KEY_ID` | N/A | `anonymous` | AWS Access Key ID |
+| `AWS_SECRET_ACCESS_KEY` | N/A | `anonymous` | AWS Secret Access Key |
+| `AWS_SESSION_TOKEN` | N/A | `None` | STS temporary session token |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | `--region` | `us-east-1` | AWS S3 geographic region |
+| `AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL` | `--endpoint` | `https://s3.amazonaws.com` | Custom endpoint (e.g. MinIO `http://127.0.0.1:9000`) |
+
+### 3. CLI Command Reference
+
+#### 1. Upload Object (`s3 put`)
+```bash
+# Upload a single local file to S3
+velcrux s3 put ./dataset.tar.zst s3://my-bucket/backups/dataset.tar.zst
+
+# Upload using custom multipart part size (e.g. 16 MiB)
+velcrux s3 put ./large.iso s3://my-bucket/iso/large.iso --multipart-size 16777216
+
+# Upload targeting a local MinIO cluster
+velcrux s3 put ./data.bin s3://local-bucket/data.bin --endpoint http://127.0.0.1:9000
 ```
 
+#### 2. Inspect Object Metadata (`s3 stat`)
+```bash
+# Human-readable stat inspection
+velcrux s3 stat s3://my-bucket/backups/dataset.tar.zst
 
+# Machine-readable JSON output
+velcrux --json s3 stat s3://my-bucket/backups/dataset.tar.zst
+```
 
+#### 3. List Objects (`s3 ls`)
+```bash
+# List all objects under a prefix
+velcrux s3 ls s3://my-bucket/backups/
 
+# List top-level directory prefixes using delimiter
+velcrux s3 ls s3://my-bucket/ --delimiter /
+```
 
+#### 4. Download Object & Range Retrieval (`s3 get`)
+```bash
+# Download complete object
+velcrux s3 get s3://my-bucket/backups/dataset.tar.zst ./dataset.tar.zst
 
+# Download byte range (e.g. bytes 0 through 1048575, first 1 MiB)
+velcrux s3 get s3://my-bucket/archive.tar ./header.bin --range-start 0 --range-end 1048575
+```
 
+#### 5. Delete Object (`s3 delete`)
+```bash
+velcrux s3 delete s3://my-bucket/backups/obsolete.tar.zst
+```
 
+#### 6. Bidirectional Directory Synchronization (`s3 sync`)
+```bash
+# Upload local directory to S3 prefix
+velcrux s3 sync ./local_dataset s3://my-bucket/mirror/dataset
 
+# Download S3 prefix to local directory
+velcrux s3 sync s3://my-bucket/mirror/dataset ./restored_dataset
 
+# Seamless top-level delegation via `velcrux sync`
+velcrux sync ./local_dataset s3://my-bucket/mirror/dataset
+velcrux sync s3://my-bucket/mirror/dataset ./restored_dataset
+```
