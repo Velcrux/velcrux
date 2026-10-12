@@ -74,10 +74,11 @@ pub use scheduler::{
 };
 pub use storage::{
     gc_chunk_store, gc_staging, AlignedSectorBuffer, ChunkStore, ChunkStoreGcReport,
+    ClusteredChunkStore, ClusterNode, ClusterNodeState, ClusterReport, ConsistentHashRing,
     DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
-    LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, S3Config, S3Error, S3ObjectMeta,
-    S3StorageBackend, S3SyncReport, SigV4Signer, Staging, StagingGcReport, StorageBackend, VPath,
-    VPathError,
+    LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, QuorumPolicy, ReplicationReport,
+    S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer, Staging,
+    StagingGcReport, StorageBackend, VPath, VPathError,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,

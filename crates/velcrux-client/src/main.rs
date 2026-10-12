@@ -376,6 +376,11 @@ enum Cmd {
         #[arg(long)]
         target: Option<String>,
     },
+    /// Distributed chunk store cluster management and replication (Option AY).
+    Cluster {
+        #[command(subcommand)]
+        sub: ClusterSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -463,6 +468,40 @@ enum S3SubCmd {
         /// S3 region override.
         #[arg(long)]
         region: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ClusterSubCmd {
+    /// Show cluster ring topology, node status, and quorum health.
+    Status {
+        /// Comma-separated list of node addresses or IDs (e.g. "127.0.0.1:8001,127.0.0.1:8002,127.0.0.1:8003").
+        #[arg(long)]
+        nodes: Option<String>,
+        /// Quorum replication factor N (default: 3).
+        #[arg(long, default_value = "3")]
+        replicas: usize,
+        /// Quorum write factor W (default: 2).
+        #[arg(long, default_value = "2")]
+        write_quorum: usize,
+        /// Quorum read factor R (default: 2).
+        #[arg(long, default_value = "2")]
+        read_quorum: usize,
+        /// Optional storage root directory containing node chunks.
+        #[arg(long)]
+        store_dir: Option<PathBuf>,
+    },
+    /// Rebalance chunks and run anti-entropy reconciliation across cluster nodes.
+    Rebalance {
+        /// Base storage directory containing node chunk store subdirectories.
+        #[arg(long)]
+        store_dir: Option<PathBuf>,
+        /// Comma-separated list of node addresses or IDs (e.g. "127.0.0.1:8001,127.0.0.1:8002,127.0.0.1:8003").
+        #[arg(long)]
+        nodes: Option<String>,
+        /// Quorum replication factor N (default: 3).
+        #[arg(long, default_value = "3")]
+        replicas: usize,
     },
 }
 
@@ -852,6 +891,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Multipath { target } => {
             run_multipath_status(&cli, target.as_deref()).await?;
+            return Ok(());
+        }
+        Cmd::Cluster { sub } => {
+            run_cluster(&cli, &sub).await?;
             return Ok(());
         }
 
@@ -3461,3 +3504,164 @@ async fn run_multipath_status(cli: &Cli, target: Option<&str>) -> anyhow::Result
 
     Ok(())
 }
+
+async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
+    match sub {
+        ClusterSubCmd::Status {
+            nodes,
+            replicas,
+            write_quorum,
+            read_quorum,
+            store_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let quorum = velcrux_core::storage::QuorumPolicy {
+                replicas: *replicas,
+                write_quorum: *write_quorum,
+                read_quorum: *read_quorum,
+                read_repair: true,
+            };
+            quorum.validate().map_err(|e| anyhow::anyhow!(e))?;
+
+            let cluster = velcrux_core::storage::ClusteredChunkStore::new(quorum.clone())
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            let node_specs: Vec<String> = if let Some(n_str) = nodes {
+                n_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                vec![
+                    "127.0.0.1:8001".to_string(),
+                    "127.0.0.1:8002".to_string(),
+                    "127.0.0.1:8003".to_string(),
+                ]
+            };
+
+            let temp_base = tempfile::tempdir()?;
+            let base_dir = store_dir.as_deref().unwrap_or_else(|| temp_base.path());
+
+            for (idx, addr_str) in node_specs.iter().enumerate() {
+                let node_id = format!("node-{}", idx + 1);
+                let addr: SocketAddr = addr_str
+                    .parse()
+                    .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1)));
+                let node_dir = base_dir.join(&node_id);
+                tokio::fs::create_dir_all(&node_dir).await?;
+                let store = Arc::new(
+                    velcrux_core::storage::LocalChunkStore::new(&node_dir)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?,
+                );
+                let node = velcrux_core::storage::ClusterNode::new(node_id, addr);
+                cluster
+                    .register_node(node, store)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            }
+
+            let report = cluster.generate_report().await.map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("========================================================================================");
+                println!("          VELCRUX DISTRIBUTED CHUNK STORE CLUSTER STATUS (OPTION AY)          ");
+                println!("========================================================================================");
+                println!("Total Nodes          : {}", report.total_nodes);
+                println!("Healthy Nodes        : {}", report.healthy_nodes);
+                let consistency_desc = if report.is_strictly_consistent {
+                    "Strict Consistency (W + R > N: guaranteed overlap)"
+                } else {
+                    "Weak / Eventual Consistency (W + R <= N: possible stale reads)"
+                };
+                println!("Consistency Level    : {}", consistency_desc);
+                println!(
+                    "Quorum Policy        : Replicas(N)={}, Write(W)={}, Read(R)={}, ReadRepair={}",
+                    report.quorum.replicas,
+                    report.quorum.write_quorum,
+                    report.quorum.read_quorum,
+                    report.quorum.read_repair
+                );
+                println!("Total Unique Chunks  : {}", report.total_unique_chunks);
+                println!("Total Unique Bytes   : {} bytes", report.total_unique_bytes);
+                println!("----------------------------------------------------------------------------------------");
+                println!("{:<12} {:<24} {:<12} {:>10} {:>10}", "NODE ID", "ADDRESS", "STATE", "VNODES", "WEIGHT");
+                println!("{:-<12} {:-<24} {:-<12} {:-<10} {:-<10}", "", "", "", "", "");
+                for node in &report.nodes {
+                    println!(
+                        "{:<12} {:<24} {:<12?} {:>10} {:>10}",
+                        node.id, node.address, node.state, node.vnodes, node.weight,
+                    );
+                }
+                println!("========================================================================================");
+            }
+        }
+        ClusterSubCmd::Rebalance {
+            store_dir,
+            nodes,
+            replicas,
+        } => {
+            let is_json = cli_log_json(cli);
+            let quorum = velcrux_core::storage::QuorumPolicy {
+                replicas: *replicas,
+                write_quorum: (*replicas / 2) + 1,
+                read_quorum: (*replicas / 2) + 1,
+                read_repair: true,
+            };
+            let cluster = velcrux_core::storage::ClusteredChunkStore::new(quorum.clone())
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            let node_specs: Vec<String> = if let Some(n_str) = nodes {
+                n_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                vec![
+                    "127.0.0.1:8001".to_string(),
+                    "127.0.0.1:8002".to_string(),
+                    "127.0.0.1:8003".to_string(),
+                ]
+            };
+
+            let temp_base = tempfile::tempdir()?;
+            let base_dir = store_dir.as_deref().unwrap_or_else(|| temp_base.path());
+
+            for (idx, addr_str) in node_specs.iter().enumerate() {
+                let node_id = format!("node-{}", idx + 1);
+                let addr: SocketAddr = addr_str
+                    .parse()
+                    .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1)));
+                let node_dir = base_dir.join(&node_id);
+                tokio::fs::create_dir_all(&node_dir).await?;
+                let store = Arc::new(
+                    velcrux_core::storage::LocalChunkStore::new(&node_dir)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))?,
+                );
+                let node = velcrux_core::storage::ClusterNode::new(node_id, addr);
+                cluster
+                    .register_node(node, store)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            }
+
+            let report = cluster.rebalance().await.map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Anti-Entropy Rebalance Summary:");
+                println!("  Chunks Inspected       : {}", report.chunks_inspected);
+                println!("  Replicas Created       : {}", report.replicas_created);
+                println!("  Fully Replicated Chunks: {}", report.fully_replicated_chunks);
+                println!("  Bytes Replicated       : {}", report.bytes_replicated);
+                println!("  Rebalance Status       : OK");
+            }
+        }
+    }
+    Ok(())
+}
+

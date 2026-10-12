@@ -22,12 +22,17 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub mod chunk_store;
+pub mod cluster;
 pub mod direct_io;
 pub mod gc;
 pub mod memory;
 pub mod s3;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use cluster::{
+    ClusteredChunkStore, ClusterNode, ClusterNodeState, ClusterReport,
+    ConsistentHashRing, QuorumPolicy, ReplicationReport,
+};
 pub use direct_io::{
     AlignedSectorBuffer, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
     DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_SECTOR_SIZE,

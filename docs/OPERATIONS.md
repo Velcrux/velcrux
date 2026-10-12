@@ -1077,6 +1077,10 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-009](adr/ADR-009-zero-knowledge-chunk-encryption.md)**: Zero-Knowledge Client-Side Chunk Encryption & AEAD Tamper-Proof Storage
 - **[ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md)**: QUIC Connection Migration & Failover Gating
 - **[ADR-011](adr/ADR-011-performance-profiling-and-bottleneck-analysis.md)**: Empirical Performance Profiling & Bottleneck Analysis
+- **[ADR-012](adr/ADR-012-transfer-planning-dry-run-and-safe-delete-semantics.md)**: Transfer Planning, Dry-Run Simulation & Safe-Delete Semantics
+- **[ADR-013](adr/ADR-013-s3-compatible-object-storage-gateway.md)**: S3-Compatible Cloud Object Storage Gateway Backend
+- **[ADR-014](adr/ADR-014-multi-interface-bonding-and-multipath-transport-aggregation.md)**: Multi-Interface Bonding & Multi-Path QUIC Transport Aggregation
+- **[ADR-015](adr/ADR-015-distributed-chunk-store-clustering-and-replication.md)**: Distributed Chunk Store Clustering & Quorum Replication
 
 ---
 
@@ -1462,5 +1466,65 @@ velcrux sync ./data velcrux://backup.server/data \
 # High-reliability transfer with redundant metadata duplication
 velcrux upload ./firmware.bin velcrux://edge.node/firmware.bin \
   --multipath --redundant-metadata
+```
+
+---
+
+## 33. Distributed Chunk Store Clustering & Quorum Replication (Option AY)
+
+Per `REQUIREMENTS.md` §15 ("Storage Backend & Local Chunk Store"), §62 ("Scale Targets: 100M Chunks & Multi-PB Datasets"), and §63 ("High Availability & Fault Tolerance"), Velcrux provides native multi-node chunk store clustering and tunable quorum replication.
+
+### 1. Consistent Hashing Ring & Virtual Nodes
+
+The cluster coordinates data layout using a deterministic `ConsistentHashRing`:
+- **Virtual Nodes (vnodes)**: Each registered storage node maps to 128 virtual tokens across the 64-bit BLAKE3 token ring, ensuring uniform chunk distribution without hotspots.
+- **Clockwise Preference Lists**: For any chunk hash, the coordinator traverses the ring clockwise to select $N$ distinct physical storage nodes designated for replica placement.
+- **Topology Scalability**: Adding or removing a node only transfers $\frac{1}{M}$ of total chunks, preventing catastrophic full-corpus reshuffling.
+
+### 2. Tunable Quorum Consistency ($N, W, R$)
+
+Consistency is governed by mathematically sound quorum configuration:
+- **$N$ (Replica Factor)**: Total copies written across distinct physical nodes (default: 3).
+- **$W$ (Write Quorum)**: Minimum node acknowledgments required for a successful write (default: 2).
+- **$R$ (Read Quorum)**: Minimum node responses required for a successful read or probe (default: 2).
+- **Strict Consistency**: Enforced when $W + R > N$, guaranteeing that write and read quorums intersect by at least one up-to-date node.
+- **Eventual Consistency**: Permitted when $W + R \le N$, maximizing write throughput for high-ingestion pipelines at the cost of eventual convergence.
+
+### 3. Node Lifecycle & Failure Domains
+
+Nodes transition through four lifecycle states:
+- `Healthy`: Normal operational state; serves reads and writes.
+- `Suspect`: Missed heartbeats or elevated network latency; actively monitored.
+- `Draining`: Controlled maintenance drain; serves existing reads but redirects new writes.
+- `Dead`: Unreachable or offline; excluded from quorum calculations.
+
+### 4. Asynchronous Read-Repair & Anti-Entropy Reconciliation
+
+- **Read-Repair**: During chunk retrieval, if an alive node in the preference list is missing a chunk found on another node, an asynchronous background task replicates the chunk to restore full $N$-fold redundancy without stalling the client query.
+- **Anti-Entropy Rebalance**: Background administrative task that sweeps all registered nodes, detects missing replicas, and backfills replicas across cluster members.
+
+### 5. CLI Command Reference
+
+#### 1. Display Cluster Status & Quorum Health
+```bash
+# Inspect default cluster status
+velcrux cluster status
+
+# Inspect specific cluster topology with custom quorum parameters
+velcrux cluster status \
+  --nodes 10.0.1.1:8001,10.0.1.2:8001,10.0.1.3:8001 \
+  --replicas 3 --write-quorum 2 --read-quorum 2
+
+# Machine-readable JSON output for cluster orchestration and monitoring
+velcrux --json cluster status
+```
+
+#### 2. Trigger Anti-Entropy Rebalance
+```bash
+# Run cluster rebalance and verify replica counts
+velcrux cluster rebalance --replicas 3
+
+# Machine-readable JSON report
+velcrux --json cluster rebalance
 ```
 
