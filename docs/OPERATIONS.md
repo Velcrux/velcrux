@@ -1398,3 +1398,69 @@ velcrux s3 sync s3://my-bucket/mirror/dataset ./restored_dataset
 velcrux sync ./local_dataset s3://my-bucket/mirror/dataset
 velcrux sync s3://my-bucket/mirror/dataset ./restored_dataset
 ```
+
+---
+
+## 32. Multi-Interface Bonding & Multi-Path QUIC Transport Aggregation (Option AX)
+
+Per `REQUIREMENTS.md` §74 ("Multi-Path Future") and §75 ("NAT and Firewall Considerations"), Velcrux provides native transport-level multi-interface bonding, path quality monitoring, and multi-path packet/chunk scheduling across heterogeneous network interfaces.
+
+### 1. Multi-Path Bonding Architecture
+
+Velcrux bonds multiple local network interfaces simultaneously:
+- **Zero Switch Dependencies**: Does not require switch-level LACP (802.3ad) or identical layer-2 collision domains; bonds across heterogeneous technologies (e.g. 10GbE + Wi-Fi 6 or fiber + cellular).
+- **Subflow State Machine**: Dynamically monitors subflow path health across four discrete states:
+  - `Active`: Normal operational health.
+  - `Degraded`: Latency or loss exceed configured safety thresholds; throttled to prevent head-of-line blocking.
+  - `Probing`: Background active health probes checking responsiveness before re-admission.
+  - `Dead`: Unresponsive or interface down; automatically excluded from routing.
+- **Zero-Downtime Hot Failover**: Automatically redirects data streams to healthy backup subflows within milliseconds of link degradation.
+
+### 2. Multi-Path Scheduling Strategies
+
+Configure the active chunk distribution policy using `--multipath-scheduler`:
+
+| Strategy | Token | Description | Best For |
+|----------|-------|-------------|----------|
+| **Weighted Bandwidth** (Default) | `weighted` | Proportional split based on measured BDP / bandwidth capacity | Aggregating asymmetric interfaces (e.g. 10G + 1G) |
+| **Lowest Latency First** | `min-rtt` | Directs chunks to the lowest RTT subflow, overflowing when window is full | Interactive transfers across low-latency primary paths |
+| **Round Robin** | `round-robin` | Uniformly cycles chunks across all active subflows | Symmetric multi-homed links of identical speed |
+| **Redundant** | `redundant` | Duplicates chunks across multiple active subflows simultaneously | High-loss, jittery links (satellite, military, field cellular) |
+| **Primary-Backup** | `failover` | 100% traffic on primary; shifts to backup only if primary fails | Cost-constrained environments (fiber primary, metered 5G backup) |
+
+### 3. CLI Command & Flag Reference
+
+#### 1. Inspect Local Interfaces & Bonding Status
+```bash
+# Display human-readable multipath bonding table
+velcrux multipath
+
+# Machine-readable JSON metrics
+velcrux --json multipath
+
+# Evaluate subflow paths against a target remote server
+velcrux multipath --target velcrux://storage.corp:7443/
+```
+
+#### 2. Execute Multipath Transfers
+```bash
+# Upload large file utilizing all available network interfaces
+velcrux upload ./dataset.tar velcrux://backup.server/dataset.tar --multipath
+
+# Upload using Min-RTT scheduler prioritizing lowest latency path
+velcrux upload ./dataset.tar velcrux://backup.server/dataset.tar \
+  --multipath --multipath-scheduler min-rtt
+
+# Bond specific named interfaces (e.g. eth0 and wlan0)
+velcrux upload ./dataset.tar velcrux://backup.server/dataset.tar \
+  --multipath --interfaces eth0,wlan0
+
+# Primary-backup failover with eth0 as primary
+velcrux sync ./data velcrux://backup.server/data \
+  --multipath --multipath-scheduler failover --primary-interface eth0
+
+# High-reliability transfer with redundant metadata duplication
+velcrux upload ./firmware.bin velcrux://edge.node/firmware.bin \
+  --multipath --redundant-metadata
+```
+

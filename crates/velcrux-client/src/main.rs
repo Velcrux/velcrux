@@ -161,6 +161,31 @@ struct Cli {
     )]
     direct_io: String,
 
+    /// Enable multi-path transport bonding across multiple local network interfaces (Option AX).
+    #[arg(long, env = "VELCRUX_MULTIPATH", global = true)]
+    multipath: bool,
+
+    /// Multi-path scheduling strategy: "weighted" (default), "min-rtt", "round-robin", "redundant", or "failover" (Option AX).
+    #[arg(
+        long = "multipath-scheduler",
+        env = "VELCRUX_MULTIPATH_SCHEDULER",
+        default_value = "weighted",
+        global = true
+    )]
+    multipath_scheduler: String,
+
+    /// Comma-separated list of local interface names to bond for multi-path transport (e.g. "eth0,wlan0") (Option AX).
+    #[arg(long = "interfaces", env = "VELCRUX_INTERFACES", global = true)]
+    interfaces: Option<String>,
+
+    /// Designated primary interface name for multi-path failover scheduling (Option AX).
+    #[arg(long = "primary-interface", env = "VELCRUX_PRIMARY_INTERFACE", global = true)]
+    primary_interface: Option<String>,
+
+    /// Duplicate critical metadata frames across all active bonded subflow paths (Option AX).
+    #[arg(long = "redundant-metadata", global = true)]
+    redundant_metadata: bool,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -344,6 +369,12 @@ enum Cmd {
     S3 {
         #[command(subcommand)]
         sub: S3SubCmd,
+    },
+    /// Inspect local network interfaces and bonded multi-path transport status (Option AX).
+    Multipath {
+        /// Optional target server URL to evaluate subflow path reachability (e.g. velcrux://host:7443/).
+        #[arg(long)]
+        target: Option<String>,
     },
 }
 
@@ -817,6 +848,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::S3 { sub } => {
             run_s3(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Multipath { target } => {
+            run_multipath_status(&cli, target.as_deref()).await?;
             return Ok(());
         }
 
@@ -3361,5 +3396,68 @@ async fn run_s3(cli: &Cli, sub: &S3SubCmd) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn run_multipath_status(cli: &Cli, target: Option<&str>) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let target_addr = if let Some(t) = target {
+        parse_url(t)?
+    } else {
+        "127.0.0.1:7443".parse()?
+    };
+
+    let policy = velcrux_core::MultipathSchedulerPolicy::parse(&cli.multipath_scheduler)
+        .ok_or_else(|| anyhow::anyhow!("unknown multipath scheduler policy: {}", cli.multipath_scheduler))?;
+
+    let iface_list: Vec<String> = cli
+        .interfaces
+        .as_ref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
+
+    let cfg = velcrux_core::MultipathConfig {
+        enabled: true,
+        policy,
+        interface_whitelist: iface_list,
+        primary_interface: cli.primary_interface.clone(),
+        duplicate_metadata: cli.redundant_metadata,
+        ..Default::default()
+    };
+
+    let coord = velcrux_core::MultipathCoordinator::new(cfg);
+    coord.auto_discover_and_bind(target_addr)?;
+    let report = coord.generate_report();
+
+    if is_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("========================================================================================");
+        println!("               VELCRUX MULTI-PATH TRANSPORT AGGREGATION STATUS (OPTION AX)               ");
+        println!("========================================================================================");
+        println!("Scheduler Policy     : {}", report.policy);
+        println!("Total Subflow Paths  : {}", report.total_paths);
+        println!("Active Paths         : {}", report.active_paths);
+        println!("Degraded Paths       : {}", report.degraded_paths);
+        println!("Dead Paths           : {}", report.dead_paths);
+        println!("Aggregate Bandwidth  : {:.2} Mbps", report.aggregate_bandwidth_mbps);
+        println!("Reordering Skew      : {:.2} ms", report.reordering_skew_ms);
+        println!("----------------------------------------------------------------------------------------");
+        println!("{:<8} {:<12} {:<22} {:<10} {:>10} {:>10}", "PATH ID", "INTERFACE", "LOCAL ADDR", "STATE", "RTT (ms)", "BW (Mbps)");
+        println!("{:-<8} {:-<12} {:-<22} {:-<10} {:-<10} {:-<10}", "", "", "", "", "", "");
+        for p in &report.paths {
+            let bw_mbps = (p.metrics.estimated_bw_bps as f64) / 1_000_000.0;
+            println!("{:<8} {:<12} {:<22} {:<10?} {:>10.2} {:>10.2}",
+                p.path_id,
+                p.interface_name,
+                p.local_addr,
+                p.state,
+                p.metrics.smoothed_rtt_ms,
+                bw_mbps,
+            );
+        }
+        println!("========================================================================================");
+    }
+
     Ok(())
 }
