@@ -31,6 +31,7 @@ pub mod session;
 pub mod state;
 pub mod storage;
 pub mod sync;
+pub mod telemetry;
 pub mod transfer;
 pub mod transport;
 pub mod util;
@@ -89,6 +90,10 @@ pub use sync::{
     TransferMode, UnpackedBatchReport, DEFAULT_BATCH_MAX_BYTES, DEFAULT_BATCH_MAX_FILES,
     DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
 };
+pub use telemetry::{
+    sample_current_process_rss, BottleneckDiagnosis, BottleneckKind, ComponentKind,
+    ComponentTiming, MemoryStats, NetworkMetrics, ProfileReport, TimingGuard, TransferProfiler,
+};
 pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,
     client_download_with_progress, client_upload, client_upload_stream, client_upload_with_state,
@@ -110,5 +115,6 @@ pub use transport::{
     JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
 };
 pub use util::{
-    Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, VectorizedScanner,
+    Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,
+    VectorizedScanner,
 };

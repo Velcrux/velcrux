@@ -1076,6 +1076,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-008](adr/ADR-008-versioning.md)**: Protocol Versioning & Capability Negotiation Floor
 - **[ADR-009](adr/ADR-009-zero-knowledge-chunk-encryption.md)**: Zero-Knowledge Client-Side Chunk Encryption & AEAD Tamper-Proof Storage
 - **[ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md)**: QUIC Connection Migration & Failover Gating
+- **[ADR-011](adr/ADR-011-performance-profiling-and-bottleneck-analysis.md)**: Empirical Performance Profiling & Bottleneck Analysis
 
 ---
 
@@ -1165,6 +1166,84 @@ For production enterprise deployment behind firewalls and edge load balancers:
 | **ICMP Type 3 Code 4** | Permit Inbound | Allows PMTU Fragmentation Needed messages to reach endpoints. |
 | **Jumbo Frames** | `MTU 9000` (LAN/Private WAN) | DPLPMTUD will automatically probe and utilize 9000 byte frames for reduced CPU overhead. |
 | **Symmetric NAT Handling** | Enabled | Velcrux QUIC Connection ID migration automatically handles port/IP rebinding. |
+
+---
+
+## 29. Empirical Performance Profiling, Live Diagnostic Telemetry & Bottleneck Analysis
+
+Per `REQUIREMENTS.md` §72 ("Performance Profiling"), §38 ("Observability"), §36 ("Machine-Readable Output"), and §46 ("Benchmark Suite"), Velcrux incorporates an empirical transfer performance profiler and automated bottleneck diagnosis engine (`ADR-011`).
+
+### 1. Granular Pipeline Stage Instrumentation
+
+The profiler measures elapsed wall-clock duration, execution count, and byte volume across all transfer subsystems:
+- **`DiskIoRead`**: Storage read operations and file I/O latency.
+- **`Chunking`**: Rolling hash chunk boundary evaluation (FastCDC vs fixed-size chunks).
+- **`Hashing`**: BLAKE3 chunk cryptographic hashing and SIMD tree hashing.
+- **`Encryption`**: Zero-knowledge AEAD chunk payload encryption (ChaCha20-Poly1305 / AES-256-GCM).
+- **`NetworkQuic`**: Stream transmission, congestion window pacing, and ACK round-trips.
+- **`DiskIoWrite`**: Destination staging writes and filesystem commit fsyncs.
+- **`Serialization`**: Frame encoding and state serialization.
+
+### 2. Automated Bottleneck Classification & Diagnosis
+
+The diagnostic engine calculates the relative time distribution across pipeline components and evaluates transport telemetry (RTT, packet loss rate, cwnd) to classify the primary constraint:
+
+| Bottleneck Kind | Identification Criteria | Automated Operational Guidance |
+| :--- | :--- | :--- |
+| **`NetworkBound`** | Network transport time $\ge 50\%$ or packet loss $> 1\%$. | Verify BDP receive window (`receive_window >= 2 * BDP`), check PMTU blackholing, or inspect WAN link loss. |
+| **`DiskIoReadBound`** | Storage read I/O $\ge 45\%$ of total pipeline time. | Enable direct I/O, migrate to NVMe SSD arrays, or optimize OS readahead. |
+| **`DiskIoWriteBound`** | Storage write / fsync $\ge 45\%$ of total pipeline time. | Separate staging and storage disks, enable writeback caching, or tune checkpoint intervals. |
+| **`CpuHashingBound`** | BLAKE3 hashing $\ge 40\%$ of total pipeline time. | Enable hardware vectorization (`velcrux hardware`) or increase hashing worker concurrency (`--concurrency`). |
+| **`CryptoBound`** | AEAD encryption $\ge 40\%$ of total pipeline time. | Enable hardware AES-NI acceleration or configure ChaCha20-Poly1305 cipher suite. |
+| **`BalancedOptimized`** | Pipeline stages evenly distributed; no dominant bottleneck. | System is well-balanced and operating near maximum theoretical throughput. |
+
+### 3. CLI Command Usage
+
+```bash
+# Profile local file transfer pipeline with ASCII diagnostic report
+velcrux profile /path/to/large_file.iso
+
+# Profile end-to-end QUIC transfer across network
+velcrux profile /path/to/large_file.iso --url velcrux://storage.internal:7443/staging/
+
+# Output machine-readable JSON for monitoring and CI regression checks
+velcrux --json profile /path/to/large_file.iso
+```
+
+### 4. Sample Diagnostic Output
+
+```text
+========================================================================================
+                      VELCRUX EMPIRICAL PERFORMANCE PROFILE REPORT
+========================================================================================
+Transfer Wall-Clock Time : 124.50 ms
+Total Bytes Processed    : 104,857,600 bytes (100.00 MiB)
+Effective Goodput        : 6.74 Gbps (842.23 MB/s)
+Resident Set Size (RSS)  : 18.25 MiB
+Buffer Pool Peak         : 8.00 MiB
+----------------------------------------------------------------------------------------
+PIPELINE STAGE BREAKDOWN:
+Stage Name                     Invocations      Total (ms)      % Time     Throughput
+----------------------------------------------------------------------------------------
+Storage Read I/O                        1            12.30       9.9%       8.13 GB/s
+Chunking (CDC/Fixed)                   64             8.50       6.8%      11.76 GB/s
+Cryptographic Hashing                  64            15.40      12.4%       6.49 GB/s
+Zero-Knowledge Encryption              64            18.20      14.6%       5.49 GB/s
+QUIC Network Transport                 64            68.10      54.7%       1.47 GB/s
+Storage Write I/O                       1             2.00       1.6%      50.00 GB/s
+----------------------------------------------------------------------------------------
+
+BOTTLENECK DIAGNOSIS & ACTIONABLE TUNING RECOMMENDATIONS:
+  Primary Bottleneck: Network Bound
+  Confidence Score  : 85.0% (Primary Component: 54.7% of tracked pipeline)
+  Summary           : Transfer is primarily bottlenecked by QUIC network transport latency and bandwidth.
+
+  Recommended Actions:
+    1. Check QUIC receive_window and stream_receive_window configuration. Ensure receive_window >= 2 * BDP.
+    2. Check for intermediate WAN packet loss or rate limits.
+========================================================================================
+```
+
 
 
 

@@ -263,6 +263,17 @@ enum Cmd {
     },
     /// Display host hardware SIMD vector acceleration and CPU capabilities.
     Hardware,
+    /// Empirically profile transfer pipelines and diagnose bottlenecks (REQUIREMENTS.md §72, §38, §36).
+    Profile {
+        /// Local file to benchmark or transfer under profiling.
+        file: PathBuf,
+        /// Optional target `velcrux://host:port/path` URL to profile end-to-end network transfer.
+        #[arg(long)]
+        url: Option<String>,
+        /// Chunking mode: "cdc" (default) or "fixed".
+        #[arg(long, default_value = "cdc")]
+        chunk_mode: String,
+    },
     /// Generate production service units and deployment manifests (systemd, launchd, docker, k8s).
     Package {
         #[command(subcommand)]
@@ -636,6 +647,14 @@ async fn main() -> anyhow::Result<()> {
                 );
                 println!("  Features:          {}", features.description());
             }
+            return Ok(());
+        }
+        Cmd::Profile {
+            file,
+            url,
+            chunk_mode,
+        } => {
+            run_profile(&cli, file, url.as_ref(), chunk_mode).await?;
             return Ok(());
         }
         Cmd::Package { target } => {
@@ -2508,4 +2527,151 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
+}
+
+async fn run_profile(
+    cli: &Cli,
+    file: &std::path::Path,
+    url: Option<&String>,
+    chunk_mode_str: &str,
+) -> anyhow::Result<()> {
+    if !file.exists() {
+        anyhow::bail!("profile target file does not exist: {}", file.display());
+    }
+    let file_len = std::fs::metadata(file)?.len();
+    let is_json = cli_log_json(cli);
+
+    let profiler = velcrux_core::TransferProfiler::new();
+
+    // 1. Storage Read I/O
+    let start_read = std::time::Instant::now();
+    let data = std::fs::read(file)
+        .with_context(|| format!("reading file {} for profiling", file.display()))?;
+    profiler.record_timing(
+        velcrux_core::ComponentKind::DiskIoRead,
+        start_read.elapsed(),
+        file_len,
+    );
+    profiler.sample_memory();
+
+    // 2. Chunking
+    let start_chunk = std::time::Instant::now();
+    let is_fixed = chunk_mode_str.eq_ignore_ascii_case("fixed");
+    let chunk_boundaries: Vec<(u64, u64)> = if is_fixed {
+        let chunk_sz = 1024 * 1024; // 1 MiB
+        let mut bounds = Vec::new();
+        let mut offset = 0u64;
+        while offset < file_len {
+            let len = chunk_sz.min(file_len - offset);
+            bounds.push((offset, len));
+            offset += len;
+        }
+        bounds
+    } else {
+        use velcrux_core::chunking::Chunker;
+        let mut chunker = velcrux_core::chunking::FastCdcChunker::new(
+            velcrux_core::chunking::ChunkParams::default(),
+        );
+        let mut boundaries = chunker
+            .push(&data)
+            .map_err(|e| anyhow::anyhow!("fastcdc push: {e}"))?;
+        let remaining = chunker
+            .finish()
+            .map_err(|e| anyhow::anyhow!("fastcdc finish: {e}"))?;
+        boundaries.extend(remaining);
+        boundaries
+            .into_iter()
+            .map(|b| (b.offset, b.length))
+            .collect()
+    };
+    profiler.record_timing(
+        velcrux_core::ComponentKind::Chunking,
+        start_chunk.elapsed(),
+        file_len,
+    );
+
+    // 3. Cryptographic Hashing (BLAKE3 parallel)
+    let start_hash = std::time::Instant::now();
+    let parallel_hasher = velcrux_core::ParallelHasher::new(cli.concurrency.max(1));
+    let chunk_slices: Vec<&[u8]> = chunk_boundaries
+        .iter()
+        .map(|(offset, len)| {
+            let start = (*offset).min(data.len() as u64) as usize;
+            let end = (*offset + *len).min(data.len() as u64) as usize;
+            &data[start..end]
+        })
+        .collect();
+    let _hashes = parallel_hasher.hash_chunks_batched(&chunk_slices);
+    let _root_hash = velcrux_core::compute_file_hash(file);
+    profiler.record_timing(
+        velcrux_core::ComponentKind::Hashing,
+        start_hash.elapsed(),
+        file_len,
+    );
+
+    // 4. Zero-Knowledge AEAD Encryption
+    let start_crypto = std::time::Instant::now();
+    let transfer_key = velcrux_core::TransferKey::from_bytes([0x42u8; 32]);
+    let encryptor = velcrux_core::ChunkEncryptor::new(
+        velcrux_core::crypto::CipherSuite::ChaCha20Poly1305,
+        &transfer_key,
+    )
+    .map_err(|e| anyhow::anyhow!("init encryptor: {e}"))?;
+    let dummy_tid = velcrux_core::TransferId::generate();
+    for (idx, slice) in chunk_slices.iter().enumerate() {
+        let _enc = encryptor.encrypt_chunk(&dummy_tid, idx as u64 * 1024, idx as u32, slice);
+    }
+    profiler.record_timing(
+        velcrux_core::ComponentKind::Encryption,
+        start_crypto.elapsed(),
+        file_len,
+    );
+
+    profiler.set_bytes_transferred(file_len);
+    profiler.sample_memory();
+
+    // 5. Optional live network QUIC transfer
+    if let Some(target_url) = url {
+        let (addr, path) = parse_url_with_path(target_url)?;
+        let sni = get_sni(cli, target_url);
+        let transport = build_transport_target(cli, Some(addr))?;
+        let conn = transport.connect(addr, &sni).await?;
+        let mut session = open_client_session(&conn, cli).await?;
+        let store = open_client_state_store(cli);
+
+        let start_net = std::time::Instant::now();
+        run_upload(cli, &conn, &mut session, &file.to_path_buf(), &path, &store).await?;
+        profiler.record_timing(
+            velcrux_core::ComponentKind::NetworkQuic,
+            start_net.elapsed(),
+            file_len,
+        );
+
+        let quinn_stats = conn.quinn().stats();
+        let rtt_us = conn.quinn().rtt().as_micros() as u64;
+        let wire_bytes = quinn_stats.udp_tx.bytes;
+        let lost_packets = quinn_stats.path.lost_packets;
+        let sent_packets = quinn_stats.path.sent_packets.max(1);
+        let loss_rate = lost_packets as f64 / sent_packets as f64;
+        let cwnd = quinn_stats.path.cwnd;
+
+        profiler.set_network_metrics(velcrux_core::NetworkMetrics {
+            rtt_us,
+            packet_loss_rate: loss_rate,
+            retransmits: quinn_stats.path.lost_packets,
+            cwnd_bytes: cwnd,
+            wire_bytes,
+        });
+        session.bye().await.ok();
+    }
+
+    let report = profiler.finish();
+
+    if is_json {
+        println!("{}", serde_json::to_string_pretty(&report.to_json_value())?);
+    } else {
+        print!("{}", report.format_ascii_table());
+    }
+
+    Ok(())
 }
