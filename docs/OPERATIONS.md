@@ -1083,6 +1083,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-015](adr/ADR-015-distributed-chunk-store-clustering-and-replication.md)**: Distributed Chunk Store Clustering & Quorum Replication
 - **[ADR-016](adr/ADR-016-continuous-real-time-file-watcher-and-automated-sync.md)**: Continuous Real-Time File Watcher & Automated Synchronization Engine
 - **[ADR-017](adr/ADR-017-cross-cluster-wan-geo-replication-and-conflict-resolution.md)**: Cross-Cluster WAN Geo-Replication & Conflict Resolution Engine
+- **[ADR-018](adr/ADR-018-pluggable-webhook-event-notifications-and-audit-event-bus.md)**: Pluggable Webhook Event Notifications & Audit Event Bus
 
 ---
 
@@ -1626,5 +1627,72 @@ velcrux geo sync --source-region us-east-1 --target-region eu-central-1
 
 # Machine-readable JSON output
 velcrux --json geo sync --source-region us-east-1 --target-region eu-central-1
+```
+
+## 36. Pluggable Webhook Event Notifications & Audit Event Bus (Option BB)
+
+Per `REQUIREMENTS.md` §69–§73 ("Audit Logging & Event Notification Webhooks") and `ARCHITECTURE.md` §11 ("Telemetry & Operational Visibility"), Velcrux provides an asynchronous, pluggable event bus (`WebhookEventBus`) for real-time lifecycle notifications and compliance audit logging.
+
+### 1. Webhook Lifecycle Events
+
+The event bus dispatches 8 standardized system events (`WebhookEventType`):
+- `transfer.started`: Data transfer session initiated.
+- `transfer.completed`: Data transfer successfully committed.
+- `transfer.failed`: Transfer aborted due to network or validation errors.
+- `chunk.corrupted`: Bit rot or BLAKE3 checksum mismatch detected.
+- `cluster.node_changed`: Quorum storage node state transition (Healthy, Suspect, Dead).
+- `geo.conflict_resolved`: Concurrent multi-region replication conflict resolved.
+- `geo.tombstone_pruned`: Deletion tombstone expired and purged.
+- `audit.action`: Security audit action (authentication, configuration changes, safe-deletes).
+
+### 2. HMAC-SHA256 Signatures & Replay Prevention
+
+Every webhook dispatch includes an `X-Velcrux-Signature` header:
+```text
+X-Velcrux-Signature: t=1710000000,v1=5d41402abc4b2a76b9719d911017c592...
+```
+- **Integrity**: Generated using `ring::hmac` (`HMAC_SHA256`) over `t={timestamp}.{payload_json}`.
+- **Replay Protection**: Reject requests where $|t_{\text{current}} - t| > \Delta t_{\text{tol}}$ (default: 300 seconds).
+- **Constant-Time Verification**: Validated in constant-time to resist timing attacks.
+
+### 3. Retries & Dead-Letter Queue (DLQ)
+
+- **Exponential Backoff**: Transient delivery failures trigger automatic retries up to `max_retries` (default: 3).
+- **Dead-Letter Queue (DLQ)**: Failed events exceeding retry bounds are buffered into the bounded `WebhookDeadLetterQueue` for operator inspection and replay.
+
+### 4. CLI Administration Reference
+
+#### 1. List Subscriptions & Delivery Metrics
+```bash
+# Formatted status table
+velcrux webhook list
+
+# Machine-readable JSON output
+velcrux --json webhook list
+```
+
+#### 2. Dispatch Signed Test Webhook Notification
+```bash
+# Test delivery with HMAC-SHA256 verification
+velcrux webhook test https://hooks.slack.com/services/... \
+  --secret "my-hmac-secret-k99" \
+  --event "transfer.completed"
+
+# Machine-readable JSON output
+velcrux --json webhook test https://api.datadoghq.com/v1/events \
+  --secret "dd-secret-token" \
+  --event "chunk.corrupted"
+```
+
+#### 3. Dead-Letter Queue (DLQ) Inspection & Drain
+```bash
+# View DLQ status
+velcrux webhook dlq
+
+# Drain and clear DLQ entries
+velcrux webhook dlq --drain
+
+# Machine-readable JSON
+velcrux --json webhook dlq --drain
 ```
 

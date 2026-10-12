@@ -99,7 +99,10 @@ pub use sync::{
 };
 pub use telemetry::{
     sample_current_process_rss, BottleneckDiagnosis, BottleneckKind, ComponentKind,
-    ComponentTiming, MemoryStats, NetworkMetrics, ProfileReport, TimingGuard, TransferProfiler,
+    ComponentTiming, DeadLetterEntry, DeliveryStatus, MemoryStats, MockWebhookSink, NetworkMetrics,
+    ProfileReport, TimingGuard, TransferProfiler, WebhookDeadLetterQueue, WebhookDeliverySink,
+    WebhookEventBus, WebhookEventType, WebhookMetrics, WebhookPayload, WebhookSigner,
+    WebhookSubscription,
 };
 pub use transfer::{
     client_download, client_download_stream, client_download_stream_with_staging,
