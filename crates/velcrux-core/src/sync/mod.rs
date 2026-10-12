@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod reconstruct;
 pub mod rle;
 
+pub mod geo;
 pub mod plan;
 pub mod watcher;
 
@@ -34,6 +35,11 @@ pub use directory::{
     FileActionType, ScannedEntry,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
+pub use geo::{
+    ClockOrdering, ConflictAction, ConflictPolicy, ConflictResolutionResult, GeoItemMetadata,
+    GeoRegionDescriptor, GeoRegionState, GeoReplicationCoordinator, GeoReplicationQueue,
+    GeoStatusReport, ReplicationChange, VectorClock,
+};
 pub use inventory::{ChunkExtent, LocalInventory};
 pub use plan::{
     matches_glob, DeleteGuardrails, DeleteMode, DeleteSafetyError, PathFilter, TransferPlan,

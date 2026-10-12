@@ -1082,6 +1082,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-014](adr/ADR-014-multi-interface-bonding-and-multipath-transport-aggregation.md)**: Multi-Interface Bonding & Multi-Path QUIC Transport Aggregation
 - **[ADR-015](adr/ADR-015-distributed-chunk-store-clustering-and-replication.md)**: Distributed Chunk Store Clustering & Quorum Replication
 - **[ADR-016](adr/ADR-016-continuous-real-time-file-watcher-and-automated-sync.md)**: Continuous Real-Time File Watcher & Automated Synchronization Engine
+- **[ADR-017](adr/ADR-017-cross-cluster-wan-geo-replication-and-conflict-resolution.md)**: Cross-Cluster WAN Geo-Replication & Conflict Resolution Engine
 
 ---
 
@@ -1573,5 +1574,57 @@ velcrux sync ./data velcrux://backup.server/data/ --watch
 
 # Machine-readable JSON event stream
 velcrux --json watch ./data velcrux://backup.server/data/
+```
+
+---
+
+## 35. Cross-Cluster WAN Geo-Replication & Conflict Resolution (Option BA)
+
+Per `REQUIREMENTS.md` §50–§55 ("Cross-Cluster WAN Replication & Multi-Datacenter Distribution") and §63 ("Disaster Recovery & High Availability"), Velcrux provides native asynchronous multi-datacenter data geo-replication, vector clock causality tracking, and deterministic conflict resolution.
+
+### 1. Vector Clocks & Distributed Causality
+
+Every replicated file maintains an active `VectorClock` tracking sequence progression per geographic region:
+- **Causal Dominance**: When an incoming vector clock strictly dominates the local clock, changes are applied unconditionally without conflicts.
+- **Concurrent Conflict Detection**: When concurrent independent mutations occur in separate regions (neither clock dominates the other), the conflict engine evaluates the active `--conflict-policy`.
+
+### 2. Conflict Resolution Policies
+
+Configure cross-region conflict resolution strategies via `--conflict-policy`:
+- **`lww` (Last-Write-Wins, Default)**: Compares physical Unix epoch timestamps in milliseconds; ties are broken by lexicographical region ID order.
+- **`primary` (Primary Authority)**: A designated authority region specified via `--primary-region <ID>` always wins conflicts against secondary regions.
+- **`keep-both` (Branch Preservation)**: Preserves both concurrent versions by saving the losing mutation to a `.conflict-<region>-<ts>` sidecar file.
+- **`reject` (Strict Safety)**: Rejects the incoming concurrent change and alerts operators for manual intervention.
+
+### 3. Deletion Tombstones & Anti-Entropy Pacing
+
+- **Tombstones**: File deletions create tombstone markers recording the deletion vector clock. Stale remote mutations with older vector clocks cannot resurrect deleted files.
+- **Tombstone Pruning (`--tombstone-ttl-secs`, default: 7 days)**: Prunes tombstones older than the retention period.
+- **Replication Pacing**: Outbound queues throttle replication streams to match WAN link bandwidth and prevent packet congestion.
+
+### 4. CLI Administration Reference
+
+#### 1. Inspect Regional Geo-Replication Status & Lag
+```bash
+# Display human-readable status table
+velcrux geo status --local-region us-east-1
+
+# Inspect with custom remote endpoints and Primary Authority policy
+velcrux geo status \
+  --local-region ap-tokyo-1 \
+  --regions "eu-west-1=10.1.0.1:7443,us-east-1=10.2.0.1:7443" \
+  --conflict-policy primary --primary-region us-east-1
+
+# Machine-readable JSON metrics
+velcrux --json geo status
+```
+
+#### 2. Synchronize Regional Clusters
+```bash
+# Execute cross-region synchronization and tombstone sweep
+velcrux geo sync --source-region us-east-1 --target-region eu-central-1
+
+# Machine-readable JSON output
+velcrux --json geo sync --source-region us-east-1 --target-region eu-central-1
 ```
 
