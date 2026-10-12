@@ -434,6 +434,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: WebhookSubCmd,
     },
+    /// Point-in-time snapshot isolation, version history, and time-travel restore (Option BC).
+    Snapshot {
+        #[command(subcommand)]
+        sub: SnapshotSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -618,6 +623,61 @@ enum WebhookSubCmd {
         /// Drain and clear all records from the dead-letter queue.
         #[arg(long)]
         drain: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum SnapshotSubCmd {
+    /// Create an immutable point-in-time snapshot of a directory tree.
+    Create {
+        /// Unique snapshot identifier tag (alphanumeric, '-', '_', '.').
+        tag: String,
+        /// Source directory path to capture.
+        path: PathBuf,
+        /// Optional path to chunk store for content-addressed deduplication backing.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Optional user annotation description.
+        #[arg(long)]
+        desc: Option<String>,
+    },
+    /// List all point-in-time snapshots.
+    List {
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+    },
+    /// Compare changes between two snapshots.
+    Diff {
+        /// Baseline snapshot tag.
+        tag_a: String,
+        /// Comparison snapshot tag.
+        tag_b: String,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+    },
+    /// Restore a point-in-time snapshot to a target destination directory.
+    Restore {
+        /// Snapshot tag to restore.
+        tag: String,
+        /// Target destination directory path.
+        #[arg(long)]
+        dest: PathBuf,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Optional fallback source directory if CAS is not configured.
+        #[arg(long)]
+        source_fallback: Option<PathBuf>,
+    },
+    /// Delete a point-in-time snapshot.
+    Delete {
+        /// Snapshot tag to delete.
+        tag: String,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
     },
 }
 
@@ -1019,6 +1079,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Webhook { sub } => {
             run_webhook(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Snapshot { sub } => {
+            run_snapshot(&cli, sub).await?;
             return Ok(());
         }
 
@@ -4306,6 +4370,207 @@ async fn run_webhook(cli: &Cli, sub: &WebhookSubCmd) -> anyhow::Result<()> {
                 println!("Queue Drained        : {}", if *drain { "Yes (all items cleared)" } else { "No" });
                 println!("Remaining Entries    : {}", dlq.len());
                 println!("========================================================================================");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn resolve_snapshot_manager(
+    chunk_store_opt: &Option<PathBuf>,
+) -> anyhow::Result<velcrux_core::storage::SnapshotManager> {
+    let (snap_dir, cs) = match chunk_store_opt {
+        Some(p) => {
+            let s_dir = p.join("snapshots");
+            let chunk_store = Arc::new(velcrux_core::storage::LocalChunkStore::new(p).await?);
+            (s_dir, Some(chunk_store))
+        }
+        None => {
+            let s_dir = PathBuf::from(".velcrux/snapshots");
+            (s_dir, None)
+        }
+    };
+    Ok(velcrux_core::storage::SnapshotManager::new(snap_dir, cs)?)
+}
+
+async fn run_snapshot(cli: &Cli, sub: &SnapshotSubCmd) -> anyhow::Result<()> {
+    match sub {
+        SnapshotSubCmd::Create {
+            tag,
+            path,
+            chunk_store,
+            desc,
+        } => {
+            let is_json = cli_log_json(cli);
+            let mgr = resolve_snapshot_manager(&chunk_store).await?;
+            let mut ann = std::collections::HashMap::new();
+            if let Some(d) = desc {
+                ann.insert("description".to_string(), d.clone());
+            }
+            let snap = mgr.create_snapshot(tag, path, Some(ann))?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "snapshot_created",
+                        "tag": snap.tag,
+                        "created_at_secs": snap.created_at_secs,
+                        "root_path": snap.root_path,
+                        "file_count": snap.file_count,
+                        "total_bytes": snap.total_bytes,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 POINT-IN-TIME DIRECTORY SNAPSHOT CREATED                               ");
+                println!("========================================================================================");
+                println!("Snapshot Tag         : {}", snap.tag);
+                println!("Creation Timestamp   : {}", snap.created_at_secs);
+                println!("Source Root Directory: {}", snap.root_path);
+                println!("Captured Files       : {}", snap.file_count);
+                println!("Total Dataset Size   : {} bytes", snap.total_bytes);
+                println!(
+                    "Deduplication Backing: {}",
+                    if chunk_store.is_some() {
+                        "CAS Active (Chunked)"
+                    } else {
+                        "Manifest-only"
+                    }
+                );
+                println!("Status               : Immutable Snapshot Rooted");
+                println!("========================================================================================");
+            }
+        }
+        SnapshotSubCmd::List { chunk_store } => {
+            let is_json = cli_log_json(cli);
+            let mgr = resolve_snapshot_manager(&chunk_store).await?;
+            let list = mgr.list_snapshots()?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "snapshot_list",
+                        "total_snapshots": list.len(),
+                        "snapshots": list,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 POINT-IN-TIME DATASET SNAPSHOT CATALOG                                 ");
+                println!("========================================================================================");
+                println!(
+                    "{:<20} {:<12} {:>10} {:>14} {:<24}",
+                    "SNAPSHOT TAG", "CREATED (s)", "FILES", "TOTAL BYTES", "ROOT DIRECTORY"
+                );
+                println!("{:-<20} {:-<12} {:-<10} {:-<14} {:-<24}", "", "", "", "", "");
+                for s in &list {
+                    println!(
+                        "{:<20} {:<12} {:>10} {:>14} {:<24}",
+                        s.tag, s.created_at_secs, s.file_count, s.total_bytes, s.root_path
+                    );
+                }
+                println!("========================================================================================");
+                println!("Total Snapshots: {}", list.len());
+            }
+        }
+        SnapshotSubCmd::Diff {
+            tag_a,
+            tag_b,
+            chunk_store,
+        } => {
+            let is_json = cli_log_json(cli);
+            let mgr = resolve_snapshot_manager(&chunk_store).await?;
+            let diff = mgr.diff_snapshots(&tag_a, &tag_b)?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "snapshot_diff",
+                        "diff": diff,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!(
+                    "                 SNAPSHOT DIFFERENCE REPORT: {} -> {}                  ",
+                    diff.tag_a, diff.tag_b
+                );
+                println!("========================================================================================");
+                println!(
+                    "Files Added          : {} (+{} bytes)",
+                    diff.added_files.len(),
+                    diff.bytes_added
+                );
+                for f in &diff.added_files {
+                    println!("  + {}", f);
+                }
+                println!(
+                    "Files Removed        : {} (-{} bytes)",
+                    diff.removed_files.len(),
+                    diff.bytes_removed
+                );
+                for f in &diff.removed_files {
+                    println!("  - {}", f);
+                }
+                println!("Files Modified       : {}", diff.modified_files.len());
+                for f in &diff.modified_files {
+                    println!("  ~ {}", f);
+                }
+                println!("Files Unchanged      : {}", diff.unchanged_files);
+                println!("========================================================================================");
+            }
+        }
+        SnapshotSubCmd::Restore {
+            tag,
+            dest,
+            chunk_store,
+            source_fallback,
+        } => {
+            let is_json = cli_log_json(cli);
+            let mgr = resolve_snapshot_manager(&chunk_store).await?;
+            let report = mgr.restore_snapshot(&tag, &dest, source_fallback.as_deref())?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "snapshot_restored",
+                        "report": report,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 POINT-IN-TIME SNAPSHOT RESTORED                                        ");
+                println!("========================================================================================");
+                println!("Restored Tag         : {}", report.tag);
+                println!("Restored Files       : {}", report.restored_files);
+                println!("Restored Bytes       : {} bytes", report.restored_bytes);
+                println!("Target Destination   : {}", report.destination.display());
+                println!("Integrity Status     : 100% BLAKE3 Verified");
+                println!("========================================================================================");
+            }
+        }
+        SnapshotSubCmd::Delete { tag, chunk_store } => {
+            let is_json = cli_log_json(cli);
+            let mgr = resolve_snapshot_manager(&chunk_store).await?;
+            let deleted = mgr.delete_snapshot(&tag)?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "snapshot_deleted",
+                        "tag": tag,
+                        "deleted": deleted,
+                    })
+                );
+            } else if deleted {
+                println!("Snapshot '{}' deleted successfully.", tag);
+            } else {
+                println!("Snapshot '{}' not found.", tag);
             }
         }
     }

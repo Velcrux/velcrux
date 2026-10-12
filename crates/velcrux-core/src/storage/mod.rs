@@ -27,6 +27,7 @@ pub mod direct_io;
 pub mod gc;
 pub mod memory;
 pub mod s3;
+pub mod snapshot;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use cluster::{
@@ -37,9 +38,15 @@ pub use direct_io::{
     AlignedSectorBuffer, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
     DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_SECTOR_SIZE,
 };
-pub use gc::{gc_chunk_store, gc_staging, ChunkStoreGcReport, StagingGcReport};
+pub use gc::{
+    gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, ChunkStoreGcReport, StagingGcReport,
+};
 pub use memory::{MemoryFile, MemoryStorageBackend};
 pub use s3::{S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer};
+pub use snapshot::{
+    SnapshotDiff, SnapshotEntry, SnapshotFileMeta, SnapshotManager, SnapshotRestoreReport,
+    SnapshotSummary, SNAPSHOT_CHUNK_SIZE,
+};
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
 
 use crate::error::{ProtocolError, VelcruxError};

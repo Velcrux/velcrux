@@ -214,12 +214,28 @@ pub fn gc_chunk_store(
     storage_roots: &[&Path],
     dry_run: bool,
 ) -> Result<ChunkStoreGcReport, VelcruxError> {
+    gc_chunk_store_with_snapshots(chunk_store, storage_roots, None, dry_run)
+}
+
+/// Garbage-collect unreferenced chunks with active snapshot reference protection (Option BC).
+pub fn gc_chunk_store_with_snapshots(
+    chunk_store: &LocalChunkStore,
+    storage_roots: &[&Path],
+    snapshot_manager: Option<&crate::storage::snapshot::SnapshotManager>,
+    dry_run: bool,
+) -> Result<ChunkStoreGcReport, VelcruxError> {
     let mut report = ChunkStoreGcReport::default();
 
     // 1. Gather all live referenced hashes
     let mut referenced_hashes = HashSet::new();
     for root in storage_roots {
         collect_referenced_hashes(root, &mut referenced_hashes)?;
+    }
+
+    // 2. Protect snapshot-referenced chunks from garbage collection
+    if let Some(sm) = snapshot_manager {
+        let snap_hashes = sm.all_referenced_chunks()?;
+        referenced_hashes.extend(snap_hashes);
     }
 
     let chunks_dir = chunk_store.chunks_dir();

@@ -1084,6 +1084,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-016](adr/ADR-016-continuous-real-time-file-watcher-and-automated-sync.md)**: Continuous Real-Time File Watcher & Automated Synchronization Engine
 - **[ADR-017](adr/ADR-017-cross-cluster-wan-geo-replication-and-conflict-resolution.md)**: Cross-Cluster WAN Geo-Replication & Conflict Resolution Engine
 - **[ADR-018](adr/ADR-018-pluggable-webhook-event-notifications-and-audit-event-bus.md)**: Pluggable Webhook Event Notifications & Audit Event Bus
+- **[ADR-019](adr/ADR-019-point-in-time-snapshot-isolation-and-file-version-history.md)**: Point-in-Time Snapshot Isolation & File Version History Engine
 
 ---
 
@@ -1694,5 +1695,88 @@ velcrux webhook dlq --drain
 
 # Machine-readable JSON
 velcrux --json webhook dlq --drain
+```
+
+## 37. Point-in-Time Snapshot Isolation & File Version History Engine (Option BC)
+
+Per `REQUIREMENTS.md` §34 ("Atomicity"), §61 ("Transactional Synchronization"), §63 ("Garbage Collection"), and §94 ("Deliverables"), Velcrux provides zero-copy point-in-time snapshot isolation, structural change analysis, and verified time-travel rollbacks backed by content-addressed chunk storage (CAS).
+
+### 1. CAS-Backed Deduplication & Zero-Copy Storage
+
+Snapshots are stored as immutable manifests in `.velcrux/snapshots/<tag>.json` (or within `<chunk-store>/snapshots/`):
+- **Content-Addressed Sharing**: File data is sliced into 64 KiB segments indexed by BLAKE3 hashes and stored in `LocalChunkStore`. Unchanged files across successive snapshots share identical chunks with zero disk storage overhead.
+- **Manifest Atomicity**: Snapshots are staged to a `.json.tmp-...` buffer, flushed via `fsync`, and atomically renamed to guarantee durability against sudden process kills or machine reboots.
+
+### 2. Snapshot Differential Analysis (`SnapshotDiff`)
+
+Compare any two historical snapshots to instantly identify:
+- **Added Files (`+`)**: Files present in the target snapshot but absent in the baseline.
+- **Removed Files (`-`)**: Files deleted in the target snapshot.
+- **Modified Files (`~`)**: Files with matching paths but altered BLAKE3 cryptographic hashes.
+- **Unchanged Files**: Files byte-for-byte identical across versions.
+- **Byte Deltas**: Exact net added and removed byte metrics.
+
+### 3. Garbage Collection Integration
+
+Snapshot chunks are automatically protected during chunk store maintenance:
+```rust
+velcrux_core::storage::gc_chunk_store_with_snapshots(
+    &chunk_store,
+    &[&storage_root],
+    Some(&snapshot_manager),
+    false,
+)?;
+```
+Chunks referenced by any registered snapshot are pinned and cannot be pruned by garbage collection sweeps.
+
+### 4. CLI Administration Reference
+
+#### 1. Create a Snapshot
+```bash
+# Capture directory tree with CAS deduplication backing
+velcrux snapshot create prod-v1.0 /data/app \
+  --chunk-store /data/chunks \
+  --desc "Production release v1.0"
+
+# Machine-readable JSON output
+velcrux --json snapshot create prod-v1.0 /data/app --chunk-store /data/chunks
+```
+
+#### 2. List Registered Snapshots
+```bash
+# Formatted catalog table
+velcrux snapshot list --chunk-store /data/chunks
+
+# Machine-readable JSON catalog
+velcrux --json snapshot list --chunk-store /data/chunks
+```
+
+#### 3. Diff Two Snapshots
+```bash
+# Compare baseline and updated release
+velcrux snapshot diff prod-v1.0 prod-v1.1 --chunk-store /data/chunks
+
+# Machine-readable JSON diff
+velcrux --json snapshot diff prod-v1.0 prod-v1.1 --chunk-store /data/chunks
+```
+
+#### 4. Restore a Point-in-Time Snapshot
+```bash
+# Time-travel rollback to a target destination directory
+velcrux snapshot restore prod-v1.0 \
+  --dest /data/app-rollback \
+  --chunk-store /data/chunks
+
+# Machine-readable JSON restore report
+velcrux --json snapshot restore prod-v1.0 --dest /data/app-rollback --chunk-store /data/chunks
+```
+
+#### 5. Delete a Snapshot
+```bash
+# Delete snapshot manifest
+velcrux snapshot delete prod-v0.9 --chunk-store /data/chunks
+
+# Machine-readable JSON output
+velcrux --json snapshot delete prod-v0.9 --chunk-store /data/chunks
 ```
 
