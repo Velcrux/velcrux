@@ -14,6 +14,7 @@ pub mod reconstruct;
 pub mod rle;
 
 pub mod plan;
+pub mod watcher;
 
 pub use batch::{
     BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, SmallFileBatch,
@@ -39,6 +40,10 @@ pub use plan::{
 };
 pub use reconstruct::{DeltaProgress, DeltaReconstructor};
 pub use rle::{RleBitmap, RleRun};
+pub use watcher::{
+    ChangeBatch, ChangeKind, ContinuousSyncCoordinator, DebounceQueue, DirectoryScanner,
+    FileChangeEvent, WatchConfig, WatchMetrics, WatchSummary,
+};
 
 use thiserror::Error;
 

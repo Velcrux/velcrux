@@ -1081,6 +1081,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-013](adr/ADR-013-s3-compatible-object-storage-gateway.md)**: S3-Compatible Cloud Object Storage Gateway Backend
 - **[ADR-014](adr/ADR-014-multi-interface-bonding-and-multipath-transport-aggregation.md)**: Multi-Interface Bonding & Multi-Path QUIC Transport Aggregation
 - **[ADR-015](adr/ADR-015-distributed-chunk-store-clustering-and-replication.md)**: Distributed Chunk Store Clustering & Quorum Replication
+- **[ADR-016](adr/ADR-016-continuous-real-time-file-watcher-and-automated-sync.md)**: Continuous Real-Time File Watcher & Automated Synchronization Engine
 
 ---
 
@@ -1526,5 +1527,51 @@ velcrux cluster rebalance --replicas 3
 
 # Machine-readable JSON report
 velcrux --json cluster rebalance
+```
+
+---
+
+## 34. Continuous Real-Time File Watcher & Automated Synchronization (Option AZ)
+
+Per `REQUIREMENTS.md` §64–§68 ("Continuous Synchronization & File Watching"), Velcrux provides native pure-Rust real-time directory monitoring, intelligent event debouncing, and automated batch synchronization.
+
+### 1. Pure-Rust State Scanner & Ephemeral Event Coalescing
+
+Velcrux uses a deterministic in-memory `DirectoryScanner` and `DebounceQueue`:
+- **Zero Kernel Limits**: Avoids OS watch descriptor exhaustion (`inotify` / `FSEvents`) and operates strictly in pure Rust under `#![forbid(unsafe_code)]`.
+- **Intelligent Coalescing**:
+  - `Created` + `Modified` $\to$ `Created`: Keeps the earliest creation event and newest file contents.
+  - `Created` + `Deleted` $\to$ Purged: Automatically suppresses transient compiler artifacts, editor `.swp` files, and staging locks.
+  - `Modified` + `Modified` $\to$ `Modified`: Merges rapid write bursts into a single transfer pass.
+
+### 2. Tunable Debounce Pacing
+
+- **Debounce Window (`--debounce-ms`, default: 200ms)**: The quiet interval required before queued modifications are flushed into a batch. Active writing continually resets the timer to ensure partial or in-progress writes are not transferred prematurely.
+- **Poll Scan Frequency (`--poll-interval-ms`, default: 500ms)**: The interval between recursive directory tree sweeps.
+- **Max Queue Depth**: Flushes immediately when pending changes exceed 10,000 files to bound memory consumption under massive write bursts.
+
+### 3. CLI Command & Flag Reference
+
+#### 1. Dedicated Real-Time Watcher
+```bash
+# Watch local directory and stream changes to remote server
+velcrux watch ./workspace velcrux://backup.server/workspace/ \
+  --debounce-ms 250 --poll-interval-ms 500
+
+# Watch with custom exclusion glob filters
+velcrux watch ./code velcrux://backup.server/code/ \
+  --exclude "target/**" --exclude "*.tmp"
+
+# Limit execution to a finite number of change batches (for automated tests / CI)
+velcrux watch ./data velcrux://backup.server/data/ --max-batches 5
+```
+
+#### 2. Automated Sync with Continuous Watch Flag
+```bash
+# Synchronize existing directory contents first, then keep watching continuously
+velcrux sync ./data velcrux://backup.server/data/ --watch
+
+# Machine-readable JSON event stream
+velcrux --json watch ./data velcrux://backup.server/data/
 ```
 

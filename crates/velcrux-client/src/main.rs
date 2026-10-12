@@ -17,7 +17,7 @@ mod package;
 mod ping;
 
 /// velcrux — high-throughput bulk transfer over QUIC.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 struct Cli {
     /// Path to a PEM bundle of CA certificates used to verify the server.
@@ -190,7 +190,7 @@ struct Cli {
     cmd: Cmd,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 enum Cmd {
     /// Open a session and round-trip a PING. The M1 exit test
     /// (`docs/ARCHITECTURE.md` §12).
@@ -341,6 +341,49 @@ enum Cmd {
         /// Maximum container payload bytes per batch (default: 33554432 / 32 MiB).
         #[arg(long, env = "VELCRUX_BATCH_MAX_BYTES")]
         batch_max_bytes: Option<u64>,
+        /// Continuously watch source directory and synchronize changes in real time (Option AZ).
+        #[arg(long)]
+        watch: bool,
+        /// Debounce window in milliseconds for watch mode (default: 200).
+        #[arg(long, default_value = "200")]
+        debounce_ms: u64,
+        /// Polling scan interval in milliseconds for watch mode (default: 500).
+        #[arg(long, default_value = "500")]
+        poll_interval_ms: u64,
+        /// Maximum sync batches to run before stopping (default: 0 = continuous).
+        #[arg(long, default_value = "0")]
+        max_batches: usize,
+    },
+    /// Continuously watch a directory tree and synchronize changes in real time (Option AZ).
+    Watch {
+        /// Source directory to monitor.
+        source: String,
+        /// Destination directory or URL.
+        destination: String,
+        /// Debounce window in milliseconds to coalesce rapid file modifications (default: 200).
+        #[arg(long, default_value = "200")]
+        debounce_ms: u64,
+        /// Polling scan interval in milliseconds (default: 500).
+        #[arg(long, default_value = "500")]
+        poll_interval_ms: u64,
+        /// Maximum number of sync batches to execute before exiting (default: 0 = continuous).
+        #[arg(long, default_value = "0")]
+        max_batches: usize,
+        /// Exclude files matching glob pattern (can be specified multiple times).
+        #[arg(long = "exclude")]
+        excludes: Vec<String>,
+        /// Perform initial full synchronization on startup.
+        #[arg(long)]
+        initial_sync: bool,
+        /// Use content-defined chunking (FastCDC).
+        #[arg(long)]
+        cdc: bool,
+        /// Enable content-addressed chunk store deduplication.
+        #[arg(long)]
+        dedup: bool,
+        /// Optional path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
     },
     /// Generate shell completion script (bash, zsh, fish, powershell, elvish).
     Completions {
@@ -1030,7 +1073,28 @@ async fn main() -> anyhow::Result<()> {
             no_batch_small_files,
             small_file_threshold,
             batch_max_bytes,
+            watch,
+            debounce_ms,
+            poll_interval_ms,
+            max_batches,
         } => {
+            if *watch {
+                run_watch(
+                    &cli,
+                    source,
+                    destination,
+                    *debounce_ms,
+                    *poll_interval_ms,
+                    *max_batches,
+                    excludes,
+                    true, // initial full synchronization for sync --watch
+                    *cdc,
+                    *dedup,
+                    chunk_store,
+                )
+                .await?;
+                return Ok(());
+            }
             let effective_batch = !*no_batch_small_files;
             run_sync(
                 &cli,
@@ -1051,6 +1115,33 @@ async fn main() -> anyhow::Result<()> {
                 effective_batch,
                 *small_file_threshold,
                 *batch_max_bytes,
+            )
+            .await?;
+        }
+        Cmd::Watch {
+            source,
+            destination,
+            debounce_ms,
+            poll_interval_ms,
+            max_batches,
+            excludes,
+            initial_sync,
+            cdc,
+            dedup,
+            chunk_store,
+        } => {
+            run_watch(
+                &cli,
+                source,
+                destination,
+                *debounce_ms,
+                *poll_interval_ms,
+                *max_batches,
+                excludes,
+                *initial_sync,
+                *cdc,
+                *dedup,
+                chunk_store,
             )
             .await?;
         }
@@ -3664,4 +3755,168 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+async fn run_watch(
+    cli: &Cli,
+    source: &str,
+    destination: &str,
+    debounce_ms: u64,
+    poll_interval_ms: u64,
+    max_batches: usize,
+    excludes: &[String],
+    initial_sync: bool,
+    cdc: bool,
+    dedup: bool,
+    chunk_store: &Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let src_path = PathBuf::from(source);
+    if !src_path.exists() {
+        anyhow::bail!("watch source path does not exist: {}", source);
+    }
+    if !src_path.is_dir() {
+        anyhow::bail!("watch source path must be a directory: {}", source);
+    }
+
+    let mut config = velcrux_core::sync::WatchConfig::new()
+        .with_debounce(std::time::Duration::from_millis(debounce_ms))
+        .with_poll_interval(std::time::Duration::from_millis(poll_interval_ms))
+        .with_initial_sync(initial_sync);
+
+    if max_batches > 0 {
+        config = config.with_max_batches(max_batches);
+    }
+
+    for exc in excludes {
+        config = config.with_exclude(exc);
+    }
+
+    let mut coordinator = velcrux_core::sync::ContinuousSyncCoordinator::new(src_path.clone(), config)
+        .map_err(|e| anyhow::anyhow!("failed to initialize watch coordinator: {}", e))?;
+
+    if !is_json {
+        println!("========================================================================================");
+        println!("             VELCRUX REAL-TIME CONTINUOUS FILE WATCHER & SYNC (OPTION AZ)               ");
+        println!("========================================================================================");
+        println!("Source Directory     : {}", source);
+        println!("Destination Target   : {}", destination);
+        println!("Debounce Window      : {} ms", debounce_ms);
+        println!("Poll Scan Interval   : {} ms", poll_interval_ms);
+        let mode_desc = if max_batches > 0 {
+            format!("Bounded (Max {} batches)", max_batches)
+        } else {
+            "Continuous (Indefinite daemon loop)".to_string()
+        };
+        println!("Execution Mode       : {}", mode_desc);
+        println!("Initial Full Sync    : {}", initial_sync);
+        println!("Monitoring Status    : Active");
+        println!("----------------------------------------------------------------------------------------");
+    }
+
+    // Capture Ctrl-C signal for graceful shutdown
+    let shutdown_handle = coordinator.shutdown_handle();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        shutdown_handle.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let dst_owned = destination.to_string();
+    let src_owned = source.to_string();
+    let excludes_vec = excludes.to_vec();
+    let chunk_store_copy = chunk_store.clone();
+    let cli_clone = cli.clone();
+
+    let summary = coordinator
+        .run_continuous(|batch| {
+            let is_json_inner = is_json;
+            let src_ref = src_owned.clone();
+            let dst_ref = dst_owned.clone();
+            let exc_ref = excludes_vec.clone();
+            let cs_ref = chunk_store_copy.clone();
+            let cli_ref = cli_clone.clone();
+            let batch_id = batch.batch_id;
+            let total_changes = batch.total_changes;
+            let created_len = batch.created.len();
+            let mod_len = batch.modified.len();
+            let del_len = batch.deleted.len();
+            let coalesced = batch.coalesced_count;
+            let debounce_lat = batch.duration_since_first_event_ms;
+            let created_list = batch.created.clone();
+            let mod_list = batch.modified.clone();
+            let del_list = batch.deleted.clone();
+
+            async move {
+                if is_json_inner {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "batch_ready",
+                            "batch_id": batch_id,
+                            "created": created_list,
+                            "modified": mod_list,
+                            "deleted": del_list,
+                            "total_changes": total_changes,
+                            "coalesced_count": coalesced,
+                            "debounce_latency_ms": debounce_lat,
+                        })
+                    );
+                } else {
+                    println!(
+                        "[Batch #{}] Detected {} changes (+{} created, ~{} modified, -{} deleted, {} coalesced) -> syncing ...",
+                        batch_id,
+                        total_changes,
+                        created_len,
+                        mod_len,
+                        del_len,
+                        coalesced,
+                    );
+                }
+
+                run_sync(
+                    &cli_ref,
+                    &src_ref,
+                    &dst_ref,
+                    false, // dry_run
+                    false, // delete_before
+                    true,  // delete_after
+                    false, // delete
+                    false, // delete_excluded
+                    &exc_ref,
+                    None,  // max_delete
+                    None,  // max_delete_pct
+                    false, // force_delete
+                    cdc,
+                    dedup,
+                    &cs_ref,
+                    true,  // batch_small_files
+                    None,  // small_file_threshold
+                    None,  // batch_max_bytes
+                )
+                .await
+                .map_err(|e| velcrux_core::error::VelcruxError::Internal(e.to_string()))?;
+
+                Ok(total_changes)
+            }
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("watch loop failed: {}", e))?;
+
+    if is_json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("========================================================================================");
+        println!("                        CONTINUOUS WATCH SYNCHRONIZATION SUMMARY                        ");
+        println!("========================================================================================");
+        println!("Total Sync Batches   : {}", summary.total_batches);
+        println!("Total Files Synced   : {}", summary.total_files_synced);
+        println!("Raw Events Detected  : {}", summary.total_events_detected);
+        println!("Events Coalesced     : {}", summary.total_events_coalesced);
+        println!("Elapsed Runtime      : {:.2} s", summary.elapsed_duration_secs);
+        println!("Final Status         : {}", summary.status);
+        println!("========================================================================================");
+    }
+
+    Ok(())
+}
+
 
