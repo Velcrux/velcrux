@@ -1086,6 +1086,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-018](adr/ADR-018-pluggable-webhook-event-notifications-and-audit-event-bus.md)**: Pluggable Webhook Event Notifications & Audit Event Bus
 - **[ADR-019](adr/ADR-019-point-in-time-snapshot-isolation-and-file-version-history.md)**: Point-in-Time Snapshot Isolation & File Version History Engine
 - **[ADR-020](adr/ADR-020-distributed-lock-manager-and-mutex-lease-coordinator.md)**: Distributed Lock Manager (DLM) & Mutex Lease Coordinator
+- **[ADR-021](adr/ADR-021-dynamic-zstandard-pre-trained-dictionary-learning-engine.md)**: Dynamic Zstandard Pre-Trained Dictionary Learning Engine
 
 ---
 
@@ -1853,5 +1854,85 @@ velcrux lock verify /datasets/imagenet 101
 # Machine-readable JSON verification
 velcrux --json lock verify /datasets/imagenet 101
 ```
+
+---
+
+## 39. Dynamic Zstandard Pre-Trained Dictionary Learning Engine
+
+Per `REQUIREMENTS.md` §89 ("Compression Design"), §26 ("Bandwidth Minimization"), §64 ("Wire Compression"), and `ADR-021`, Velcrux provides a native pre-trained dictionary learning engine to optimize compression ratios on small files and structured payloads (JSON, CSV, source code, microservice logs).
+
+### 1. Key Capabilities
+
+1. **Native Ingestion & Training**:
+   - `DictionaryTrainer::sample_directory` walks directory trees, skips incompressible binary media (`.png`, `.jpg`, `.mp4`, `.gz`), and ingests up to 32 KiB per file.
+   - Invokes pure-Rust zstd dictionary training (`zstd::dict::from_samples`) with bounded size (default 112 KiB).
+2. **Persistent Catalog Management**:
+   - Catalog index (`catalog.json`) and dictionary binaries (`<dict_id>.zdict`) stored under `.velcrux/dictionaries/`.
+   - Thread-safe registry lookup by 32-bit `dict_id` or string `name`.
+3. **Empirical Evaluation**:
+   - Compares raw bytes, vanilla zstd, and dictionary zstd side-by-side.
+   - Reports exact extra bandwidth savings percentage (typically 30–60% over standard zstd).
+4. **Decompression Bomb Protection**:
+   - Enforces strict memory ceilings and ratio limits (`decompress_with_dict_bounded`) to fail-closed on maliciously crafted dictionary payloads.
+
+### 2. Operational CLI Commands
+
+#### 1. Train a New Dictionary
+```bash
+# Train dictionary from directory of JSON logs
+velcrux dict train /data/logs \
+  --name json-logs-v1 \
+  --dict-size 114688 \
+  --desc "Trained dictionary for JSON application logs"
+
+# Machine-readable JSON training output
+velcrux --json dict train /data/logs --name json-logs-v1
+```
+
+#### 2. List Registered Dictionaries
+```bash
+# Formatted dictionary catalog
+velcrux dict list
+
+# Machine-readable JSON catalog
+velcrux --json dict list
+```
+
+#### 3. Evaluate Dictionary Performance
+```bash
+# Evaluate compression ratio against a target directory or file
+velcrux dict test 14285714 /data/logs/sample_batch
+
+# Machine-readable JSON evaluation
+velcrux --json dict test 14285714 /data/logs/sample_batch
+```
+
+#### 4. Export Dictionary
+```bash
+# Export dictionary binary for external sharing
+velcrux dict export 14285714 ./exported_logs.zdict
+
+# Machine-readable JSON export
+velcrux --json dict export 14285714 ./exported_logs.zdict
+```
+
+#### 5. Import Pre-Existing Dictionary
+```bash
+# Import external dictionary into local catalog
+velcrux dict import ./exported_logs.zdict --name imported-logs-v1
+
+# Machine-readable JSON import
+velcrux --json dict import ./exported_logs.zdict --name imported-logs-v1
+```
+
+#### 6. Delete Dictionary
+```bash
+# Delete dictionary by ID
+velcrux dict delete 14285714
+
+# Machine-readable JSON delete
+velcrux --json dict delete 14285714
+```
+
 
 

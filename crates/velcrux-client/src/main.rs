@@ -444,6 +444,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: LockSubCmd,
     },
+    /// Dynamic Zstandard pre-trained dictionary learning engine (Option BE).
+    Dict {
+        #[command(subcommand)]
+        sub: DictSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -748,6 +753,78 @@ enum LockSubCmd {
         /// Optional state file path.
         #[arg(long)]
         state_file: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DictSubCmd {
+    /// Train a new Zstandard dictionary from sample files in a directory.
+    Train {
+        /// Source directory containing representative sample files.
+        source_dir: PathBuf,
+        /// Name of the dictionary (e.g. "json-logs", "telemetry-v1").
+        #[arg(long, default_value = "custom-dict")]
+        name: String,
+        /// Target dictionary size in bytes (default: 112 KiB).
+        #[arg(long, default_value = "114688")]
+        dict_size: usize,
+        /// Maximum number of sample files to ingest (default: 100).
+        #[arg(long, default_value = "100")]
+        max_samples: usize,
+        /// Optional description or domain annotation.
+        #[arg(long, default_value = "Pre-trained Zstandard dictionary")]
+        desc: String,
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
+    },
+    /// List all registered pre-trained dictionaries in the catalog.
+    List {
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
+    },
+    /// Test and evaluate compression ratio of a dictionary against a file or sample directory.
+    Test {
+        /// 32-bit dictionary identifier.
+        dict_id: u32,
+        /// Target test file or directory to evaluate.
+        target_path: PathBuf,
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
+    },
+    /// Export a registered dictionary binary to an external file.
+    Export {
+        /// 32-bit dictionary identifier.
+        dict_id: u32,
+        /// Destination file path (e.g. ./exported.zdict).
+        dest_file: PathBuf,
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
+    },
+    /// Import a pre-existing dictionary binary into the catalog.
+    Import {
+        /// Source dictionary file path (.zdict).
+        source_file: PathBuf,
+        /// Optional name for imported dictionary.
+        #[arg(long)]
+        name: Option<String>,
+        /// Optional description.
+        #[arg(long)]
+        desc: Option<String>,
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
+    },
+    /// Delete a dictionary from the catalog.
+    Delete {
+        /// 32-bit dictionary identifier to delete.
+        dict_id: u32,
+        /// Optional directory for dictionary catalog storage.
+        #[arg(long)]
+        dict_dir: Option<PathBuf>,
     },
 }
 
@@ -1157,6 +1234,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Lock { sub } => {
             run_lock(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Dict { sub } => {
+            run_dict(&cli, sub).await?;
             return Ok(());
         }
 
@@ -4916,6 +4997,258 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    match sub {
+        DictSubCmd::Train {
+            source_dir,
+            name,
+            dict_size,
+            max_samples,
+            desc,
+            dict_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+
+            let dict = velcrux_core::protocol::dict::DictionaryTrainer::train_from_directory(
+                source_dir,
+                *dict_size,
+                *max_samples,
+                name,
+                desc,
+                now_secs,
+            )?;
+
+            catalog.register(&dict)?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_trained",
+                        "status": "registered",
+                        "dictionary": dict.metadata,
+                        "catalog_dir": cat_dir,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 ZSTANDARD PRE-TRAINED DICTIONARY GENERATED                             ");
+                println!("========================================================================================");
+                println!("Dictionary ID        : {}", dict.metadata.dict_id);
+                println!("Name                 : {}", dict.metadata.name);
+                println!("Ingested Samples     : {}", dict.metadata.sample_count);
+                println!("Raw Training Data    : {}", format_bytes(dict.metadata.trained_bytes as u64));
+                println!("Trained Dict Size    : {} ({} bytes)", format_bytes(dict.metadata.dict_size as u64), dict.metadata.dict_size);
+                println!("BLAKE3 Checksum      : {}", dict.metadata.checksum);
+                println!("Description          : {}", dict.metadata.description);
+                println!("Catalog Directory    : {}", cat_dir.display());
+                println!("========================================================================================");
+            }
+        }
+        DictSubCmd::List { dict_dir } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let list = catalog.list();
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_list",
+                        "count": list.len(),
+                        "dictionaries": list,
+                        "catalog_dir": cat_dir,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 ZSTANDARD PRE-TRAINED DICTIONARY CATALOG                               ");
+                println!("========================================================================================");
+                println!("Total Dictionaries   : {}", list.len());
+                println!("Catalog Directory    : {}", cat_dir.display());
+                println!("----------------------------------------------------------------------------------------");
+                println!("{:<10} {:<20} {:>8} {:>12} {:>10} {:<16}", "DICT ID", "NAME", "SAMPLES", "TRAINED", "SIZE", "CHECKSUM");
+                println!("{:-<10} {:-<20} {:-<8} {:-<12} {:-<10} {:-<16}", "", "", "", "", "", "");
+                for d in &list {
+                    println!(
+                        "{:<10} {:<20} {:>8} {:>12} {:>10} {:<16}",
+                        d.dict_id,
+                        d.name,
+                        d.sample_count,
+                        format_bytes(d.trained_bytes as u64),
+                        format_bytes(d.dict_size as u64),
+                        d.checksum
+                    );
+                }
+                println!("========================================================================================");
+            }
+        }
+        DictSubCmd::Test {
+            dict_id,
+            target_path,
+            dict_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+
+            let dict = catalog
+                .get_by_id(*dict_id)?
+                .ok_or_else(|| anyhow::anyhow!("dictionary ID {} not found in catalog", dict_id))?;
+
+            let mut samples = Vec::new();
+            if target_path.is_file() {
+                let content = std::fs::read(target_path)?;
+                samples.push(content);
+            } else if target_path.is_dir() {
+                samples = velcrux_core::protocol::dict::DictionaryTrainer::sample_directory(
+                    target_path,
+                    50,
+                    velcrux_core::protocol::dict::MAX_SAMPLE_PER_FILE,
+                )?;
+            } else {
+                anyhow::bail!("target path '{}' does not exist", target_path.display());
+            }
+
+            let eval = velcrux_core::protocol::dict::evaluate_dictionary_ratio(
+                &samples,
+                dict.bytes(),
+                velcrux_core::protocol::compression::DEFAULT_ZSTD_LEVEL,
+            )?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_test",
+                        "dict_id": dict_id,
+                        "dictionary_name": dict.name(),
+                        "target_path": target_path,
+                        "evaluation": eval,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 DICTIONARY COMPRESSION PERFORMANCE EVALUATION                          ");
+                println!("========================================================================================");
+                println!("Dictionary Evaluated : {} (ID: {})", dict.name(), dict_id);
+                println!("Target Evaluated     : {}", target_path.display());
+                println!("Raw Payload Size     : {}", format_bytes(eval.raw_bytes as u64));
+                println!("Vanilla Zstd Size    : {} (ratio: {:.2}x)", format_bytes(eval.vanilla_zstd_bytes as u64), eval.vanilla_ratio);
+                println!("Dict-Assisted Size   : {} (ratio: {:.2}x)", format_bytes(eval.dict_zstd_bytes as u64), eval.dict_ratio);
+                println!("Bandwidth Reduction  : {:.1}% extra savings over vanilla zstd", eval.extra_savings_pct);
+                println!("========================================================================================");
+            }
+        }
+        DictSubCmd::Export {
+            dict_id,
+            dest_file,
+            dict_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+
+            catalog.export_dictionary(*dict_id, dest_file)?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_exported",
+                        "dict_id": dict_id,
+                        "destination": dest_file,
+                    })
+                );
+            } else {
+                println!("Dictionary ID {} exported successfully to '{}'.", dict_id, dest_file.display());
+            }
+        }
+        DictSubCmd::Import {
+            source_file,
+            name,
+            desc,
+            dict_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+
+            let dict = catalog.import_dictionary(
+                source_file,
+                name.as_deref(),
+                desc.as_deref(),
+                now_secs,
+            )?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_imported",
+                        "dictionary": dict.metadata,
+                        "source_file": source_file,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 ZSTANDARD PRE-TRAINED DICTIONARY IMPORTED                              ");
+                println!("========================================================================================");
+                println!("Dictionary ID        : {}", dict.metadata.dict_id);
+                println!("Name                 : {}", dict.metadata.name);
+                println!("Dictionary Size      : {} ({} bytes)", format_bytes(dict.metadata.dict_size as u64), dict.metadata.dict_size);
+                println!("BLAKE3 Checksum      : {}", dict.metadata.checksum);
+                println!("Source File          : {}", source_file.display());
+                println!("========================================================================================");
+            }
+        }
+        DictSubCmd::Delete { dict_id, dict_dir } => {
+            let is_json = cli_log_json(cli);
+            let cat_dir = dict_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
+            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+
+            let deleted = catalog.delete(*dict_id)?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dict_deleted",
+                        "dict_id": dict_id,
+                        "deleted": deleted,
+                    })
+                );
+            } else if deleted {
+                println!("Dictionary ID {} successfully deleted.", dict_id);
+            } else {
+                println!("Dictionary ID {} not found.", dict_id);
+            }
+        }
+    }
+    Ok(())
+}
+
 
 
 

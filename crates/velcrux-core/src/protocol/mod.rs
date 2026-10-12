@@ -13,6 +13,7 @@
 
 pub mod capabilities;
 pub mod compression;
+pub mod dict;
 pub mod error;
 pub mod frame;
 pub mod fuzzing;
@@ -26,6 +27,11 @@ pub use compression::{
     estimate_entropy, AdaptiveCompressionConfig, AdaptiveCompressionSelector,
     AdaptiveCompressionStats, CompressionDecision, EntropyTier, DEFAULT_ENTROPY_BYPASS_THRESHOLD,
     DEFAULT_ZSTD_LEVEL, FAST_ZSTD_LEVEL, HIGH_ZSTD_LEVEL,
+};
+pub use dict::{
+    compress_with_dict, decompress_with_dict_bounded, evaluate_dictionary_ratio,
+    CompressionRatioEvaluation, DictionaryCatalog, DictionaryMetadata, DictionaryTrainer,
+    ZstdDictionary, DEFAULT_MAX_DICT_SIZE, MIN_TRAINING_SAMPLES,
 };
 pub use error::{ErrorCode, ErrorDetail, ERROR_CODE_NAMES};
 pub use frame::{

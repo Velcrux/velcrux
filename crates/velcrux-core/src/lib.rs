@@ -59,6 +59,9 @@ pub use manifest::{
 pub use protocol::{
     compute_shannon_entropy, estimate_entropy, AdaptiveCompressionConfig,
     AdaptiveCompressionSelector, AdaptiveCompressionStats, CompressionDecision, EntropyTier,
+    compress_with_dict, decompress_with_dict_bounded, evaluate_dictionary_ratio,
+    CompressionRatioEvaluation, DictionaryCatalog, DictionaryMetadata, DictionaryTrainer,
+    ZstdDictionary,
 };
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
