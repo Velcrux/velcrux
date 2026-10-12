@@ -1085,6 +1085,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-017](adr/ADR-017-cross-cluster-wan-geo-replication-and-conflict-resolution.md)**: Cross-Cluster WAN Geo-Replication & Conflict Resolution Engine
 - **[ADR-018](adr/ADR-018-pluggable-webhook-event-notifications-and-audit-event-bus.md)**: Pluggable Webhook Event Notifications & Audit Event Bus
 - **[ADR-019](adr/ADR-019-point-in-time-snapshot-isolation-and-file-version-history.md)**: Point-in-Time Snapshot Isolation & File Version History Engine
+- **[ADR-020](adr/ADR-020-distributed-lock-manager-and-mutex-lease-coordinator.md)**: Distributed Lock Manager (DLM) & Mutex Lease Coordinator
 
 ---
 
@@ -1779,4 +1780,78 @@ velcrux snapshot delete prod-v0.9 --chunk-store /data/chunks
 # Machine-readable JSON output
 velcrux --json snapshot delete prod-v0.9 --chunk-store /data/chunks
 ```
+
+---
+
+## 38. Distributed Lock Manager (DLM) & Mutex Lease Coordinator
+
+Per `REQUIREMENTS.md` §17 ("Distributed Coordination"), §20 ("High Availability & Quorum"), §31 ("Split-Brain Prevention"), §61 ("Transactional Synchronization"), and `ADR-020`, Velcrux includes an embedded Distributed Lock Manager (`DistributedLockManager`) to coordinate mutual exclusion across distributed sync nodes and worker instances.
+
+### 1. Architectural Highlights
+
+1. **Lock Modes**:
+   - `Exclusive`: Single holder mutual exclusion for write transfers and directory mutations.
+   - `Shared`: Multi-reader concurrency for integrity verification and snapshot read pipelines.
+2. **Lease TTL & Heartbeats**:
+   - Time-bounded leases (default: 60s, configurable up to 3600s) prevent persistent deadlocks on process termination or partition.
+   - Heartbeat renewal (`renew`) extends lease expiration without token interruption.
+3. **Monotonic Lamport Fencing Tokens**:
+   - Strictly increasing tokens issued with every lease grant.
+   - Target storage sinks call `verify_fencing(resource, token)` to reject stale out-of-order writes from delayed nodes.
+4. **Crash-Resilient State Persistence**:
+   - Atomic JSON staging (`tmp-<rand>` -> rename) ensures state recovery across daemon restarts.
+
+### 2. Operational CLI Commands
+
+#### 1. Acquire a Distributed Lock
+```bash
+# Acquire an exclusive write lock lease with 120s TTL
+velcrux lock acquire /datasets/imagenet \
+  --holder worker-node-01 \
+  --mode exclusive \
+  --ttl-secs 120
+
+# Machine-readable JSON acquisition
+velcrux --json lock acquire /datasets/imagenet --holder worker-node-01 --mode exclusive
+```
+
+#### 2. Renew an Active Lease
+```bash
+# Heartbeat extension by 300s
+velcrux lock renew lck-101-39650 --holder worker-node-01 --ttl-secs 300
+
+# Machine-readable JSON renewal
+velcrux --json lock renew lck-101-39650 --holder worker-node-01 --ttl-secs 300
+```
+
+#### 3. Release a Lock
+```bash
+# Explicit lease surrender
+velcrux lock release lck-101-39650 --holder worker-node-01
+
+# Machine-readable JSON release
+velcrux --json lock release lck-101-39650 --holder worker-node-01
+```
+
+#### 4. List Active Leases
+```bash
+# Formatted table of all active leases
+velcrux lock list
+
+# Filter by resource path
+velcrux lock list --resource /datasets/imagenet
+
+# Machine-readable JSON registry report
+velcrux --json lock list
+```
+
+#### 5. Verify a Lamport Fencing Token
+```bash
+# Verify whether fencing token is active and authorized
+velcrux lock verify /datasets/imagenet 101
+
+# Machine-readable JSON verification
+velcrux --json lock verify /datasets/imagenet 101
+```
+
 

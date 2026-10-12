@@ -14,8 +14,11 @@ pub mod reconstruct;
 pub mod rle;
 
 pub mod geo;
+pub mod lock;
 pub mod plan;
 pub mod watcher;
+
+pub use lock::{DistributedLockManager, LeaseLock, LockError, LockMode, LockReport};
 
 pub use batch::{
     BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, SmallFileBatch,

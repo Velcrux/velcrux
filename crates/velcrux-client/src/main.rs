@@ -439,6 +439,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: SnapshotSubCmd,
     },
+    /// Distributed lock manager (DLM) and mutex lease coordinator (Option BD).
+    Lock {
+        #[command(subcommand)]
+        sub: LockSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -678,6 +683,71 @@ enum SnapshotSubCmd {
         /// Optional path to chunk store directory.
         #[arg(long)]
         chunk_store: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum LockSubCmd {
+    /// Acquire a distributed lock lease on a resource.
+    Acquire {
+        /// Target resource path or namespace (e.g. /datasets/imagenet).
+        resource: String,
+        /// Client, node, or session identifier claiming the lease.
+        #[arg(long, default_value = "client-default")]
+        holder: String,
+        /// Lock mode: "exclusive" (default) or "shared".
+        #[arg(long, default_value = "exclusive")]
+        mode: String,
+        /// Lease time-to-live (TTL) duration in seconds (default: 60).
+        #[arg(long, default_value = "60")]
+        ttl_secs: u64,
+        /// Optional state file path for lock coordinator persistence.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Renew / extend an active lock lease before it expires.
+    Renew {
+        /// Lock lease ID (e.g. lck-101-12345).
+        lock_id: String,
+        /// Client or holder identifier registered to the lease.
+        #[arg(long, default_value = "client-default")]
+        holder: String,
+        /// Additional lease extension duration in seconds (default: 60).
+        #[arg(long, default_value = "60")]
+        ttl_secs: u64,
+        /// Optional state file path.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Release an active lock lease.
+    Release {
+        /// Lock lease ID to release.
+        lock_id: String,
+        /// Client or holder identifier registered to the lease.
+        #[arg(long, default_value = "client-default")]
+        holder: String,
+        /// Optional state file path.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// List all active distributed locks and lease health metrics.
+    List {
+        /// Optional resource path filter.
+        #[arg(long)]
+        resource: Option<String>,
+        /// Optional state file path.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Verify whether a Lamport fencing token is currently valid and active on a resource.
+    Verify {
+        /// Target resource path.
+        resource: String,
+        /// Monotonic Lamport fencing token.
+        token: u64,
+        /// Optional state file path.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
     },
 }
 
@@ -1083,6 +1153,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Snapshot { sub } => {
             run_snapshot(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Lock { sub } => {
+            run_lock(&cli, sub).await?;
             return Ok(());
         }
 
@@ -4571,6 +4645,272 @@ async fn run_snapshot(cli: &Cli, sub: &SnapshotSubCmd) -> anyhow::Result<()> {
                 println!("Snapshot '{}' deleted successfully.", tag);
             } else {
                 println!("Snapshot '{}' not found.", tag);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_lock_manager(
+    state_file: &Option<PathBuf>,
+) -> anyhow::Result<velcrux_core::sync::DistributedLockManager> {
+    let dlm = velcrux_core::sync::DistributedLockManager::new();
+    let state_path = state_file
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(".velcrux/dlm_locks.json"));
+    Ok(dlm.with_persistence(state_path)?)
+}
+
+async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    match sub {
+        LockSubCmd::Acquire {
+            resource,
+            holder,
+            mode,
+            ttl_secs,
+            state_file,
+        } => {
+            let is_json = cli_log_json(cli);
+            let dlm = resolve_lock_manager(state_file)?;
+            let lock_mode: velcrux_core::sync::LockMode =
+                mode.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            match dlm.acquire(resource, holder, lock_mode, Some(*ttl_secs), now_secs) {
+                Ok(lease) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_acquired",
+                                "status": "granted",
+                                "lease": lease,
+                            })
+                        );
+                    } else {
+                        println!("========================================================================================");
+                        println!("                 DISTRIBUTED LOCK LEASE ACQUIRED                                        ");
+                        println!("========================================================================================");
+                        println!("Lock Lease ID        : {}", lease.lock_id);
+                        println!("Resource Path        : {}", lease.resource);
+                        println!("Leaseholder ID       : {}", lease.holder_id);
+                        println!("Lock Mode            : {}", lease.mode);
+                        println!("Lamport Fencing Token: {}", lease.fencing_token);
+                        println!("Expires In           : {}s (at timestamp {})", lease.ttl_secs, lease.expires_at_secs);
+                        println!("Status               : ACTIVE MUTEX LEASE");
+                        println!("========================================================================================");
+                    }
+                }
+                Err(err) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_acquire_failed",
+                                "status": "rejected",
+                                "error": err.to_string(),
+                            })
+                        );
+                    } else {
+                        eprintln!("Error acquiring lock: {}", err);
+                    }
+                    anyhow::bail!(err);
+                }
+            }
+        }
+        LockSubCmd::Renew {
+            lock_id,
+            holder,
+            ttl_secs,
+            state_file,
+        } => {
+            let is_json = cli_log_json(cli);
+            let dlm = resolve_lock_manager(state_file)?;
+
+            match dlm.renew(lock_id, holder, Some(*ttl_secs), now_secs) {
+                Ok(lease) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_renewed",
+                                "status": "renewed",
+                                "lease": lease,
+                            })
+                        );
+                    } else {
+                        println!("========================================================================================");
+                        println!("                 DISTRIBUTED LOCK LEASE RENEWED                                         ");
+                        println!("========================================================================================");
+                        println!("Lock Lease ID        : {}", lease.lock_id);
+                        println!("Resource Path        : {}", lease.resource);
+                        println!("Leaseholder ID       : {}", lease.holder_id);
+                        println!("New Expiration       : {}s (at timestamp {})", lease.ttl_secs, lease.expires_at_secs);
+                        println!("Lamport Fencing Token: {}", lease.fencing_token);
+                        println!("========================================================================================");
+                    }
+                }
+                Err(err) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_renew_failed",
+                                "status": "failed",
+                                "error": err.to_string(),
+                            })
+                        );
+                    } else {
+                        eprintln!("Error renewing lock: {}", err);
+                    }
+                    anyhow::bail!(err);
+                }
+            }
+        }
+        LockSubCmd::Release {
+            lock_id,
+            holder,
+            state_file,
+        } => {
+            let is_json = cli_log_json(cli);
+            let dlm = resolve_lock_manager(state_file)?;
+
+            match dlm.release(lock_id, holder, now_secs) {
+                Ok(true) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_released",
+                                "lock_id": lock_id,
+                                "released": true,
+                            })
+                        );
+                    } else {
+                        println!("Lock lease '{}' successfully released by '{}'.", lock_id, holder);
+                    }
+                }
+                Ok(false) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_released",
+                                "lock_id": lock_id,
+                                "released": false,
+                            })
+                        );
+                    } else {
+                        println!("Lock lease '{}' not found.", lock_id);
+                    }
+                }
+                Err(err) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "lock_release_failed",
+                                "error": err.to_string(),
+                            })
+                        );
+                    } else {
+                        eprintln!("Error releasing lock: {}", err);
+                    }
+                    anyhow::bail!(err);
+                }
+            }
+        }
+        LockSubCmd::List {
+            resource,
+            state_file,
+        } => {
+            let is_json = cli_log_json(cli);
+            let dlm = resolve_lock_manager(state_file)?;
+
+            let report = match resource {
+                Some(r) => {
+                    let active = dlm.inspect(r, now_secs);
+                    velcrux_core::sync::LockReport {
+                        total_active_locks: active.len(),
+                        total_exclusive_locks: active
+                            .iter()
+                            .filter(|l| l.mode == velcrux_core::sync::LockMode::Exclusive)
+                            .count(),
+                        total_shared_locks: active
+                            .iter()
+                            .filter(|l| l.mode == velcrux_core::sync::LockMode::Shared)
+                            .count(),
+                        highest_fencing_token: active.iter().map(|l| l.fencing_token).max().unwrap_or(0),
+                        active_locks: active,
+                    }
+                }
+                None => dlm.generate_report(now_secs),
+            };
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "lock_list",
+                        "report": report,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 DISTRIBUTED LOCK LEASE REGISTRY & STATUS                               ");
+                println!("========================================================================================");
+                println!("Total Active Locks   : {}", report.total_active_locks);
+                println!("Exclusive Write Locks: {}", report.total_exclusive_locks);
+                println!("Shared Read Locks    : {}", report.total_shared_locks);
+                println!("Highest Fencing Token: {}", report.highest_fencing_token);
+                println!("----------------------------------------------------------------------------------------");
+                println!("{:<16} {:<24} {:<16} {:<10} {:>8} {:>10}", "LOCK ID", "RESOURCE", "HOLDER", "MODE", "FENCE", "EXPIRES IN");
+                println!("{:-<16} {:-<24} {:-<16} {:-<10} {:-<8} {:-<10}", "", "", "", "", "", "");
+                for l in &report.active_locks {
+                    let rem = l.remaining_ttl_secs(now_secs);
+                    println!("{:<16} {:<24} {:<16} {:<10} {:>8} {:>9}s", l.lock_id, l.resource, l.holder_id, l.mode, l.fencing_token, rem);
+                }
+                println!("========================================================================================");
+            }
+        }
+        LockSubCmd::Verify {
+            resource,
+            token,
+            state_file,
+        } => {
+            let is_json = cli_log_json(cli);
+            let dlm = resolve_lock_manager(state_file)?;
+            let valid = dlm.verify_fencing(resource, *token, now_secs);
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "lock_verify",
+                        "resource": resource,
+                        "fencing_token": token,
+                        "valid": valid,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 LAMPORT FENCING TOKEN VERIFICATION                                     ");
+                println!("========================================================================================");
+                println!("Target Resource      : {}", resource);
+                println!("Fencing Token        : {}", token);
+                println!(
+                    "Verification Status  : {}",
+                    if valid {
+                        "VALID (Active Authorized Lease)"
+                    } else {
+                        "INVALID / EXPIRED (Reject Stale Write)"
+                    }
+                );
+                println!("========================================================================================");
             }
         }
     }
