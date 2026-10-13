@@ -18,7 +18,8 @@ jobs:
   # --------------------------------------------------------------------------
   lint:
     name: Lint & Formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latestcontinue
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
