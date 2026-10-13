@@ -27,9 +27,14 @@ pub mod direct_io;
 pub mod gc;
 pub mod memory;
 pub mod s3;
+pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use scrub::{
+    BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
+    ScrubOptions, ScrubReport,
+};
 pub use cluster::{
     ClusteredChunkStore, ClusterNode, ClusterNodeState, ClusterReport,
     ConsistentHashRing, QuorumPolicy, ReplicationReport,

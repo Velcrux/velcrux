@@ -1087,6 +1087,7 @@ Per `REQUIREMENTS.md` §80, every critical technical trade-off is recorded with 
 - **[ADR-019](adr/ADR-019-point-in-time-snapshot-isolation-and-file-version-history.md)**: Point-in-Time Snapshot Isolation & File Version History Engine
 - **[ADR-020](adr/ADR-020-distributed-lock-manager-and-mutex-lease-coordinator.md)**: Distributed Lock Manager (DLM) & Mutex Lease Coordinator
 - **[ADR-021](adr/ADR-021-dynamic-zstandard-pre-trained-dictionary-learning-engine.md)**: Dynamic Zstandard Pre-Trained Dictionary Learning Engine
+- **[ADR-022](adr/ADR-022-data-integrity-scrubbing-and-bit-rot-repair-daemon.md)**: In-Flight Data Integrity Scrubbing & Background Bit-Rot Repair Daemon
 
 ---
 
@@ -1933,6 +1934,69 @@ velcrux dict delete 14285714
 # Machine-readable JSON delete
 velcrux --json dict delete 14285714
 ```
+
+---
+
+## 40. In-Flight Data Integrity Scrubbing & Background Bit-Rot Repair Daemon
+
+Per `REQUIREMENTS.md` §18 ("Integrity Verification"), §63 ("Garbage Collection"), §70 ("Graceful Shutdown"), and `ADR-022`, Velcrux provides proactive cryptographic scrubbing and autonomous bit-rot repair to protect deduplicated storage repositories from silent data corruption.
+
+### 1. Key Capabilities
+
+1. **Cryptographic BLAKE3 Verification**:
+   - Traverses the 2-level content-addressed chunk store (`chunks/ab/cd/*.chunk`) and verifies actual bytes against expected BLAKE3 digests.
+   - Detects silent bit flips, truncated files, and disk controller corruption.
+2. **Flexible Scrubbing Modes**:
+   - `verify`: Read-only audit logging anomalies without altering disk.
+   - `quarantine`: Moves corrupted chunks into `.quarantine/` holding area to prevent serving corrupted data.
+   - `heal`: Automatically fetches healthy replicas from designated peer chunk stores (`--peer-store`) and rewrites damaged chunks in-place.
+3. **Throttled I/O Rate-Limiting**:
+   - Configurable `--rate-limit-mb` restricts read bandwidth to ensure scrubbing runs smoothly in the background without affecting production sync jobs.
+4. **Persistent Audit History**:
+   - Automatically saves detailed audit telemetry to `<chunk-store>/.velcrux/last_scrub.json`.
+   - Inspectable anytime via `velcrux scrub status`.
+
+### 2. Operational CLI Commands
+
+#### 1. Audit Chunk Store Integrity
+```bash
+# Run read-only integrity audit across chunk store
+velcrux scrub run /data/velcrux/chunks
+
+# Run audit with I/O rate-limiting at 50 MB/s
+velcrux scrub run /data/velcrux/chunks --rate-limit-mb 50
+
+# Machine-readable JSON audit output
+velcrux --json scrub run /data/velcrux/chunks
+```
+
+#### 2. Quarantine Corrupted Chunks
+```bash
+# Isolate bit-rotted chunks into quarantine directory
+velcrux scrub run /data/velcrux/chunks --mode quarantine
+
+# Custom quarantine directory
+velcrux scrub run /data/velcrux/chunks --mode quarantine --quarantine-dir /data/quarantine
+```
+
+#### 3. Inspect Latest Scrub Status
+```bash
+# Display health report and findings from the latest scrub pass
+velcrux scrub status /data/velcrux/chunks
+
+# Machine-readable JSON status report
+velcrux --json scrub status /data/velcrux/chunks
+```
+
+#### 4. Self-Healing Repair from Peer Store
+```bash
+# Repair corrupted or missing chunks using a reference peer store
+velcrux scrub repair /data/velcrux/chunks --peer-store /backup/velcrux/chunks
+
+# Machine-readable JSON repair report
+velcrux --json scrub repair /data/velcrux/chunks --peer-store /backup/velcrux/chunks
+```
+
 
 
 

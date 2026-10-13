@@ -449,6 +449,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: DictSubCmd,
     },
+    /// In-flight data integrity scrubbing and background bit-rot repair daemon (Option BF).
+    Scrub {
+        #[command(subcommand)]
+        sub: ScrubSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -825,6 +830,43 @@ enum DictSubCmd {
         /// Optional directory for dictionary catalog storage.
         #[arg(long)]
         dict_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ScrubSubCmd {
+    /// Perform an integrity scrub across a content-addressed chunk store.
+    Run {
+        /// Target chunk store root path.
+        chunk_store: PathBuf,
+        /// Operational scrub mode: "verify" (default), "quarantine", or "heal".
+        #[arg(long, default_value = "verify")]
+        mode: String,
+        /// Optional peer chunk store directory for self-healing repair.
+        #[arg(long)]
+        peer_store: Option<PathBuf>,
+        /// Optional I/O rate limit in MB/s (e.g. 50).
+        #[arg(long)]
+        rate_limit_mb: Option<u64>,
+        /// Optional custom quarantine directory for corrupted chunks.
+        #[arg(long)]
+        quarantine_dir: Option<PathBuf>,
+    },
+    /// Inspect the latest scrub audit report and bit-rot telemetry for a chunk store.
+    Status {
+        /// Target chunk store root path.
+        chunk_store: PathBuf,
+    },
+    /// Explicitly repair corrupted or bit-rotted chunks from a peer chunk store.
+    Repair {
+        /// Target chunk store root path.
+        chunk_store: PathBuf,
+        /// Reference peer chunk store directory containing valid replicas.
+        #[arg(long)]
+        peer_store: PathBuf,
+        /// Optional I/O rate limit in MB/s.
+        #[arg(long)]
+        rate_limit_mb: Option<u64>,
     },
 }
 
@@ -1238,6 +1280,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Dict { sub } => {
             run_dict(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Scrub { sub } => {
+            run_scrub(&cli, sub).await?;
             return Ok(());
         }
 
@@ -5243,6 +5289,172 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                 println!("Dictionary ID {} successfully deleted.", dict_id);
             } else {
                 println!("Dictionary ID {} not found.", dict_id);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
+    match sub {
+        ScrubSubCmd::Run {
+            chunk_store,
+            mode,
+            peer_store,
+            rate_limit_mb,
+            quarantine_dir,
+        } => {
+            let is_json = cli_log_json(cli);
+            let local = velcrux_core::storage::LocalChunkStore::new(chunk_store).await?;
+
+            let scrub_mode = match mode.to_ascii_lowercase().as_str() {
+                "verify" | "check" | "v" => velcrux_core::storage::ScrubMode::VerifyOnly,
+                "quarantine" | "isolate" | "q" => velcrux_core::storage::ScrubMode::Quarantine,
+                "heal" | "repair" | "h" => velcrux_core::storage::ScrubMode::HealFromPeer,
+                other => anyhow::bail!("unknown scrub mode '{}': expected 'verify', 'quarantine', or 'heal'", other),
+            };
+
+            let options = velcrux_core::storage::ScrubOptions {
+                mode: scrub_mode,
+                rate_limit_bytes_per_sec: rate_limit_mb.map(|mb| mb * 1024 * 1024),
+                quarantine_dir: quarantine_dir.clone(),
+            };
+
+            let report = if let Some(peer_path) = peer_store {
+                let peer = velcrux_core::storage::LocalChunkStore::new(peer_path).await?;
+                velcrux_core::storage::DataScrubber::scrub_and_heal(&local, &peer, &options).await?
+            } else {
+                velcrux_core::storage::DataScrubber::scrub_local_store(&local, &options).await?
+            };
+
+            // Save report to <chunk_store>/.velcrux/last_scrub.json
+            let report_file = chunk_store.join(".velcrux").join("last_scrub.json");
+            let _ = velcrux_core::storage::DataScrubber::save_report(&report, &report_file);
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "scrub_completed",
+                        "report": report,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 DATA INTEGRITY SCRUBBING & BIT-ROT AUDIT REPORT                        ");
+                println!("========================================================================================");
+                println!("Target Chunk Store   : {}", report.target_path);
+                println!("Scrub Mode           : {}", scrub_mode);
+                println!("Total Chunks Scanned : {}", report.scanned_chunks);
+                println!("Intact (Healthy)     : {}", report.healthy_chunks);
+                println!("Bit-Rot / Corrupted  : {}", report.corrupted_chunks);
+                println!("Successfully Healed  : {}", report.repaired_chunks);
+                println!("Isolated Quarantine  : {}", report.quarantined_chunks);
+                println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
+                println!("Total Bytes Scanned  : {}", format_bytes(report.scanned_bytes));
+                println!("Total Bytes Repaired : {}", format_bytes(report.repaired_bytes));
+                println!("Elapsed Duration     : {} ms", report.duration_ms);
+                println!("Verification Speed   : {:.2} MB/s", report.throughput_mb_s);
+                if !report.findings.is_empty() {
+                    println!("----------------------------------------------------------------------------------------");
+                    println!("FINDINGS & ANOMALIES DETECTED ({}):", report.findings.len());
+                    for f in report.findings.iter().take(10) {
+                        println!(" - [{}] Chunk {}: {}", f.status, f.chunk_hash, f.details);
+                    }
+                    if report.findings.len() > 10 {
+                        println!(" ... and {} additional findings", report.findings.len() - 10);
+                    }
+                }
+                println!("========================================================================================");
+            }
+        }
+        ScrubSubCmd::Status { chunk_store } => {
+            let is_json = cli_log_json(cli);
+            let report_file = chunk_store.join(".velcrux").join("last_scrub.json");
+
+            match velcrux_core::storage::DataScrubber::load_latest_report(&report_file)? {
+                Some(report) => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "scrub_status",
+                                "report": report,
+                            })
+                        );
+                    } else {
+                        println!("========================================================================================");
+                        println!("                 LATEST CHUNK STORE SCRUBBING STATUS                                    ");
+                        println!("========================================================================================");
+                        println!("Target Chunk Store   : {}", report.target_path);
+                        println!("Last Run Timestamp   : {}", report.started_at_secs);
+                        println!("Total Chunks Scanned : {}", report.scanned_chunks);
+                        println!("Healthy Chunks       : {}", report.healthy_chunks);
+                        println!("Corrupted Chunks     : {}", report.corrupted_chunks);
+                        println!("Repaired Chunks      : {}", report.repaired_chunks);
+                        println!("Quarantined Chunks   : {}", report.quarantined_chunks);
+                        println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
+                        println!("Scanned Volume       : {}", format_bytes(report.scanned_bytes));
+                        println!("Audit Throughput     : {:.2} MB/s", report.throughput_mb_s);
+                        println!("Health Verdict       : {}", if report.corrupted_chunks == 0 { "100% HEALTHY (ZERO BIT-ROT DETECTED)" } else { "ANOMALIES / BIT-ROT DETECTED" });
+                        println!("========================================================================================");
+                    }
+                }
+                None => {
+                    if is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "scrub_status",
+                                "report": null,
+                                "message": "no previous scrub report found",
+                            })
+                        );
+                    } else {
+                        println!("No previous scrub report found in '{}'. Run 'velcrux scrub run' to audit.", chunk_store.display());
+                    }
+                }
+            }
+        }
+        ScrubSubCmd::Repair {
+            chunk_store,
+            peer_store,
+            rate_limit_mb,
+        } => {
+            let is_json = cli_log_json(cli);
+            let local = velcrux_core::storage::LocalChunkStore::new(chunk_store).await?;
+            let peer = velcrux_core::storage::LocalChunkStore::new(peer_store).await?;
+
+            let options = velcrux_core::storage::ScrubOptions {
+                mode: velcrux_core::storage::ScrubMode::HealFromPeer,
+                rate_limit_bytes_per_sec: rate_limit_mb.map(|mb| mb * 1024 * 1024),
+                quarantine_dir: None,
+            };
+
+            let report = velcrux_core::storage::DataScrubber::scrub_and_heal(&local, &peer, &options).await?;
+            let report_file = chunk_store.join(".velcrux").join("last_scrub.json");
+            let _ = velcrux_core::storage::DataScrubber::save_report(&report, &report_file);
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "scrub_repair_completed",
+                        "report": report,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 BIT-ROT SELF-HEALING REPAIR COMPLETED                                  ");
+                println!("========================================================================================");
+                println!("Target Chunk Store   : {}", report.target_path);
+                println!("Peer Store Reference : {}", peer_store.display());
+                println!("Corrupted Detected   : {}", report.corrupted_chunks);
+                println!("Successfully Healed  : {}", report.repaired_chunks);
+                println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
+                println!("Restored Data Volume : {}", format_bytes(report.repaired_bytes));
+                println!("Repair Elapsed Time  : {} ms", report.duration_ms);
+                println!("========================================================================================");
             }
         }
     }

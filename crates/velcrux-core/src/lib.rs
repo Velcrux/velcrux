@@ -82,8 +82,9 @@ pub use storage::{
     DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
     LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, QuorumPolicy, ReplicationReport,
     S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer, SnapshotDiff,
-    SnapshotEntry, SnapshotFileMeta, SnapshotManager, SnapshotRestoreReport, SnapshotSummary,
     Staging, StagingGcReport, StorageBackend, VPath, VPathError, SNAPSHOT_CHUNK_SIZE,
+    BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
+    ScrubOptions, ScrubReport,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
