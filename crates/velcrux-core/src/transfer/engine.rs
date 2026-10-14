@@ -960,13 +960,16 @@ pub async fn server_upload_session_with_limits(
                         ));
                     }
                     let chunk_index = hdr.chunk_offset / chunk_size;
+                    let is_streaming = expected_hash == Hash::ZERO;
                     let mut bm = shared_bitmap.lock().await;
-                    if !bm.contains(chunk_index) {
+                    if is_streaming || !bm.contains(chunk_index) {
                         if !is_hole {
                             let mut w = writer.lock().await;
                             w.write_at(hdr.chunk_offset, &chunk_data).await?;
                         }
-                        bm.mark_complete(chunk_index, hdr.chunk_len as u64);
+                        if !is_streaming {
+                            bm.mark_complete(chunk_index, hdr.chunk_len as u64);
+                        }
                     }
                     drop(bm);
                     if let Some(ref lim) = limiter_clone {
@@ -1055,11 +1058,14 @@ pub async fn server_upload_session_with_limits(
                 ));
             }
             let chunk_index = hdr.chunk_offset / chunk_size;
-            if !bitmap.contains(chunk_index) {
+            let is_streaming = expected_hash == Hash::ZERO;
+            if is_streaming || !bitmap.contains(chunk_index) {
                 if !is_hole {
                     writer.write_at(hdr.chunk_offset, &chunk_data).await?;
                 }
-                bitmap.mark_complete(chunk_index, hdr.chunk_len as u64);
+                if !is_streaming {
+                    bitmap.mark_complete(chunk_index, hdr.chunk_len as u64);
+                }
                 bytes_received = bytes_received.saturating_add(hdr.chunk_len as u64);
             }
             if let Some(ref lim) = rate_limiter {
@@ -1113,14 +1119,20 @@ pub async fn server_upload_session_with_limits(
         return Err(protocol_violation("server: expected VERIFY"));
     }
     let verify = VerifyMsg::decode(&frame.payload)?;
-    if verify.transfer_id != transfer_id || verify.expected_hash != expected_hash {
+    if verify.transfer_id != transfer_id
+        || (expected_hash != Hash::ZERO && verify.expected_hash != expected_hash)
+    {
         return Err(protocol_violation(
             "server: VERIFY transfer_id/hash mismatch",
         ));
     }
 
     // Reply VERIFY_RESULT.
-    let ok = computed == expected_hash;
+    let ok = if expected_hash != Hash::ZERO {
+        computed == expected_hash
+    } else {
+        computed == verify.expected_hash
+    };
     let vr = VerifyResultMsg {
         transfer_id,
         ok,
@@ -1159,7 +1171,15 @@ pub async fn server_upload_session_with_limits(
         });
     }
 
-    let meta = FileMeta::new(expected_size, computed);
+    let actual_size = if expected_size > 0 {
+        expected_size
+    } else {
+        tokio::fs::metadata(staging_handle.path())
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
+    };
+    let meta = FileMeta::new(actual_size, computed);
     backend
         .commit(&transfer_id.to_string(), staging_handle, dst, &meta)
         .await?;
@@ -1891,3 +1911,271 @@ pub async fn server_download_session_with_compression(
 
     Ok(())
 }
+
+// ===========================================================================
+// Unix Stdin / Stdout Streaming Pipelines (Option BG)
+// ===========================================================================
+
+/// Upload an asynchronous stream (e.g. standard input or pipeline) to the remote server.
+/// Chunks the incoming stream into sequential data frames, computes a running whole-stream
+/// BLAKE3 digest, verifies hash consistency upon stream EOF, and triggers atomic commit.
+pub async fn client_upload_stdin_stream<R>(
+    conn: &dyn Connection,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    mut reader: R,
+    chunk_size: usize,
+    compression: bool,
+    rate_limiter: Option<RateLimiter>,
+    progress_tx: Option<mpsc::Sender<u64>>,
+) -> Result<(Hash, u64)>
+where
+    R: tokio::io::AsyncRead + Send + Unpin,
+{
+    use crate::protocol::message::Message;
+    use crate::session::encode_message;
+    use tokio::io::AsyncReadExt;
+
+    let chunk_size = chunk_size.clamp(4096, MAX_CHUNK_SIZE as usize);
+    let mut data_send = conn.open_uni().await?;
+    let preamble = DataPreamble {
+        transfer_id,
+        file_id: 1,
+        stream_seq: 1,
+    };
+    data_send
+        .write_all(Bytes::from(encode_data_preamble(&preamble).to_vec()))
+        .await?;
+
+    let mut read_buf = vec![0u8; chunk_size];
+    let mut offset = 0u64;
+    let mut total_streamed = 0u64;
+    let mut whole_hasher = blake3::Hasher::new();
+    let mut comp_selector = AdaptiveCompressionSelector::with_defaults();
+
+    loop {
+        let mut n = 0;
+        while n < read_buf.len() {
+            let r = reader.read(&mut read_buf[n..]).await?;
+            if r == 0 {
+                break;
+            }
+            n += r;
+        }
+        if n == 0 {
+            break;
+        }
+
+        let slice = &read_buf[..n];
+        whole_hasher.update(slice);
+        let hash = Hash::of(slice);
+        let (frame_bytes, _) = if compression {
+            let (b, c, _) = encode_data_frame_adaptive(offset, &hash, slice, &mut comp_selector);
+            (b, c)
+        } else {
+            encode_data_frame_maybe_compressed(offset, &hash, slice, false)
+        };
+
+        if let Some(ref lim) = rate_limiter {
+            lim.acquire(frame_bytes.len() - DATA_FRAME_HEADER_LEN).await;
+        }
+        data_send.write_all(Bytes::from(frame_bytes)).await?;
+
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.try_send(n as u64);
+        }
+
+        offset += n as u64;
+        total_streamed += n as u64;
+    }
+
+    data_send.finish().await?;
+
+    let final_hash = Hash::from(*whole_hasher.finalize().as_bytes());
+
+    // Send VERIFY with computed whole-stream hash
+    let verify = VerifyMsg {
+        transfer_id,
+        expected_hash: final_hash,
+    };
+    let buf = Bytes::from(encode_message(&Message::Verify(verify), 0)?);
+    control_send.write_all(buf).await?;
+
+    // Await VERIFY_RESULT
+    let frame = read_control_frame(&mut *control_recv).await?;
+    if frame.type_byte != crate::protocol::message::VERIFY_RESULT {
+        let detail = if frame.type_byte == crate::protocol::message::ERROR {
+            match crate::protocol::message::ErrorMsg::decode(&frame.payload) {
+                Ok(e) => format!("server error {:?}: {:?}", e.code, e.detail),
+                Err(_) => "undecodable error".into(),
+            }
+        } else {
+            format!("got 0x{:02x}", frame.type_byte)
+        };
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::InvalidStateTransition(Box::leak(
+                format!("expected VERIFY_RESULT (0x{:02x}), {detail}", crate::protocol::message::VERIFY_RESULT)
+                    .into_boxed_str(),
+            )),
+        ));
+    }
+    let vr = VerifyResultMsg::decode(&frame.payload)?;
+    if vr.transfer_id != transfer_id {
+        return Err(protocol_violation("VERIFY_RESULT transfer_id mismatch"));
+    }
+    if !vr.ok || vr.computed_hash != final_hash {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed(
+                "streaming upload: server whole-stream BLAKE3 verification failed",
+            ),
+        ));
+    }
+
+    // Send COMMIT
+    let commit = CommitMsg { transfer_id };
+    let buf = Bytes::from(encode_message(&Message::Commit(commit), 0)?);
+    control_send.write_all(buf).await?;
+
+    // Await COMMITTED
+    let frame = read_control_frame(&mut *control_recv).await?;
+    if frame.type_byte != crate::protocol::message::COMMITTED {
+        return Err(protocol_violation("expected COMMITTED"));
+    }
+    let committed = CommittedMsg::decode(&frame.payload)?;
+    if committed.transfer_id != transfer_id || committed.files != 1 {
+        return Err(protocol_violation("COMMITTED transfer_id/files mismatch"));
+    }
+
+    Ok((final_hash, total_streamed))
+}
+
+/// Download a remote file directly into an asynchronous writer (e.g. standard output or pipeline).
+/// Validates per-chunk BLAKE3 integrity upon receipt, decompresses on the fly, computes a running
+/// whole-stream BLAKE3 digest, and asserts parity against the server's authoritative VERIFY_RESULT.
+pub async fn client_download_stdout_stream<W>(
+    conn: &dyn Connection,
+    control_send: &mut dyn BiSendStream,
+    control_recv: &mut dyn BiRecvStream,
+    transfer_id: TransferId,
+    mut writer: W,
+    rate_limiter: Option<RateLimiter>,
+    progress_tx: Option<mpsc::Sender<u64>>,
+) -> Result<(Hash, u64)>
+where
+    W: tokio::io::AsyncWrite + Send + Unpin,
+{
+    use crate::protocol::message::Message;
+    use crate::session::encode_message;
+    use tokio::io::AsyncWriteExt;
+
+    let mut data_recv = conn.accept_uni().await?;
+    let pre = data_recv
+        .read_exact(DATA_PREAMBLE_LEN)
+        .await?
+        .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
+    let preamble = decode_data_preamble(&pre)?;
+    if preamble.transfer_id != transfer_id {
+        return Err(protocol_violation("download: transfer_id mismatch in preamble"));
+    }
+
+    let mut whole_hasher = blake3::Hasher::new();
+    let mut total_streamed = 0u64;
+
+    loop {
+        let header_bytes = match data_recv.read_exact(DATA_FRAME_HEADER_LEN).await? {
+            Some(b) => b,
+            None => break,
+        };
+        let (hdr, _payload_after) = decode_data_frame_header(&header_bytes)?;
+        let payload_len = hdr.chunk_len as usize;
+        let payload = match data_recv.read_exact(payload_len).await? {
+            Some(b) => b,
+            None => {
+                return Err(protocol_violation(
+                    "download: chunk payload shorter than declared (stream EOF)",
+                ));
+            }
+        };
+
+        let chunk_data = if hdr.flags.compressed() {
+            crate::protocol::compression::decompress_payload_bounded(
+                &payload,
+                MAX_CHUNK_SIZE as usize,
+                Some(500),
+            )?
+        } else {
+            payload.to_vec()
+        };
+
+        let computed = hash_bytes(&chunk_data);
+        if computed != hdr.chunk_hash {
+            return Err(VelcruxError::Protocol(
+                crate::error::ProtocolError::Malformed("download: chunk hash mismatch"),
+            ));
+        }
+
+        writer.write_all(&chunk_data).await?;
+        whole_hasher.update(&chunk_data);
+        total_streamed += chunk_data.len() as u64;
+
+        if let Some(ref lim) = rate_limiter {
+            lim.acquire(payload_len).await;
+        }
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.try_send(chunk_data.len() as u64);
+        }
+    }
+
+    writer.flush().await?;
+
+    // Send VERIFY (Hash::ZERO indicates client requests server's authoritative hash)
+    let verify = VerifyMsg {
+        transfer_id,
+        expected_hash: Hash::ZERO,
+    };
+    let buf = Bytes::from(encode_message(&Message::Verify(verify), 0)?);
+    control_send.write_all(buf).await?;
+
+    // Await VERIFY_RESULT
+    let frame = read_control_frame(&mut *control_recv).await?;
+    if frame.type_byte != crate::protocol::message::VERIFY_RESULT {
+        return Err(protocol_violation("download: expected VERIFY_RESULT"));
+    }
+    let vr = VerifyResultMsg::decode(&frame.payload)?;
+    if vr.transfer_id != transfer_id {
+        return Err(protocol_violation("download: VERIFY_RESULT transfer_id mismatch"));
+    }
+    if !vr.ok {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed("download: server reported hash mismatch"),
+        ));
+    }
+
+    let local_computed = Hash::from(*whole_hasher.finalize().as_bytes());
+    if local_computed != vr.computed_hash {
+        return Err(VelcruxError::Protocol(
+            crate::error::ProtocolError::Malformed(
+                "download: local streaming BLAKE3 hash does not match server",
+            ),
+        ));
+    }
+
+    // Send COMMIT
+    let commit = CommitMsg { transfer_id };
+    let buf = Bytes::from(encode_message(&Message::Commit(commit), 0)?);
+    control_send.write_all(buf).await?;
+
+    // Await COMMITTED
+    let frame = read_control_frame(&mut *control_recv).await?;
+    if frame.type_byte != crate::protocol::message::COMMITTED {
+        return Err(protocol_violation("download: expected COMMITTED"));
+    }
+    let committed = CommittedMsg::decode(&frame.payload)?;
+    if committed.transfer_id != transfer_id || committed.files != 1 {
+        return Err(protocol_violation("download: COMMITTED transfer_id/files mismatch"));
+    }
+
+    Ok((local_computed, total_streamed))
+}
+

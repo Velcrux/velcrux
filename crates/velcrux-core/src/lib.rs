@@ -72,8 +72,10 @@ pub use state::{
 };
 
 pub use scheduler::{
-    BandwidthRate, FairnessScheduler, HierarchicalBandwidthAllocator, ParseBandwidthError,
-    PriorityClass, ScheduledItem,
+    civil_time_from_timestamp, ActiveScheduleStatus, BandwidthRate, BandwidthSchedule,
+    BandwidthScheduleRule, DayMatcher, DayOfWeek, FairnessScheduler, HierarchicalBandwidthAllocator,
+    ParseBandwidthError, ParseScheduleError, PriorityClass, ScheduledBandwidthLimiter,
+    ScheduledItem, TimeWindow,
 };
 pub use storage::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, AlignedSectorBuffer, ChunkStore,
@@ -112,9 +114,10 @@ pub use telemetry::{
     WebhookSubscription,
 };
 pub use transfer::{
-    client_download, client_download_stream, client_download_stream_with_staging,
-    client_download_with_progress, client_upload, client_upload_stream, client_upload_with_state,
-    parse_rate_limit, server_download_session, server_download_session_with_delta,
+    client_download, client_download_stdout_stream, client_download_stream,
+    client_download_stream_with_staging, client_download_with_progress, client_upload,
+    client_upload_stdin_stream, client_upload_stream, client_upload_with_state, parse_rate_limit,
+    server_download_session, server_download_session_with_delta,
     server_download_session_with_limits, server_staging_path, server_upload_session,
     server_upload_session_with_delta, server_upload_session_with_limits,
     server_upload_session_with_state, CheckpointCoordinator, CheckpointPolicy, CheckpointStats,
@@ -123,14 +126,17 @@ pub use transfer::{
 };
 
 pub use transport::{
-    AdaptiveFlowController, BaselineComparator, BdpEstimator, BenchmarkMetrics, BenchmarkScenario,
-    Connection, ImpairedChannel, ImpairmentProfile, ImpairmentStats, MigrationCoordinator,
-    MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode, MigrationStats,
-    MultipathConfig, MultipathCoordinator, MultipathSchedulerPolicy, MultipathSessionReport,
-    NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator, PacingController, PathState,
-    PmtuConfig, PmtuCoordinator, PmtuState, PmtuStats, SharedTransport, SubflowPathDescriptor,
-    SubflowQualityMetrics, TokenBucket, TransportConfigTunables, WanMatrixReport, WanMatrixRunner,
-    BASE_PLPMTU, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU, JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
+    simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController, BaselineComparator,
+    BdpEstimator, BenchmarkMetrics, BenchmarkScenario, Connection, FecBlockDecoder, FecBlockEncoder,
+    FecBlockHeader, FecCodec, FecProfile, FecRecoveryReport, FecSimulationReport, FecStats,
+    FecStatsSnapshot, FecSymbol, ImpairedChannel, ImpairmentProfile, ImpairmentStats,
+    MigrationCoordinator, MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode,
+    MigrationStats, MultipathConfig, MultipathCoordinator, MultipathSchedulerPolicy,
+    MultipathSessionReport, NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator,
+    PacingController, PathState, PmtuConfig, PmtuCoordinator, PmtuState, PmtuStats, SharedTransport,
+    SubflowPathDescriptor, SubflowQualityMetrics, TokenBucket, TransportConfigTunables,
+    WanMatrixReport, WanMatrixRunner, BASE_PLPMTU, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU,
+    JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,

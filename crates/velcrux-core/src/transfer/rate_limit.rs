@@ -100,6 +100,7 @@ pub struct RateLimiter {
     bytes_per_sec: u64,
     parent: Option<Arc<RateLimiter>>,
     hit_counter: Option<Arc<AtomicU64>>,
+    schedule: Option<Arc<crate::scheduler::BandwidthSchedule>>,
 }
 
 impl RateLimiter {
@@ -118,6 +119,7 @@ impl RateLimiter {
             bytes_per_sec,
             parent: None,
             hit_counter: None,
+            schedule: None,
         }
     }
 
@@ -126,6 +128,12 @@ impl RateLimiter {
     /// and this limiter concurrently.
     pub fn with_parent(mut self, parent: Arc<RateLimiter>) -> Self {
         self.parent = Some(parent);
+        self
+    }
+
+    /// Attach a dynamic calendar and time-of-day bandwidth schedule (Option BI).
+    pub fn with_schedule(mut self, schedule: Arc<crate::scheduler::BandwidthSchedule>) -> Self {
+        self.schedule = Some(schedule);
         self
     }
 
@@ -138,6 +146,24 @@ impl RateLimiter {
     /// The configured rate limit in bytes per second.
     pub fn bytes_per_sec(&self) -> u64 {
         self.bytes_per_sec
+    }
+
+    /// The effective rate limit in bytes per second taking active schedule into account.
+    pub fn effective_bytes_per_sec(&self) -> u64 {
+        if let Some(ref sched) = self.schedule {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            sched.resolve_at(now_secs).active_rate.bytes_per_sec()
+        } else {
+            self.bytes_per_sec
+        }
+    }
+
+    /// Return attached schedule if configured.
+    pub fn schedule(&self) -> Option<Arc<crate::scheduler::BandwidthSchedule>> {
+        self.schedule.clone()
     }
 
     /// Acquires permission to transmit `bytes`.
@@ -166,7 +192,21 @@ impl RateLimiter {
     }
 
     async fn acquire_self(&self, bytes: usize) {
-        if self.bytes_per_sec == 0 || bytes == 0 {
+        if bytes == 0 {
+            return;
+        }
+
+        let effective_rate = if let Some(ref sched) = self.schedule {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            sched.resolve_at(now_secs).active_rate.bytes_per_sec()
+        } else {
+            self.bytes_per_sec
+        };
+
+        if effective_rate == 0 {
             return;
         }
 
@@ -176,7 +216,7 @@ impl RateLimiter {
         loop {
             let now = Instant::now();
             let elapsed = now.saturating_duration_since(state.last_refill);
-            let added_tokens = elapsed.as_secs_f64() * (self.bytes_per_sec as f64);
+            let added_tokens = elapsed.as_secs_f64() * (effective_rate as f64);
             state.tokens = (state.tokens + added_tokens).min(state.burst_limit);
             state.last_refill = now;
 
@@ -194,7 +234,7 @@ impl RateLimiter {
             }
 
             let deficit = req - state.tokens;
-            let wait_secs = deficit / (self.bytes_per_sec as f64);
+            let wait_secs = deficit / (effective_rate as f64);
             let sleep_dur = Duration::from_secs_f64(wait_secs);
 
             drop(state);

@@ -1997,6 +1997,223 @@ velcrux scrub repair /data/velcrux/chunks --peer-store /backup/velcrux/chunks
 velcrux --json scrub repair /data/velcrux/chunks --peer-store /backup/velcrux/chunks
 ```
 
+---
+
+## 41. Unix Stdin/Stdout Streaming Pipelines (Option BG)
+
+Per `ADR-023`, Velcrux provides high-performance Unix pipe streaming to support continuous standard input (`stdin`) and standard output (`stdout`) operations directly over QUIC without intermediate local disk spooling.
+
+### 1. Key Capabilities
+
+1. **Zero-Spool Ingest & Egress**:
+   - Streams bytes directly between OS pipes and network frames with zero disk write amplification.
+   - Ideal for live database dumps (`mysqldump`, `pg_dump`), real-time archive creation (`tar`, `cpio`), and raw disk block streaming (`dd`).
+2. **Sentinel Negotiation Protocol**:
+   - `TransferCreate` utilizes `file_size: 0` and `file_hash: Hash::ZERO` to declare dynamically sized streams.
+   - Bypasses upfront Bloom filter queries and FastCDC delta comparisons.
+3. **End-to-End Cryptographic BLAKE3 Verification**:
+   - Rolling BLAKE3 digests are computed incrementally on-the-fly as chunks are read and written.
+   - Verified atomically upon stream EOF before final file commitment on the server.
+4. **Log Hygiene & Byte Purity**:
+   - Standard output (`stdout`) contains 100% byte-pure binary payload during streaming downloads (`velcrux download <url> -` or `velcrux stream recv <url>`).
+   - All tracing, log messages, and transfer progress lines are strictly isolated to standard error (`stderr`), guaranteeing that downstream pipeline utilities never receive corrupted data.
+
+### 2. Operational CLI Commands & Pipeline Examples
+
+#### 1. Stream Upload via `upload -`
+```bash
+# Archive a directory on the fly and upload directly to remote server
+tar czf - /var/log/nginx | velcrux upload - velcrux://server:4433/backups/nginx.tar.gz
+
+# Stream database dump directly to remote storage
+pg_dump -Fc mydb | velcrux upload - velcrux://server:4433/db_backups/mydb.dump
+
+# Upload raw disk partition without intermediate image creation
+dd if=/dev/sdb1 bs=4M | velcrux upload - velcrux://server:4433/disks/sdb1.raw
+```
+
+#### 2. Stream Download via `download <url> -`
+```bash
+# Download archive directly into tar for on-the-fly extraction
+velcrux download velcrux://server:4433/backups/nginx.tar.gz - | tar xzf - -C /restore/nginx
+
+# Restore database dump directly from remote stream
+velcrux download velcrux://server:4433/db_backups/mydb.dump - | pg_restore -d mydb_restored
+
+# Stream remote raw disk image directly onto block device
+velcrux download velcrux://server:4433/disks/sdb1.raw - | dd of=/dev/sdc1 bs=4M status=progress
+```
+
+#### 3. Dedicated `stream` Subcommands
+```bash
+# Explicit streaming sender
+cat sensitive_data.bin | gpg -e -r ops@company.com | velcrux stream send velcrux://server:4433/vault/data.gpg
+
+# Explicit streaming receiver
+velcrux stream recv velcrux://server:4433/vault/data.gpg | gpg -d > restored_data.bin
+```
+
+#### 4. Machine-Readable JSON Pipeline Telemetry
+```bash
+# Emit final streaming JSON summary to stderr while piping data
+tar cf - /etc | velcrux --json stream send velcrux://server:4433/backups/etc.tar 2> stream_metrics.json
+```
+
+---
+
+## 42. Adaptive Multi-Stream Forward Error Correction (Option BH)
+
+Per `ADR-024`, Velcrux incorporates systematic $(K+M, K)$ Forward Error Correction (FEC) over Galois Field $GF(2^8)$ to protect bulk transfers across high-loss, high-latency satellite (LEO/GEO, Starlink, OneWeb), cellular backhaul, and impaired WAN links.
+
+### 1. Key Capabilities
+
+1. **Elimination of Retransmission Stalls (ARQ)**:
+   - Recovers lost packet symbols in-flight without incurring full round-trip retransmission delays (100 ms to 650 ms).
+   - Prevents QUIC congestion window collapse and head-of-line blocking under persistent packet drops.
+2. **Maximum Distance Separable (MDS) Guarantee**:
+   - Uses a Cauchy Generator Matrix over $GF(2^8)$ with disjoint coordinate sets $x_i = i, y_j = M + j$.
+   - Any arbitrary $K$ received symbols out of $K+M$ can reconstruct 100% of the original payload byte-for-byte.
+3. **Fast-Path XOR Parity ($M=1$)**:
+   - When single parity is configured, uses SIMD-friendly XOR folding, achieving wire-speed recovery without matrix inversion overhead.
+4. **Dynamic Loss Adaptation Tiers**:
+   - `AdaptiveFecController` monitors real-time telemetry (packet drop rate $\lambda$ and smoothed RTT) and dynamically shifts coding rates:
+     - **$\lambda < 0.5\%$**: $K=20, M=0$ (0.0% overhead, Maximum Goodput)
+     - **$0.5\% \le \lambda < 2.0\%$**: $K=20, M=1$ (5.0% overhead, Fast-Path XOR)
+     - **$2.0\% \le \lambda < 5.0\%$**: $K=16, M=2$ (12.5% overhead, Cauchy MDS)
+     - **$5.0\% \le \lambda < 10.0\%$**: $K=10, M=2$ (20.0% overhead, Cauchy MDS)
+     - **$\lambda \ge 10.0\%$**: $K=8, M=2$ (25.0% overhead, Satellite Grade)
+5. **Pure-Rust & Zero Unsafe Code**:
+   - Strictly `#![forbid(unsafe_code)]` with zero C/C++ dependencies or raw pointer manipulations.
+
+### 2. Operational CLI Commands & Examples
+
+#### 1. Inspect FEC Status & Loss Gating Tiers
+```bash
+# View active coding rate, Galois Field arithmetic configuration, and loss tiers
+velcrux fec status
+
+# Inspect specific profile preset (e.g. satellite)
+velcrux fec status --profile satellite
+
+# Machine-readable JSON output for monitoring / telemetry agents
+velcrux --json fec status
+```
+
+#### 2. Run Loss Channel Erasure Simulation
+```bash
+# Simulate 5% channel packet drop on a 64 KiB payload using satellite FEC profile
+velcrux fec test --profile satellite --loss-rate 0.05 --payload-size 65536
+
+# Simulate 3% loss on high profile with custom PRNG seed
+velcrux fec test --profile high --loss-rate 0.03 --payload-size 131072 --seed 12345
+
+# Machine-readable JSON output for automated link validation
+velcrux --json fec test --profile satellite --loss-rate 0.05
+```
+
+#### 3. Enable Forward Error Correction for Transfers
+```bash
+# Force satellite-grade FEC profile on high-loss WAN transfer
+velcrux --fec satellite upload ./dataset.tar.gz velcrux://sat-gateway:7443/data/
+
+# Use dynamic auto-adaptation (default)
+velcrux --fec auto sync ./local_dir velcrux://remote-edge:7443/synced/
+
+# Disable FEC for low-latency pristine local LAN transfers
+velcrux --fec disabled upload ./largefile.bin velcrux://lan-host:7443/storage/
+```
+
+## 43. Calendar & Time-of-Day Bandwidth Scheduler (Option BI)
+
+Per `ADR-025`, `REQUIREMENTS.md` §28, and `OPERATIONS.md` §4, §7, Velcrux incorporates an automated, calendar-aware and time-of-day bandwidth scheduling engine. It allows operators to dynamically adjust bandwidth pacing across business hours, evenings, and weekends without restarting transfer daemons or dropping active QUIC connections.
+
+### 1. Key Capabilities
+
+1. **Calendar Day-of-Week Matching**:
+   - Supports natural day specifications: `Mon-Fri`, `Sat,Sun`, `Weekdays`, `Weekend`, `*` (all days), or contiguous ranges like `Tue-Fri`.
+2. **Minute-Accurate & Overnight Windows**:
+   - Supports standard daytime windows (`09:00-17:00`) and overnight windows spanning midnight (`22:00-06:00`).
+3. **Multi-Rule Priority Cascading**:
+   - Rules are evaluated first-match-wins with a fallback `default_rate` (e.g. `1Gbps` or `unlimited`).
+4. **Seamless In-Flight Transitions**:
+   - As local civil time crosses window boundaries, token refill rates update in real time in `ScheduledBandwidthLimiter`, `RateLimiter`, and `HierarchicalBandwidthAllocator`. Active transfers accelerate or throttle smoothly with **zero connection drops**.
+5. **Pure-Rust Civil Time Arithmetic**:
+   - Strictly `#![forbid(unsafe_code)]` with zero external date/time library dependencies. Calculates exact local civil time from Unix epoch timestamps and UTC minute offsets.
+6. **SIGHUP Hot Reload**:
+   - Updates schedule policies dynamically on SIGHUP while preserving accumulated tenant quota usage.
+
+### 2. Server TOML Configuration
+
+In `/etc/velcrux/velcruxd.toml`:
+
+```toml
+[network]
+listen = "0.0.0.0:7443"
+max_bandwidth = "10Gbps" # Server-wide aggregate ceiling
+
+[bandwidth]
+default_limit = "1Gbps"
+timezone_offset_minutes = -300 # EST (UTC-5)
+
+# Throttled daytime window during peak business hours
+[[bandwidth.rule]]
+id = "business-hours"
+days = "Mon-Fri"
+start = "09:00"
+end = "17:00"
+limit = "50Mbps"
+
+# Uncapped transfer rate during weekends
+[[bandwidth.rule]]
+id = "weekend-boost"
+days = "Sat,Sun"
+limit = "unlimited"
+```
+
+Alternatively, inline rule strings can be specified directly:
+```toml
+[bandwidth]
+schedule = "Mon-Fri 09:00-17:00: 50Mbps; Sat-Sun: unlimited; default: 1Gbps"
+timezone_offset_minutes = 0
+```
+
+Environment variable override:
+```bash
+export VELCRUX_BANDWIDTH_SCHEDULE="Mon-Fri 08:30-17:30: 25Mbps; default: 2.5Gbps"
+export VELCRUX_BANDWIDTH_TIMEZONE_OFFSET_MINUTES="-300"
+```
+
+### 3. Operational CLI Commands & Examples
+
+#### 1. Inspect Bandwidth Schedule & Transition Countdown
+```bash
+# Inspect schedule rules, default rate, and current active status
+velcrux schedule inspect --schedule "Mon-Fri 09:00-17:00: 50Mbps; Sat-Sun: unlimited; default: 1Gbps"
+
+# Inspect from a policy file with local timezone offset (+330 for IST)
+velcrux schedule inspect --schedule /etc/velcrux/bandwidth.sched --utc-offset 330
+
+# Machine-readable JSON output for orchestration agents
+velcrux --json schedule inspect --schedule "Mon-Fri 09:00-17:00: 50Mbps; default: 1Gbps"
+```
+
+#### 2. Evaluate Specific Epoch Timestamps
+```bash
+# Evaluate scheduled bandwidth rate at a specific Unix timestamp
+velcrux schedule eval --schedule "Mon-Fri 09:00-17:00: 50Mbps; default: 1Gbps" --timestamp 1776162000
+
+# Machine-readable evaluation JSON output
+velcrux --json schedule eval --schedule "22:00-06:00: 10Gbps; default: 100Mbps" --timestamp 1776209400
+```
+
+#### 3. Client Dynamic Scheduled Transfers
+```bash
+# Apply dynamic calendar schedule to upload
+velcrux --bandwidth-schedule "Mon-Fri 09:00-17:00: 20Mbps; default: 500Mbps" upload ./archive.tar.gz velcrux://backup-node:7443/backups/
+
+# Apply schedule to continuous real-time directory synchronization
+velcrux --bandwidth-schedule /etc/velcrux/sync_schedule.sched sync ./dataset velcrux://remote-storage:7443/shared/
+```
 
 
 

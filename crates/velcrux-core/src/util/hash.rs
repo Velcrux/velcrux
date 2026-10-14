@@ -114,10 +114,24 @@ impl Hash {
         Self::from_blake3(hasher.finalize())
     }
 
-    fn from_blake3(h: blake3::Hash) -> Self {
+    pub fn from_blake3(h: blake3::Hash) -> Self {
         let bytes = *h.as_bytes();
         debug_assert_eq!(bytes.len(), CHUNK_HASH_BYTES);
         Self(bytes)
+    }
+}
+
+impl From<[u8; CHUNK_HASH_BYTES]> for Hash {
+    #[inline]
+    fn from(arr: [u8; CHUNK_HASH_BYTES]) -> Self {
+        Self(arr)
+    }
+}
+
+impl From<blake3::Hash> for Hash {
+    #[inline]
+    fn from(h: blake3::Hash) -> Self {
+        Self::from_blake3(h)
     }
 }
 

@@ -148,14 +148,18 @@ where
         "velcruxd listening with hardware acceleration"
     );
 
-    let limits_manager = Arc::new(LimitsManager::new(
-        cfg.network.max_bandwidth.as_deref(),
-        cfg.network.max_connections,
-        cfg.network.max_connections_per_ip,
-        cfg.network.max_connections_unauth,
-        &cfg.limits,
-        Arc::clone(&stats),
-    )?);
+    let initial_schedule = cfg.bandwidth.build_schedule()?.map(Arc::new);
+    let limits_manager = Arc::new(
+        LimitsManager::new(
+            cfg.network.max_bandwidth.as_deref(),
+            cfg.network.max_connections,
+            cfg.network.max_connections_per_ip,
+            cfg.network.max_connections_unauth,
+            &cfg.limits,
+            Arc::clone(&stats),
+        )?
+        .with_schedule(initial_schedule),
+    );
     let limits_provider: Arc<dyn LimitsProvider> =
         Arc::clone(&limits_manager) as Arc<dyn LimitsProvider>;
 
@@ -371,12 +375,15 @@ where
                                 warn!(error = %e, "failed to build authorizer during SIGHUP reload");
                             }
                         }
-                        if let Err(e) = limits_manager.reload(
+                        let new_schedule =
+                            new_cfg.bandwidth.build_schedule().ok().flatten().map(Arc::new);
+                        if let Err(e) = limits_manager.reload_with_schedule(
                             new_cfg.network.max_bandwidth.as_deref(),
                             new_cfg.network.max_connections,
                             new_cfg.network.max_connections_per_ip,
                             new_cfg.network.max_connections_unauth,
                             &new_cfg.limits,
+                            new_schedule,
                         ) {
                             warn!(error = %e, "failed to reload limits during SIGHUP reload");
                         }

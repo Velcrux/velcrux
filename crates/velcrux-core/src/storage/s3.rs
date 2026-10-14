@@ -1109,7 +1109,14 @@ mod tests {
         std::fs::create_dir_all(src_path.join("sub")).unwrap();
         std::fs::write(src_path.join("sub/file2.txt"), b"sub file2 content").unwrap();
 
-        let cfg = S3Config::new("sync-bucket").with_prefix("cloud_prefix");
+        let bucket_name = format!(
+            "sync-bucket-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let cfg = S3Config::new(&bucket_name).with_prefix("cloud_prefix");
         let backend = S3StorageBackend::new(cfg);
 
         // Upload local dir to S3

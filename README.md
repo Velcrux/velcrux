@@ -197,6 +197,52 @@ velcrux sync ./dataset velcrux://host:7443/data/dataset --cdc --dedup
 velcrux sync ./dataset velcrux://host:7443/data/dataset --delete-after
 ```
 
+### Unix Stdin/Stdout Streaming Pipelines (`velcrux upload -`, `download -`, `stream`)
+
+Stream live binary pipes directly over QUIC without intermediate local disk spooling. Output logs and diagnostics route strictly to `stderr` so standard output remains 100% byte-pure for downstream Unix pipe consumers.
+
+```bash
+# Stream archive on-the-fly from stdin
+tar czf - /data | velcrux upload - velcrux://host:7443/backups/data.tar.gz
+
+# Stream remote archive directly into tar stdout extractor
+velcrux download velcrux://host:7443/backups/data.tar.gz - | tar xzf - -C /restore
+
+# Dedicated pipe aliases
+mysqldump --all-databases | velcrux stream send velcrux://host:7443/db/backup.sql
+velcrux stream recv velcrux://host:7443/db/backup.sql | mysql
+```
+
+### Adaptive Forward Error Correction (FEC) for Satellite / High-Loss WAN
+
+Protect transfers against packet erasure on high-loss satellite (Starlink, OneWeb), cellular backhaul, and high-BDP WANs using systematic Cauchy Reed-Solomon coding over $GF(2^8)$. Eliminates round-trip ARQ retransmission stalls with real-time rate scaling (0% to 25% redundancy):
+
+```bash
+# View active FEC profile, Galois Field parameters, and dynamic loss gating tiers
+velcrux fec status
+
+# Benchmark loss channel erasure recovery over simulated packet drop
+velcrux fec test --profile satellite --loss-rate 0.05
+
+# Enforce satellite-grade FEC profile on lossy uplink
+velcrux --fec satellite upload dataset.tar.gz velcrux://sat-gateway:7443/data/
+```
+
+### Calendar & Time-of-Day Bandwidth Scheduler
+
+Shape transfer bandwidth dynamically by time-of-day and day-of-week without connection drops or transfer interruptions. Supports cascading rules, overnight windows (`22:00-06:00`), and automatic token bucket adjustments across rule boundaries:
+
+```bash
+# Inspect schedule rules, default rate, and current active status
+velcrux schedule inspect --schedule "Mon-Fri 09:00-17:00: 50Mbps; Sat-Sun: unlimited; default: 1Gbps"
+
+# Evaluate rate at specific epoch timestamp
+velcrux schedule eval --schedule "22:00-06:00: 10Gbps; default: 100Mbps" --timestamp 1776209400
+
+# Apply dynamic calendar schedule to upload or directory sync
+velcrux --bandwidth-schedule "Mon-Fri 09:00-17:00: 20Mbps; default: 1Gbps" upload ./archive.tar.gz velcrux://host:7443/backups/
+```
+
 ### Transfer State and Resumption
 
 ```bash

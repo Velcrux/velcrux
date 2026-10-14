@@ -108,25 +108,25 @@ impl FromStr for BandwidthRate {
 
         // Check for bps units
         if let Some(num) = trimmed.strip_suffix("gbps") {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bps(val.saturating_mul(1_000_000_000)));
+            return Ok(Self::from_bps((val * 1_000_000_000.0) as u64));
         }
         if let Some(num) = trimmed.strip_suffix("mbps") {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bps(val.saturating_mul(1_000_000)));
+            return Ok(Self::from_bps((val * 1_000_000.0) as u64));
         }
         if let Some(num) = trimmed.strip_suffix("kbps") {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bps(val.saturating_mul(1_000)));
+            return Ok(Self::from_bps((val * 1_000.0) as u64));
         }
 
         // Check for byte/sec units
@@ -134,45 +134,45 @@ impl FromStr for BandwidthRate {
             .strip_suffix("gb/s")
             .or_else(|| trimmed.strip_suffix("g"))
         {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bytes_per_sec(val.saturating_mul(1_000_000_000)));
+            return Ok(Self::from_bytes_per_sec((val * 1_000_000_000.0) as u64));
         }
         if let Some(num) = trimmed
             .strip_suffix("mb/s")
             .or_else(|| trimmed.strip_suffix("m"))
         {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bytes_per_sec(val.saturating_mul(1_000_000)));
+            return Ok(Self::from_bytes_per_sec((val * 1_000_000.0) as u64));
         }
         if let Some(num) = trimmed
             .strip_suffix("kb/s")
             .or_else(|| trimmed.strip_suffix("k"))
         {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bytes_per_sec(val.saturating_mul(1_000)));
+            return Ok(Self::from_bytes_per_sec((val * 1_000.0) as u64));
         }
         if let Some(num) = trimmed.strip_suffix("b/s") {
-            let val: u64 = num
+            let val: f64 = num
                 .trim()
                 .parse()
                 .map_err(|_| ParseBandwidthError(s.to_string()))?;
-            return Ok(Self::from_bytes_per_sec(val));
+            return Ok(Self::from_bytes_per_sec(val as u64));
         }
 
         // Direct numeric parse as bytes per second
-        let val: u64 = trimmed
+        let val: f64 = trimmed
             .parse()
             .map_err(|_| ParseBandwidthError(s.to_string()))?;
-        Ok(Self::from_bytes_per_sec(val))
+        Ok(Self::from_bytes_per_sec(val as u64))
     }
 }
 
@@ -270,13 +270,15 @@ impl PriorityClass {
 /// - Global server-wide rate limit
 /// - Per-user / per-tenant rate limit
 /// - Per-transfer rate limit
+/// - Optional calendar & time-of-day bandwidth schedule (Option BI)
 ///
-/// Composition rule: `min(per_transfer, per_user, global)`.
+/// Composition rule: `min(per_transfer, per_user, scheduled_global)`.
 #[derive(Debug)]
 pub struct HierarchicalBandwidthAllocator {
     global_limiter: Mutex<TokenBucket>,
     user_limiters: Mutex<HashMap<String, TokenBucket>>,
     transfer_limiters: Mutex<HashMap<TransferId, TokenBucket>>,
+    schedule: Mutex<Option<super::schedule::BandwidthSchedule>>,
     total_bytes_admitted: AtomicU64,
     total_throttle_ms: AtomicU64,
 }
@@ -294,9 +296,26 @@ impl HierarchicalBandwidthAllocator {
             global_limiter: Mutex::new(TokenBucket::new(global_rate)),
             user_limiters: Mutex::new(HashMap::new()),
             transfer_limiters: Mutex::new(HashMap::new()),
+            schedule: Mutex::new(None),
             total_bytes_admitted: AtomicU64::new(0),
             total_throttle_ms: AtomicU64::new(0),
         }
+    }
+
+    /// Attach a calendar and time-of-day bandwidth schedule.
+    pub fn with_schedule(self, schedule: super::schedule::BandwidthSchedule) -> Self {
+        *self.schedule.lock().unwrap() = Some(schedule);
+        self
+    }
+
+    /// Set or update the active calendar bandwidth schedule.
+    pub fn set_schedule(&self, schedule: super::schedule::BandwidthSchedule) {
+        *self.schedule.lock().unwrap() = Some(schedule);
+    }
+
+    /// Read the current configured schedule, if any.
+    pub fn schedule(&self) -> Option<super::schedule::BandwidthSchedule> {
+        self.schedule.lock().unwrap().clone()
     }
 
     /// Set server-wide global rate ceiling.
@@ -331,9 +350,18 @@ impl HierarchicalBandwidthAllocator {
         transfers.remove(transfer_id);
     }
 
-    /// Calculate and consume tokens across all 3 tiers.
-    /// Returns the maximum delay needed among all tiers.
-    pub fn consume(&self, user: &str, transfer_id: &TransferId, bytes: usize) -> Duration {
+    /// Calculate and consume tokens across all tiers at a specific Unix timestamp.
+    /// Dynamically evaluates and applies active schedule rate if configured.
+    pub fn consume_at(&self, user: &str, transfer_id: &TransferId, bytes: usize, timestamp_secs: u64) -> Duration {
+        // If a schedule is active, ensure global rate matches current schedule window
+        if let Some(ref sched) = *self.schedule.lock().unwrap() {
+            let active = sched.resolve_at(timestamp_secs);
+            let mut global = self.global_limiter.lock().unwrap();
+            if global.rate() != active.active_rate {
+                global.set_rate(active.active_rate);
+            }
+        }
+
         // 1. Global tier
         let global_delay = {
             let mut global = self.global_limiter.lock().unwrap();
@@ -365,6 +393,16 @@ impl HierarchicalBandwidthAllocator {
         }
 
         max_delay
+    }
+
+    /// Calculate and consume tokens across all 3 tiers at current time.
+    /// Returns the maximum delay needed among all tiers.
+    pub fn consume(&self, user: &str, transfer_id: &TransferId, bytes: usize) -> Duration {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        self.consume_at(user, transfer_id, bytes, now_secs)
     }
 
     /// Acquire tokens asynchronously. If throttled, sleeps for the required duration.

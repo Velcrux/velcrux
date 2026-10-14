@@ -372,9 +372,12 @@ pub async fn server_upload_session(
             ));
         }
         let chunk_index = hdr.chunk_offset / M3_CHUNK_SIZE;
-        if !bitmap.contains(chunk_index) {
+        let is_streaming = expected_hash == Hash::ZERO;
+        if is_streaming || !bitmap.contains(chunk_index) {
             writer.write_at(hdr.chunk_offset, &payload).await?;
-            bitmap.mark_complete(chunk_index, payload_len as u64);
+            if !is_streaming {
+                bitmap.mark_complete(chunk_index, payload_len as u64);
+            }
             bytes_received = bytes_received.saturating_add(payload_len as u64);
         }
         if bytes_received - last_checkpoint_bytes >= cp_bytes
@@ -408,13 +411,19 @@ pub async fn server_upload_session(
         return Err(protocol_violation("server: expected VERIFY"));
     }
     let verify = VerifyMsg::decode(&frame.payload)?;
-    if verify.transfer_id != transfer_id || verify.expected_hash != expected_hash {
+    if verify.transfer_id != transfer_id
+        || (expected_hash != Hash::ZERO && verify.expected_hash != expected_hash)
+    {
         return Err(protocol_violation(
             "server: VERIFY transfer_id/hash mismatch",
         ));
     }
 
-    let ok = true; // receiver already verified chunk-level BLAKE3
+    let ok = if expected_hash != Hash::ZERO {
+        computed == expected_hash
+    } else {
+        computed == verify.expected_hash
+    };
     let vr = VerifyResultMsg {
         transfer_id,
         ok,
@@ -447,7 +456,20 @@ pub async fn server_upload_session(
         })
         .map_err(map_state_err)?;
 
-    let meta = FileMeta::new(expected_size, expected_hash);
+    let actual_size = if expected_size > 0 {
+        expected_size
+    } else {
+        tokio::fs::metadata(staging_handle.path())
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
+    };
+    let actual_hash = if expected_hash != Hash::ZERO {
+        expected_hash
+    } else {
+        computed
+    };
+    let meta = FileMeta::new(actual_size, actual_hash);
     backend
         .commit(&transfer_id.to_string(), staging_handle, dst, &meta)
         .await?;

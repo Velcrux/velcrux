@@ -8,6 +8,7 @@
 //! depend on quinn types.
 
 pub mod benchmarks;
+pub mod fec;
 pub mod flow_control;
 pub mod identity;
 pub mod impairment;
@@ -20,6 +21,11 @@ pub mod stats;
 
 pub use benchmarks::{
     BaselineComparator, BenchmarkMetrics, BenchmarkScenario, WanMatrixReport, WanMatrixRunner,
+};
+pub use fec::{
+    gf_add, gf_div, gf_inv, gf_mul, gf_sub, simulate_fec_recovery, AdaptiveFecController,
+    FecBlockDecoder, FecBlockEncoder, FecBlockHeader, FecCodec, FecProfile, FecRecoveryReport,
+    FecSimulationReport, FecStats, FecStatsSnapshot, FecSymbol, GfMatrix,
 };
 pub use flow_control::{
     AdaptiveFlowController, BdpEstimator, PacingController, DEFAULT_BDP_MULTIPLIER,

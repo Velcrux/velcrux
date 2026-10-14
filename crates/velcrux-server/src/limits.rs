@@ -236,6 +236,47 @@ impl LimitsManager {
         })
     }
 
+    /// Attach an optional dynamic calendar bandwidth schedule (Option BI).
+    pub fn with_schedule(self, schedule: Option<Arc<velcrux_core::BandwidthSchedule>>) -> Self {
+        if let Some(sched) = schedule {
+            if let Ok(mut g) = self.global_limiter.write() {
+                let current_rate = g.bytes_per_sec();
+                let limiter = RateLimiter::new(current_rate)
+                    .with_hit_counter(Arc::clone(&self.stats.resource_limit_hits_bandwidth))
+                    .with_schedule(sched);
+                *g = Arc::new(limiter);
+            }
+        }
+        self
+    }
+
+    /// Set or update the global schedule dynamically.
+    pub fn set_schedule(&self, schedule: Option<Arc<velcrux_core::BandwidthSchedule>>) {
+        if let Ok(mut g) = self.global_limiter.write() {
+            let current_rate = g.bytes_per_sec();
+            let mut limiter = RateLimiter::new(current_rate)
+                .with_hit_counter(Arc::clone(&self.stats.resource_limit_hits_bandwidth));
+            if let Some(sched) = schedule {
+                limiter = limiter.with_schedule(sched);
+            }
+            *g = Arc::new(limiter);
+        }
+    }
+
+    /// Retrieve the attached global bandwidth schedule, if any.
+    pub fn schedule(&self) -> Option<Arc<velcrux_core::BandwidthSchedule>> {
+        self.global_limiter.read().ok().and_then(|g| g.schedule())
+    }
+
+    /// Retrieve the effective global bandwidth in bytes/sec taking active schedule into account.
+    pub fn effective_global_bandwidth(&self) -> u64 {
+        self.global_limiter
+            .read()
+            .ok()
+            .map(|g| g.effective_bytes_per_sec())
+            .unwrap_or(0)
+    }
+
     /// Hot-reloads rate limits, quotas, and connection limits from reloaded configuration (e.g. on SIGHUP).
     /// Preserves existing accumulated tenant usage and active connection counts.
     pub fn reload(
@@ -246,16 +287,38 @@ impl LimitsManager {
         max_connections_unauth: Option<u32>,
         limits: &[LimitsCfg],
     ) -> anyhow::Result<()> {
+        self.reload_with_schedule(
+            network_bandwidth,
+            max_connections,
+            max_connections_per_ip,
+            max_connections_unauth,
+            limits,
+            None,
+        )
+    }
+
+    /// Hot-reloads rate limits, quotas, connection limits, and optional bandwidth schedule.
+    pub fn reload_with_schedule(
+        &self,
+        network_bandwidth: Option<&str>,
+        max_connections: Option<u32>,
+        max_connections_per_ip: Option<u32>,
+        max_connections_unauth: Option<u32>,
+        limits: &[LimitsCfg],
+        schedule: Option<Arc<velcrux_core::BandwidthSchedule>>,
+    ) -> anyhow::Result<()> {
         let global_rate = match network_bandwidth {
             Some(s) => parse_rate_limit(s)
                 .map_err(|e| anyhow::anyhow!("invalid network.max_bandwidth '{s}': {e}"))?,
             None => 0,
         };
 
-        let new_global = Arc::new(
-            RateLimiter::new(global_rate)
-                .with_hit_counter(Arc::clone(&self.stats.resource_limit_hits_bandwidth)),
-        );
+        let mut limiter = RateLimiter::new(global_rate)
+            .with_hit_counter(Arc::clone(&self.stats.resource_limit_hits_bandwidth));
+        if let Some(ref sched) = schedule {
+            limiter = limiter.with_schedule(Arc::clone(sched));
+        }
+        let new_global = Arc::new(limiter);
 
         let mut new_tenant_map = HashMap::new();
         let mut new_quota_map = HashMap::new();

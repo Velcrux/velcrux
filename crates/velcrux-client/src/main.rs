@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 
+use velcrux_core::scheduler::BandwidthSchedule;
 use velcrux_core::session::ClientSession;
 use velcrux_core::transport::quic::{ClientBuilder, ClientIdentity, QuicConnection};
 use velcrux_core::transport::SharedTransport;
@@ -185,6 +186,23 @@ struct Cli {
     /// Duplicate critical metadata frames across all active bonded subflow paths (Option AX).
     #[arg(long = "redundant-metadata", global = true)]
     redundant_metadata: bool,
+
+    /// Forward Error Correction (FEC) profile: "disabled", "low", "medium", "high", "satellite", or "auto" (default: "auto") (Option BH).
+    #[arg(
+        long = "fec",
+        env = "VELCRUX_FEC",
+        default_value = "auto",
+        global = true
+    )]
+    fec: String,
+
+    /// Bandwidth calendar schedule or policy file (Option BI, e.g. "Mon-Fri 09:00-17:00: 50Mbps; default: 1Gbps").
+    #[arg(
+        long = "bandwidth-schedule",
+        env = "VELCRUX_BANDWIDTH_SCHEDULE",
+        global = true
+    )]
+    bandwidth_schedule: Option<String>,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -453,6 +471,88 @@ enum Cmd {
     Scrub {
         #[command(subcommand)]
         sub: ScrubSubCmd,
+    },
+    /// Unix stdin/stdout streaming pipelines over QUIC (Option BG).
+    Stream {
+        #[command(subcommand)]
+        sub: StreamSubCmd,
+    },
+    /// Adaptive multi-stream Forward Error Correction (FEC) engine (Option BH).
+    Fec {
+        #[command(subcommand)]
+        sub: FecSubCmd,
+    },
+    /// Calendar and time-of-day bandwidth scheduler (Option BI).
+    Schedule {
+        #[command(subcommand)]
+        sub: ScheduleSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ScheduleSubCmd {
+    /// Inspect parsed schedule rules, default rate, and active status at current or specified time.
+    Inspect {
+        /// Schedule rule definition or path to schedule file.
+        #[arg(long, short)]
+        schedule: Option<String>,
+        /// Timezone offset from UTC in minutes (default: 0).
+        #[arg(long, default_value = "0")]
+        utc_offset: i32,
+    },
+    /// Evaluate schedule rate and remaining transition time at a specific Unix timestamp.
+    Eval {
+        /// Schedule rule definition or path to schedule file.
+        #[arg(long, short)]
+        schedule: Option<String>,
+        /// Unix timestamp in seconds to evaluate (defaults to current system time).
+        #[arg(long)]
+        timestamp: Option<u64>,
+        /// Timezone offset from UTC in minutes (default: 0).
+        #[arg(long, default_value = "0")]
+        utc_offset: i32,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum FecSubCmd {
+    /// Inspect FEC operational profile, Cauchy generator matrix parameters, and link loss tiers.
+    Status {
+        /// Target profile to inspect: "disabled", "low", "medium", "high", "satellite", or "auto".
+        #[arg(long, default_value = "auto")]
+        profile: String,
+    },
+    /// Simulate erasure recovery over a lossy link across sample payloads.
+    Test {
+        /// Target FEC profile: "disabled", "low", "medium", "high", "satellite", or "auto".
+        #[arg(long, default_value = "satellite")]
+        profile: String,
+        /// Simulated channel loss rate (0.0 to 0.5, default: 0.05 for 5%).
+        #[arg(long, default_value = "0.05")]
+        loss_rate: f64,
+        /// Simulated payload size in bytes (default: 65536 / 64 KiB).
+        #[arg(long, default_value = "65536")]
+        payload_size: usize,
+        /// PRNG seed for deterministic loss simulation (default: 42).
+        #[arg(long, default_value = "42")]
+        seed: u64,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum StreamSubCmd {
+    /// Stream standard input (stdin) over QUIC to a remote server destination.
+    Send {
+        /// Target `velcrux://host:port/path` URL.
+        url: String,
+        /// Chunk buffer size in bytes (default: 65536 / 64 KiB).
+        #[arg(long, default_value_t = 65536)]
+        chunk_size: usize,
+    },
+    /// Stream remote file over QUIC directly to standard output (stdout).
+    Recv {
+        /// Source `velcrux://host:port/path` URL.
+        url: String,
     },
 }
 
@@ -1112,6 +1212,7 @@ struct FileClientConfig {
     chunk_store: Option<PathBuf>,
     parallel: Option<usize>,
     rate_limit: Option<String>,
+    bandwidth_schedule: Option<String>,
 }
 
 fn load_client_config(cli: &mut Cli) {
@@ -1154,6 +1255,9 @@ fn load_client_config(cli: &mut Cli) {
                     if cli.rate_limit.is_none() {
                         cli.rate_limit = file_cfg.rate_limit;
                     }
+                    if cli.bandwidth_schedule.is_none() {
+                        cli.bandwidth_schedule = file_cfg.bandwidth_schedule;
+                    }
                     if cli.log_format == "text" {
                         if let Some(fmt) = file_cfg.log_format {
                             cli.log_format = fmt;
@@ -1171,6 +1275,21 @@ fn load_client_config(cli: &mut Cli) {
 }
 
 fn get_rate_limiter(cli: &Cli) -> anyhow::Result<Option<velcrux_core::RateLimiter>> {
+    if let Some(ref s) = cli.bandwidth_schedule {
+        let content = if Path::new(s).is_file() {
+            std::fs::read_to_string(s)
+                .with_context(|| format!("failed to read schedule file '{s}'"))?
+        } else {
+            s.clone()
+        };
+        let parsed: velcrux_core::BandwidthSchedule = content
+            .parse()
+            .map_err(|e: velcrux_core::ParseScheduleError| anyhow::anyhow!("invalid --bandwidth-schedule: {e}"))?;
+        let default_rate = parsed.default_rate.bytes_per_sec();
+        let limiter = velcrux_core::RateLimiter::new(default_rate).with_schedule(Arc::new(parsed));
+        return Ok(Some(limiter));
+    }
+
     if let Some(ref r) = cli.rate_limit {
         let bytes_per_sec = velcrux_core::parse_rate_limit(r)
             .map_err(|e| anyhow::anyhow!("invalid --rate-limit: {e}"))?;
@@ -1286,6 +1405,39 @@ async fn main() -> anyhow::Result<()> {
             run_scrub(&cli, sub).await?;
             return Ok(());
         }
+        Cmd::Stream { sub } => {
+            match sub {
+                StreamSubCmd::Send { url, chunk_size } => {
+                    let (addr, path) = parse_url_with_path(url)?;
+                    let sni = get_sni(&cli, url);
+                    let transport = build_transport_target(&cli, Some(addr))?;
+                    info!(%addr, %sni, ?path, "connecting for stream send");
+                    let conn = transport.connect(addr, &sni).await?;
+                    let mut session = open_client_session(&conn, &cli).await?;
+                    info!(version = session.negotiated().version, "HELLO_ACK");
+                    run_upload_stream(&cli, &conn, &mut session, &path, *chunk_size).await?;
+                }
+                StreamSubCmd::Recv { url } => {
+                    let (addr, path) = parse_url_with_path(url)?;
+                    let sni = get_sni(&cli, url);
+                    let transport = build_transport_target(&cli, Some(addr))?;
+                    info!(%addr, %sni, ?path, "connecting for stream recv");
+                    let conn = transport.connect(addr, &sni).await?;
+                    let mut session = open_client_session(&conn, &cli).await?;
+                    info!(version = session.negotiated().version, "HELLO_ACK");
+                    run_download_stream(&cli, &conn, &mut session, &path).await?;
+                }
+            }
+            return Ok(());
+        }
+        Cmd::Fec { sub } => {
+            run_fec(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Schedule { sub } => {
+            run_schedule(&cli, sub).await?;
+            return Ok(());
+        }
 
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
@@ -1306,8 +1458,12 @@ async fn main() -> anyhow::Result<()> {
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
-            let store = open_client_state_store(&cli);
-            run_upload(&cli, &conn, &mut session, local, &path, &store).await?;
+            if local == Path::new("-") {
+                run_upload_stream(&cli, &conn, &mut session, &path, 65536).await?;
+            } else {
+                let store = open_client_state_store(&cli);
+                run_upload(&cli, &conn, &mut session, local, &path, &store).await?;
+            }
         }
         Cmd::Download { url, local } => {
             let (addr, path) = parse_url_with_path(url)?;
@@ -1317,7 +1473,11 @@ async fn main() -> anyhow::Result<()> {
             let conn = transport.connect(addr, &sni).await?;
             let mut session = open_client_session(&conn, &cli).await?;
             info!(version = session.negotiated().version, "HELLO_ACK");
-            run_download(&cli, &conn, &mut session, local, &path).await?;
+            if local == Path::new("-") {
+                run_download_stream(&cli, &conn, &mut session, &path).await?;
+            } else {
+                run_download(&cli, &conn, &mut session, local, &path).await?;
+            }
         }
         Cmd::Resume {
             transfer_id,
@@ -1833,6 +1993,173 @@ async fn run_upload(
             file_size, bytes_transferred
         );
     }
+    session.bye().await.ok();
+    Ok(())
+}
+
+async fn run_upload_stream(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    remote_path: &str,
+    chunk_size: usize,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{
+        Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
+    };
+    use velcrux_core::session::encode_message;
+
+    let idempotency_key = velcrux_core::util::TransferId::generate().to_string();
+    let create = TransferCreate {
+        op: TransferOp::Upload,
+        src_path: "-".into(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key,
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+    let created = TransferCreated::decode(frame.payload)?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+        anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
+    }
+    let _plan = TransferPlan::decode(frame.payload)?;
+
+    let begin = TransferBegin::new(created.transfer_id);
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let rate_limiter = get_rate_limiter(cli)?;
+    let compression = cli.compression == "zstd";
+    let (send_half, recv_half) = session.stream_halves_mut();
+    let stdin = tokio::io::stdin();
+
+    let (hash, bytes_streamed) = velcrux_core::client_upload_stdin_stream(
+        conn,
+        send_half,
+        recv_half,
+        created.transfer_id,
+        stdin,
+        chunk_size,
+        compression,
+        rate_limiter,
+        None,
+    )
+    .await?;
+
+    let is_json = cli_log_json(cli);
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "stream_complete",
+            "op": "upload_stream",
+            "transfer_id": created.transfer_id.to_string(),
+            "bytes_streamed": bytes_streamed,
+            "stream_hash": hash.to_string(),
+            "status": "committed"
+        });
+        eprintln!("{out}");
+    } else {
+        eprintln!("transfer_id: {}", created.transfer_id);
+        eprintln!(
+            "stream upload: committed {} bytes, server hash {}",
+            bytes_streamed, hash
+        );
+    }
+
+    session.bye().await.ok();
+    Ok(())
+}
+
+async fn run_download_stream(
+    cli: &Cli,
+    conn: &dyn velcrux_core::transport::Connection,
+    session: &mut ClientSession,
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    use velcrux_core::protocol::message::{
+        Message, TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan,
+    };
+    use velcrux_core::session::encode_message;
+
+    let create = TransferCreate {
+        op: TransferOp::Download,
+        src_path: "".into(),
+        dst_path: remote_path.trim_start_matches('/').to_string(),
+        idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
+        file_size: 0,
+        file_hash: velcrux_core::Hash::ZERO,
+    };
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferCreate(create), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_CREATED {
+        if frame.type_byte == velcrux_core::protocol::message::ERROR {
+            let err = velcrux_core::protocol::message::ErrorMsg::decode(frame.payload)?;
+            anyhow::bail!("server error: code={:?} detail={:?}", err.code, err.detail);
+        }
+        anyhow::bail!("expected TRANSFER_CREATED, got 0x{:02x}", frame.type_byte);
+    }
+    let created = TransferCreated::decode(frame.payload)?;
+
+    let frame = session.recv_frame().await?;
+    if frame.type_byte != velcrux_core::protocol::message::TRANSFER_PLAN {
+        anyhow::bail!("expected TRANSFER_PLAN, got 0x{:02x}", frame.type_byte);
+    }
+    let _plan = TransferPlan::decode(frame.payload)?;
+
+    let begin = TransferBegin::new(created.transfer_id);
+    let buf = bytes::Bytes::from(encode_message(&Message::TransferBegin(begin), 0)?);
+    session.send_mut().write_all(buf).await?;
+
+    let rate_limiter = get_rate_limiter(cli)?;
+    let (send_half, recv_half) = session.stream_halves_mut();
+    let stdout = tokio::io::stdout();
+
+    let (hash, bytes_streamed) = velcrux_core::client_download_stdout_stream(
+        conn,
+        send_half,
+        recv_half,
+        created.transfer_id,
+        stdout,
+        rate_limiter,
+        None,
+    )
+    .await?;
+
+    let is_json = cli_log_json(cli);
+    if is_json {
+        let out = serde_json::json!({
+            "v": 1,
+            "event": "stream_complete",
+            "op": "download_stream",
+            "transfer_id": created.transfer_id.to_string(),
+            "bytes_streamed": bytes_streamed,
+            "stream_hash": hash.to_string(),
+            "status": "committed"
+        });
+        eprintln!("{out}");
+    } else {
+        eprintln!("transfer_id: {}", created.transfer_id);
+        eprintln!(
+            "stream download: received {} bytes, hash verified: {}",
+            bytes_streamed, hash
+        );
+    }
+
     session.bye().await.ok();
     Ok(())
 }
@@ -5461,6 +5788,370 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn run_fec(cli: &Cli, sub: &FecSubCmd) -> anyhow::Result<()> {
+    match sub {
+        FecSubCmd::Status { profile } => {
+            let is_json = cli_log_json(cli);
+            let parsed_profile = velcrux_core::transport::FecProfile::from_str_name(profile)
+                .context(format!(
+                    "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
+                    profile
+                ))?;
+            let ctrl = velcrux_core::transport::AdaptiveFecController::new(parsed_profile);
+            let snapshot = ctrl.snapshot();
 
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "fec_status",
+                        "status": {
+                            "profile": format!("{:?}", snapshot.profile).to_lowercase(),
+                            "active_k": snapshot.active_k,
+                            "active_m": snapshot.active_m,
+                            "redundancy_pct": snapshot.redundancy_pct,
+                            "field": "GF(2^8)",
+                            "primitive_polynomial": "0x11d (x^8 + x^4 + x^3 + x^2 + 1)",
+                            "mds_guaranteed": true,
+                            "loss_tiers": [
+                                { "loss_range": "< 0.5%", "k": 20, "m": 0, "redundancy_pct": 0.0, "codec": "None (Maximum Goodput)" },
+                                { "loss_range": "0.5% - 2.0%", "k": 20, "m": 1, "redundancy_pct": 5.0, "codec": "Fast-Path XOR Parity" },
+                                { "loss_range": "2.0% - 5.0%", "k": 16, "m": 2, "redundancy_pct": 12.5, "codec": "Cauchy MDS Matrix" },
+                                { "loss_range": "5.0% - 10.0%", "k": 10, "m": 2, "redundancy_pct": 20.0, "codec": "Cauchy MDS Matrix" },
+                                { "loss_range": ">= 10.0%", "k": 8, "m": 2, "redundancy_pct": 25.0, "codec": "Cauchy MDS Matrix (Satellite)" }
+                            ]
+                        }
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 FORWARD ERROR CORRECTION (FEC) OPERATIONAL STATUS                      ");
+                println!("========================================================================================");
+                println!("Selected Profile     : {:?}", snapshot.profile);
+                println!("Erasure Field        : GF(2^8) (Primitive Polynomial: 0x11d)");
+                println!("Generator Matrix     : Cauchy Generator Matrix (MDS Guaranteed)");
+                println!(
+                    "Active Coding Rate   : (K={}, M={}) -> {:.1}% Redundancy",
+                    snapshot.active_k, snapshot.active_m, snapshot.redundancy_pct
+                );
+                println!("----------------------------------------------------------------------------------------");
+                println!("Dynamic Loss Tiers (Adaptive Rate Scaling):");
+                println!("  < 0.5% Loss Rate   : K=20, M=0 ( 0.0% parity overhead, maximum goodput)");
+                println!("  0.5% - 2.0% Loss   : K=20, M=1 ( 5.0% parity overhead, fast-path XOR)");
+                println!("  2.0% - 5.0% Loss   : K=16, M=2 (12.5% parity overhead, Cauchy MDS)");
+                println!("  5.0% - 10.0% Loss  : K=10, M=2 (20.0% parity overhead, Cauchy MDS)");
+                println!("  >= 10.0% Loss      : K=8,  M=2 (25.0% parity overhead, Satellite Grade)");
+                println!("========================================================================================");
+            }
+        }
+        FecSubCmd::Test {
+            profile,
+            loss_rate,
+            payload_size,
+            seed,
+        } => {
+            let is_json = cli_log_json(cli);
+            let parsed_profile = velcrux_core::transport::FecProfile::from_str_name(profile)
+                .context(format!(
+                    "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
+                    profile
+                ))?;
 
+            // Generate deterministic payload pattern
+            let mut data = Vec::with_capacity(*payload_size);
+            for i in 0..*payload_size {
+                data.push(((i * 31 + 17) & 0xff) as u8);
+            }
 
+            let report = velcrux_core::transport::simulate_fec_recovery(
+                &data,
+                parsed_profile,
+                *loss_rate,
+                *seed,
+            );
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "fec_simulation_completed",
+                        "report": report,
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 FEC ERASURE CODING RECOVERY SIMULATION                                 ");
+                println!("========================================================================================");
+                println!("Selected Profile     : {:?}", report.profile);
+                println!(
+                    "Coding Rate (K+M, K) : ({} + {}, {})",
+                    report.k, report.m, report.k
+                );
+                println!("Simulated Loss Rate  : {:.2}%", report.simulated_loss_rate * 100.0);
+                println!("Total Blocks Tested  : {}", report.total_blocks);
+                println!("Payload Volume       : {}", format_bytes(report.payload_bytes as u64));
+                println!("Symbols Transmitted  : {}", report.total_symbols_sent);
+                println!(
+                    "Symbols Dropped      : {} ({:.2}% channel loss)",
+                    report.symbols_dropped, report.actual_drop_pct
+                );
+                println!("Symbols Recovered    : {}", report.symbols_recovered);
+                println!("Unrecoverable Blocks : {}", report.unrecoverable_blocks);
+                println!(
+                    "Recovery Success Rate: {:.2}%",
+                    report.successful_recovery_pct
+                );
+                println!(
+                    "Effective Goodput    : {:.2}%",
+                    report.effective_goodput_ratio * 100.0
+                );
+                let verdict = if report.unrecoverable_blocks == 0 {
+                    "PASSED — ZERO ARQ RETRANSMISSION STALLS"
+                } else {
+                    "DEGRADED — UNRECOVERABLE LOSS DETECTED"
+                };
+                println!("Health Verdict       : {}", verdict);
+                println!("========================================================================================");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_cli_schedule(
+    cli: &Cli,
+    sub_sched: Option<&str>,
+    utc_offset: i32,
+) -> anyhow::Result<BandwidthSchedule> {
+    let source = sub_sched
+        .or(cli.bandwidth_schedule.as_deref())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No bandwidth schedule specified. Pass --schedule <RULES|FILE> or set --bandwidth-schedule / VELCRUX_BANDWIDTH_SCHEDULE."
+            )
+        })?;
+
+    let content = if Path::new(source).is_file() {
+        std::fs::read_to_string(source)
+            .with_context(|| format!("failed to read bandwidth schedule file '{source}'"))?
+    } else {
+        source.to_string()
+    };
+
+    let mut sched: BandwidthSchedule = content
+        .parse()
+        .map_err(|e: velcrux_core::ParseScheduleError| anyhow::anyhow!("invalid schedule: {e}"))?;
+
+    if utc_offset != 0 {
+        sched = sched.with_utc_offset(utc_offset);
+    }
+    Ok(sched)
+}
+
+async fn run_schedule(cli: &Cli, sub: &ScheduleSubCmd) -> anyhow::Result<()> {
+    match sub {
+        ScheduleSubCmd::Inspect {
+            schedule,
+            utc_offset,
+        } => {
+            let sched = resolve_cli_schedule(cli, schedule.as_deref(), *utc_offset)?;
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::ZERO)
+                .as_secs();
+            let status = sched.resolve_at(now_secs);
+            let is_json = cli_log_json(cli);
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "schedule_inspect",
+                        "schedule": {
+                            "default_rate": sched.default_rate.to_string(),
+                            "default_rate_bps": sched.default_rate.bytes_per_sec(),
+                            "utc_offset_minutes": sched.utc_offset_minutes,
+                            "rules": sched.rules.iter().map(|r| {
+                                serde_json::json!({
+                                    "id": r.id,
+                                    "days": r.days.to_string(),
+                                    "time_window": r.time.map(|tw| tw.to_string()),
+                                    "rate": r.rate.to_string(),
+                                    "rate_bps": r.rate.bytes_per_sec(),
+                                    "description": r.description,
+                                })
+                            }).collect::<Vec<_>>(),
+                            "active_status": {
+                                "active_rate": status.active_rate.to_string(),
+                                "active_rate_bps": status.active_rate.bytes_per_sec(),
+                                "is_default": status.is_default,
+                                "matching_rule_id": status.matching_rule_id,
+                                "matching_rule_description": status.matching_rule_desc,
+                                "day": status.day.short_name(),
+                                "hour": status.hour,
+                                "minute": status.minute,
+                                "seconds_until_transition": status.seconds_until_transition,
+                            }
+                        }
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 BANDWIDTH CALENDAR SCHEDULE INSPECTION                                 ");
+                println!("========================================================================================");
+                println!(
+                    "UTC Offset           : UTC{:+03}:{:02} ({} minutes)",
+                    sched.utc_offset_minutes / 60,
+                    (sched.utc_offset_minutes % 60).abs(),
+                    sched.utc_offset_minutes
+                );
+                println!(
+                    "Default Rate         : {} ({} MB/s)",
+                    sched.default_rate,
+                    format_rate_mbs(sched.default_rate.bytes_per_sec())
+                );
+                println!("Configured Rules     : {}", sched.rules.len());
+                println!("----------------------------------------------------------------------------------------");
+                if sched.rules.is_empty() {
+                    println!("  (No specific time-of-day rules configured; default rate applies continuously)");
+                } else {
+                    println!(
+                        "{:<4} {:<18} {:<12} {:<14} {:<16} {}",
+                        "#", "RULE ID", "DAYS", "TIME WINDOW", "RATE LIMIT", "DESCRIPTION"
+                    );
+                    for (idx, rule) in sched.rules.iter().enumerate() {
+                        let id_str = if rule.id.is_empty() { "-" } else { &rule.id };
+                        let days_str = rule.days.to_string();
+                        let time_str = rule
+                            .time
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "* (all-day)".to_string());
+                        let rate_str = rule.rate.to_string();
+                        println!(
+                            "{:<4} {:<18} {:<12} {:<14} {:<16} {}",
+                            idx + 1,
+                            id_str,
+                            days_str,
+                            time_str,
+                            rate_str,
+                            rule.description
+                        );
+                    }
+                }
+                println!("----------------------------------------------------------------------------------------");
+                println!(
+                    "CURRENT EVALUATION (Local Time: {} {:02}:{:02}):",
+                    status.day.short_name(),
+                    status.hour,
+                    status.minute
+                );
+                let rule_tag = if let Some(ref rid) = status.matching_rule_id {
+                    format!("Rule \"{}\"", rid)
+                } else {
+                    "Baseline Default".to_string()
+                };
+                println!(
+                    "Active Rate          : {} ({} MB/s) [{}]",
+                    status.active_rate,
+                    format_rate_mbs(status.active_rate.bytes_per_sec()),
+                    rule_tag
+                );
+                if let Some(ref desc) = status.matching_rule_desc {
+                    if !desc.is_empty() {
+                        println!("Rule Description     : {}", desc);
+                    }
+                }
+                let hours = status.seconds_until_transition / 3600;
+                let mins = (status.seconds_until_transition % 3600) / 60;
+                let secs = status.seconds_until_transition % 60;
+                println!(
+                    "Next Transition In   : {}s (~{}h {}m {}s)",
+                    status.seconds_until_transition, hours, mins, secs
+                );
+                println!("========================================================================================");
+            }
+        }
+        ScheduleSubCmd::Eval {
+            schedule,
+            timestamp,
+            utc_offset,
+        } => {
+            let sched = resolve_cli_schedule(cli, schedule.as_deref(), *utc_offset)?;
+            let eval_secs = timestamp.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs()
+            });
+            let status = sched.resolve_at(eval_secs);
+            let is_json = cli_log_json(cli);
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "schedule_eval",
+                        "evaluation": {
+                            "timestamp": eval_secs,
+                            "day": status.day.short_name(),
+                            "hour": status.hour,
+                            "minute": status.minute,
+                            "active_rate": status.active_rate.to_string(),
+                            "active_rate_bps": status.active_rate.bytes_per_sec(),
+                            "is_default": status.is_default,
+                            "matching_rule_id": status.matching_rule_id,
+                            "matching_rule_description": status.matching_rule_desc,
+                            "seconds_until_transition": status.seconds_until_transition,
+                        }
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 BANDWIDTH SCHEDULE EVALUATION                                          ");
+                println!("========================================================================================");
+                println!(
+                    "Evaluated Epoch Time : {} ({} {:02}:{:02} UTC{:+03}:{:02})",
+                    eval_secs,
+                    status.day.short_name(),
+                    status.hour,
+                    status.minute,
+                    sched.utc_offset_minutes / 60,
+                    (sched.utc_offset_minutes % 60).abs()
+                );
+                let source_str = if let Some(ref id) = status.matching_rule_id {
+                    format!("Rule \"{id}\"")
+                } else {
+                    "Default Fallback".to_string()
+                };
+                println!(
+                    "Active Rate Limit    : {} ({} MB/s)",
+                    status.active_rate,
+                    format_rate_mbs(status.active_rate.bytes_per_sec())
+                );
+                println!("Matching Source      : {}", source_str);
+                if let Some(ref desc) = status.matching_rule_desc {
+                    if !desc.is_empty() {
+                        println!("Rule Description     : {}", desc);
+                    }
+                }
+                let hours = status.seconds_until_transition / 3600;
+                let mins = (status.seconds_until_transition % 3600) / 60;
+                let secs = status.seconds_until_transition % 60;
+                println!(
+                    "Next Transition In   : {}s (~{}h {}m {}s)",
+                    status.seconds_until_transition, hours, mins, secs
+                );
+                println!("========================================================================================");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_rate_mbs(bytes_per_sec: u64) -> String {
+    if bytes_per_sec == 0 {
+        "Unlimited".to_string()
+    } else {
+        format!("{:.2}", (bytes_per_sec as f64) / (1024.0 * 1024.0))
+    }
+}

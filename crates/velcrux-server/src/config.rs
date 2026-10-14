@@ -8,8 +8,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 use velcrux_core::auth::{Authorizer, FileAuthorizer, Grant, PermSet};
+use velcrux_core::scheduler::{
+    BandwidthRate, BandwidthSchedule, BandwidthScheduleRule, DayMatcher, TimeWindow,
+};
 use velcrux_core::storage::VPath;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -30,6 +34,8 @@ pub struct ServerConfig {
     pub grants: Vec<GrantCfg>,
     #[serde(default, rename = "limits")]
     pub limits: Vec<LimitsCfg>,
+    #[serde(default)]
+    pub bandwidth: BandwidthCfg,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -221,6 +227,109 @@ pub struct LimitsCfg {
     pub quota_bytes: Option<String>,
     #[serde(default)]
     pub soft_quota_bytes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct BandwidthCfg {
+    #[serde(default)]
+    pub default_limit: Option<String>,
+    #[serde(default)]
+    pub timezone_offset_minutes: Option<i32>,
+    #[serde(default)]
+    pub schedule: Option<String>,
+    #[serde(default, rename = "rule")]
+    pub rules: Vec<BandwidthScheduleRuleCfg>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct BandwidthScheduleRuleCfg {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub days: Option<String>,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    pub limit: String,
+    #[serde(default)]
+    pub rule: Option<String>,
+}
+
+impl BandwidthCfg {
+    /// Construct a `BandwidthSchedule` from configuration.
+    /// Returns Ok(None) if neither `schedule`, `rules`, nor `default_limit` are configured.
+    pub fn build_schedule(&self) -> Result<Option<BandwidthSchedule>> {
+        if self.schedule.is_none() && self.rules.is_empty() && self.default_limit.is_none() {
+            return Ok(None);
+        }
+
+        let mut sched = if let Some(ref sched_str_or_path) = self.schedule {
+            let content = if Path::new(sched_str_or_path).is_file() {
+                std::fs::read_to_string(sched_str_or_path)
+                    .with_context(|| format!("read bandwidth schedule file {sched_str_or_path}"))?
+            } else {
+                sched_str_or_path.clone()
+            };
+            content
+                .parse::<BandwidthSchedule>()
+                .map_err(|e| anyhow::anyhow!("invalid bandwidth schedule: {e}"))?
+        } else {
+            let default_rate = if let Some(ref dl) = self.default_limit {
+                BandwidthRate::from_str(dl)
+                    .map_err(|e| anyhow::anyhow!("invalid bandwidth.default_limit '{dl}': {e}"))?
+            } else {
+                BandwidthRate::UNLIMITED
+            };
+            BandwidthSchedule::new(default_rate)
+        };
+
+        if let Some(ref dl) = self.default_limit {
+            let rate = BandwidthRate::from_str(dl)
+                .map_err(|e| anyhow::anyhow!("invalid bandwidth.default_limit '{dl}': {e}"))?;
+            sched.default_rate = rate;
+        }
+
+        if let Some(offset) = self.timezone_offset_minutes {
+            sched = sched.with_utc_offset(offset);
+        }
+
+        for r_cfg in &self.rules {
+            if let Some(ref rule_str) = r_cfg.rule {
+                let rule = BandwidthScheduleRule::from_str(rule_str)
+                    .map_err(|e| anyhow::anyhow!("invalid bandwidth rule '{rule_str}': {e}"))?;
+                sched.add_rule(rule);
+            } else {
+                let days = if let Some(ref d) = r_cfg.days {
+                    d.parse::<DayMatcher>()
+                        .map_err(|e| anyhow::anyhow!("invalid bandwidth rule days '{d}': {e}"))?
+                } else {
+                    DayMatcher::All
+                };
+                let time = if let (Some(ref s), Some(ref e)) = (&r_cfg.start, &r_cfg.end) {
+                    let window = format!("{s}-{e}").parse::<TimeWindow>().map_err(|err| {
+                        anyhow::anyhow!("invalid bandwidth rule time window '{s}-{e}': {err}")
+                    })?;
+                    Some(window)
+                } else {
+                    None
+                };
+                let rate = BandwidthRate::from_str(&r_cfg.limit).map_err(|e| {
+                    anyhow::anyhow!("invalid bandwidth rule limit '{}': {e}", r_cfg.limit)
+                })?;
+                sched.add_rule(BandwidthScheduleRule {
+                    id: r_cfg.id.clone().unwrap_or_default(),
+                    days,
+                    time,
+                    rate,
+                    description: String::new(),
+                });
+            }
+        }
+
+        Ok(Some(sched))
+    }
 }
 
 impl ServerConfig {
@@ -422,6 +531,19 @@ impl ServerConfig {
         }
         if let Ok(val) = std::env::var("VELCRUX_TELEMETRY_LOG_LEVEL") {
             self.telemetry.log_level = Some(val);
+        }
+
+        // Bandwidth schedule
+        if let Ok(val) = std::env::var("VELCRUX_BANDWIDTH_SCHEDULE") {
+            self.bandwidth.schedule = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_BANDWIDTH_DEFAULT_LIMIT") {
+            self.bandwidth.default_limit = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_BANDWIDTH_TIMEZONE_OFFSET_MINUTES") {
+            if let Ok(offset) = val.parse::<i32>() {
+                self.bandwidth.timezone_offset_minutes = Some(offset);
+            }
         }
     }
 
@@ -628,6 +750,11 @@ impl ServerConfig {
                     )
                 })?;
             }
+        }
+
+        // 11. Validate bandwidth schedule if specified (Option BI)
+        if let Err(e) = self.bandwidth.build_schedule() {
+            anyhow::bail!("invalid bandwidth schedule: {e}");
         }
 
         Ok(())
