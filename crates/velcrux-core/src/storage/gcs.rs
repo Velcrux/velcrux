@@ -1074,7 +1074,7 @@ mod tests {
         )
         .unwrap();
 
-        let cfg = GcsConfig::new("sync-gcs-bucket");
+        let cfg = GcsConfig::new(format!("sync-gcs-bucket-{}", ulid::Ulid::new()));
         let backend = GcsStorageBackend::new(cfg);
 
         // 1. Sync local -> GCS
@@ -1101,7 +1101,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gcs_storage_backend_trait() {
-        let cfg = GcsConfig::new("trait-test-bucket");
+        let cfg = GcsConfig::new(format!("trait-test-bucket-{}", ulid::Ulid::new()));
         let backend = GcsStorageBackend::new(cfg);
 
         let path = VPath::validate("remote/file.txt").unwrap();

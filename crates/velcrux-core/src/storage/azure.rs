@@ -1213,7 +1213,7 @@ mod tests {
         std::fs::create_dir_all(src_path.join("sub")).unwrap();
         std::fs::write(src_path.join("sub").join("b.txt"), b"File B content").unwrap();
 
-        let cfg = AzureBlobConfig::new("sync-az-container");
+        let cfg = AzureBlobConfig::new(format!("sync-az-container-{}", ulid::Ulid::new()));
         let backend = AzureBlobStorageBackend::new(cfg);
 
         // 1. Sync local -> Azure
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_azure_storage_backend_trait() {
-        let cfg = AzureBlobConfig::new("trait-az-container");
+        let cfg = AzureBlobConfig::new(format!("trait-az-container-{}", ulid::Ulid::new()));
         let backend = AzureBlobStorageBackend::new(cfg);
 
         let path = VPath::validate("cloud/data.bin").unwrap();

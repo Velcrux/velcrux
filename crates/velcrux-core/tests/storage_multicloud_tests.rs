@@ -92,7 +92,7 @@ async fn test_gcs_bidirectional_sync_verification() {
     )
     .unwrap();
 
-    let cfg = GcsConfig::new("sync-gcs-verify");
+    let cfg = GcsConfig::new(format!("sync-gcs-verify-{}", ulid::Ulid::new()));
     let backend = GcsStorageBackend::new(cfg);
 
     // Sync upload
@@ -213,7 +213,7 @@ async fn test_azure_bidirectional_sync_verification() {
     )
     .unwrap();
 
-    let cfg = AzureBlobConfig::new("sync-az-verify");
+    let cfg = AzureBlobConfig::new(format!("sync-az-verify-{}", ulid::Ulid::new()));
     let backend = AzureBlobStorageBackend::new(cfg);
 
     // Sync upload
