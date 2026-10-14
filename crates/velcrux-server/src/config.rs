@@ -191,6 +191,10 @@ pub struct StorageCfg {
     #[serde(default)]
     pub chunk_store: Option<String>,
     #[serde(default)]
+    pub dedup_policy: Option<String>,
+    #[serde(default)]
+    pub dedup_secret: Option<String>,
+    #[serde(default)]
     pub min_free_space: Option<String>,
     #[serde(default)]
     pub preallocate: Option<bool>,
@@ -509,6 +513,12 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_CHUNK_STORE") {
             self.storage.chunk_store = Some(val);
         }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_DEDUP_POLICY") {
+            self.storage.dedup_policy = Some(val);
+        }
+        if let Ok(val) = std::env::var("VELCRUX_STORAGE_DEDUP_SECRET") {
+            self.storage.dedup_secret = Some(val);
+        }
         if let Ok(val) = std::env::var("VELCRUX_STORAGE_MIN_FREE_SPACE") {
             self.storage.min_free_space = Some(val);
         }
@@ -571,6 +581,13 @@ impl ServerConfig {
                     state_db
                 );
             }
+        }
+
+        // 2b. Validate dedup_policy if specified
+        if let Some(policy) = &self.storage.dedup_policy {
+            let _: velcrux_core::storage::DedupNamespacePolicy = policy.parse().with_context(|| {
+                format!("invalid storage.dedup_policy: '{policy}'; expected 'isolated', 'proof-of-ownership', or 'global'")
+            })?;
         }
 
         // 3. Validate private key permissions if it is a file on disk

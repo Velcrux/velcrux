@@ -204,6 +204,19 @@ struct Cli {
     )]
     bandwidth_schedule: Option<String>,
 
+    /// Deduplication namespace policy: "isolated" (default), "proof-of-ownership", or "global" (Option BJ).
+    #[arg(
+        long = "dedup-namespace",
+        env = "VELCRUX_DEDUP_NAMESPACE",
+        default_value = "isolated",
+        global = true
+    )]
+    dedup_namespace: String,
+
+    /// Explicit tenant ID for multi-tenant deduplication namespace partitioning (Option BJ).
+    #[arg(long = "tenant", env = "VELCRUX_TENANT", global = true)]
+    tenant: Option<String>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -486,6 +499,57 @@ enum Cmd {
     Schedule {
         #[command(subcommand)]
         sub: ScheduleSubCmd,
+    },
+    /// Multi-tenant deduplication namespacing, poisoning defense, and quarantine management (Option BJ).
+    Dedup {
+        #[command(subcommand)]
+        sub: DedupSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DedupSubCmd {
+    /// Inspect deduplication policy, chunk counts, poisoning attempts, and tenant namespaces.
+    Status {
+        /// Path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Filter status for a specific tenant namespace.
+        #[arg(long)]
+        tenant: Option<String>,
+    },
+    /// Verify chunk store integrity, detect checksum mismatches, and quarantine corrupted or poisoned chunks.
+    Verify {
+        /// Path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Tenant namespace to verify (or all tenants if unspecified).
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Automatically move corrupted or poisoned chunks to the quarantine directory (default: true).
+        #[arg(long, default_value = "true")]
+        auto_quarantine: bool,
+    },
+    /// Manage quarantined poisoned or corrupted chunks.
+    Quarantine {
+        #[command(subcommand)]
+        sub: QuarantineSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum QuarantineSubCmd {
+    /// List all currently quarantined chunks with timestamps, sizes, and isolation reasons.
+    List {
+        /// Path to chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+    },
+    /// Purge (permanently delete) all quarantined chunks.
+    Purge {
+        /// Path to chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
     },
 }
 
@@ -1436,6 +1500,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Schedule { sub } => {
             run_schedule(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Dedup { sub } => {
+            run_dedup(&cli, sub).await?;
             return Ok(());
         }
 
@@ -6154,4 +6222,359 @@ fn format_rate_mbs(bytes_per_sec: u64) -> String {
     } else {
         format!("{:.2}", (bytes_per_sec as f64) / (1024.0 * 1024.0))
     }
+}
+
+fn resolve_dedup_store_root(cli: &Cli, explicit: Option<&PathBuf>) -> PathBuf {
+    if let Some(p) = explicit {
+        p.clone()
+    } else if let Some(ref p) = cli.chunk_store {
+        p.clone()
+    } else if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join(".velcrux").join("chunks")
+    } else {
+        PathBuf::from(".velcrux-chunks")
+    }
+}
+
+fn scan_chunk_dir(dir: &Path) -> (u64, u64) {
+    let mut count = 0u64;
+    let mut bytes = 0u64;
+    if !dir.exists() {
+        return (0, 0);
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&current) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|s| s.to_str()) == Some("chunk") {
+                    count += 1;
+                    if let Ok(m) = path.metadata() {
+                        bytes += m.len();
+                    }
+                }
+            }
+        }
+    }
+    (count, bytes)
+}
+
+fn scan_quarantine_dir(dir: &Path) -> Vec<(String, u64, u64)> {
+    let mut items = Vec::new();
+    if !dir.exists() {
+        return items;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let len = path.metadata().map(|m| m.len()).unwrap_or(0);
+                let ts = path
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                items.push((name, len, ts));
+            }
+        }
+    }
+    items
+}
+
+async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
+    match sub {
+        DedupSubCmd::Status { chunk_store, tenant } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let policy_str = &cli.dedup_namespace;
+            let filter_tenant = tenant.as_deref().or(cli.tenant.as_deref());
+
+            let tenants_dir = root.join("tenants");
+            let mut tenant_stats = Vec::new();
+
+            if tenants_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&tenants_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let tname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            if let Some(ft) = filter_tenant {
+                                if tname != ft {
+                                    continue;
+                                }
+                            }
+                            let (chunks, bytes) = scan_chunk_dir(&path);
+                            tenant_stats.push((tname, chunks, bytes));
+                        }
+                    }
+                }
+            }
+
+            let (shared_chunks, shared_bytes) = {
+                let shared_dir = root.join("shared");
+                if shared_dir.exists() {
+                    scan_chunk_dir(&shared_dir)
+                } else {
+                    scan_chunk_dir(&root.join("chunks"))
+                }
+            };
+
+            let quarantine_dir = root.join(".quarantine");
+            let quarantined_items = scan_quarantine_dir(&quarantine_dir);
+            let quarantined_count = quarantined_items.len() as u64;
+            let quarantined_bytes: u64 = quarantined_items.iter().map(|(_, l, _)| *l).sum();
+
+            if cli_log_json(cli) {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dedup_status",
+                        "policy": policy_str,
+                        "store_root": root.display().to_string(),
+                        "filter_tenant": filter_tenant,
+                        "tenants": tenant_stats.iter().map(|(n, c, b)| {
+                            serde_json::json!({
+                                "tenant": n,
+                                "chunks": c,
+                                "bytes": b
+                            })
+                        }).collect::<Vec<_>>(),
+                        "shared": {
+                            "chunks": shared_chunks,
+                            "bytes": shared_bytes
+                        },
+                        "quarantine": {
+                            "count": quarantined_count,
+                            "bytes": quarantined_bytes
+                        }
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 MULTI-TENANT DEDUPLICATION & NAMESPACE STATUS                          ");
+                println!("========================================================================================");
+                println!("Store Root Path      : {}", root.display());
+                println!("Namespace Policy     : {}", policy_str);
+                println!("Active Tenants       : {}", tenant_stats.len());
+                println!("Shared Store Chunks  : {} ({} MB)", shared_chunks, shared_bytes / (1024 * 1024));
+                println!("Quarantined Chunks   : {} ({} KB)", quarantined_count, quarantined_bytes / 1024);
+                println!("----------------------------------------------------------------------------------------");
+                if tenant_stats.is_empty() {
+                    println!("  (No isolated tenant stores discovered in {})", tenants_dir.display());
+                } else {
+                    println!("{:<4} {:<24} {:<16} {}", "#", "TENANT ID", "CHUNKS", "STORAGE SIZE");
+                    println!("----------------------------------------------------------------------------------------");
+                    for (i, (tname, chunks, bytes)) in tenant_stats.iter().enumerate() {
+                        println!(
+                            "{:<4} {:<24} {:<16} {} KB",
+                            i + 1,
+                            tname,
+                            chunks,
+                            bytes / 1024
+                        );
+                    }
+                }
+                println!("========================================================================================");
+            }
+        }
+        DedupSubCmd::Verify {
+            chunk_store,
+            tenant,
+            auto_quarantine,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let start = std::time::Instant::now();
+            let filter_tenant = tenant.as_deref().or(cli.tenant.as_deref());
+
+            let mut targets = Vec::new();
+            if let Some(t) = filter_tenant {
+                let tenant_p = root.join("tenants").join(t);
+                if tenant_p.exists() {
+                    targets.push((t.to_string(), tenant_p));
+                }
+            } else {
+                let tenants_dir = root.join("tenants");
+                if tenants_dir.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&tenants_dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                let tname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                targets.push((tname, path));
+                            }
+                        }
+                    }
+                }
+                let shared_dir = root.join("shared");
+                if shared_dir.exists() {
+                    targets.push(("shared".to_string(), shared_dir));
+                } else if root.join("chunks").exists() {
+                    targets.push(("global".to_string(), root.join("chunks")));
+                }
+            }
+
+            let quarantine_dir = root.join(".quarantine");
+            if *auto_quarantine && !quarantine_dir.exists() {
+                let _ = std::fs::create_dir_all(&quarantine_dir);
+            }
+
+            let mut total_scanned = 0u64;
+            let mut valid_chunks = 0u64;
+            let mut corrupted_chunks = 0u64;
+            let mut quarantined_chunks = 0u64;
+            let mut corrupted_details = Vec::new();
+
+            for (_tname, target_dir) in targets {
+                let mut stack = vec![target_dir];
+                while let Some(current) = stack.pop() {
+                    if let Ok(entries) = std::fs::read_dir(&current) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                stack.push(path);
+                            } else if path.extension().and_then(|s| s.to_str()) == Some("chunk") {
+                                total_scanned += 1;
+                                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                                let expected_hash = velcrux_core::util::Hash::from_hex(&stem);
+                                match std::fs::read(&path) {
+                                    Ok(data) => {
+                                        let actual_hash = velcrux_core::util::Hash::of(&data);
+                                        if Some(actual_hash) == expected_hash {
+                                            valid_chunks += 1;
+                                        } else {
+                                            corrupted_chunks += 1;
+                                            let reason = "blake3_checksum_mismatch";
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_secs())
+                                                .unwrap_or(0);
+                                            corrupted_details.push(serde_json::json!({
+                                                "file": path.display().to_string(),
+                                                "expected": stem,
+                                                "actual": actual_hash.to_string(),
+                                                "reason": reason
+                                            }));
+                                            if *auto_quarantine {
+                                                let qname = format!("{}_{}_{}.quarantine", stem, now, rand::random::<u32>());
+                                                let qtarget = quarantine_dir.join(qname);
+                                                if std::fs::rename(&path, &qtarget).is_ok() {
+                                                    quarantined_chunks += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        corrupted_chunks += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+
+            if cli_log_json(cli) {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "dedup_verify",
+                        "store_root": root.display().to_string(),
+                        "total_scanned": total_scanned,
+                        "valid_chunks": valid_chunks,
+                        "corrupted_chunks": corrupted_chunks,
+                        "quarantined_chunks": quarantined_chunks,
+                        "duration_ms": elapsed_ms,
+                        "corrupted_details": corrupted_details
+                    })
+                );
+            } else {
+                println!("========================================================================================");
+                println!("                 DEDUPLICATION CHUNK STORE INTEGRITY AUDIT                              ");
+                println!("========================================================================================");
+                println!("Store Root Path      : {}", root.display());
+                println!("Total Chunks Scanned : {}", total_scanned);
+                println!("Valid Chunks         : {}", valid_chunks);
+                println!("Corrupted/Poisoned   : {}", corrupted_chunks);
+                println!("Quarantined Chunks   : {}", quarantined_chunks);
+                println!("Audit Duration       : {} ms", elapsed_ms);
+                println!("Integrity Status     : {}", if corrupted_chunks == 0 { "PASS (Clean)" } else { "FAIL (Poisoning/Corruption Detected)" });
+                println!("========================================================================================");
+            }
+        }
+        DedupSubCmd::Quarantine { sub } => match sub {
+            QuarantineSubCmd::List { chunk_store } => {
+                let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+                let quarantine_dir = root.join(".quarantine");
+                let items = scan_quarantine_dir(&quarantine_dir);
+
+                if cli_log_json(cli) {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "quarantine_list",
+                            "quarantine_dir": quarantine_dir.display().to_string(),
+                            "count": items.len(),
+                            "items": items.iter().map(|(n, l, ts)| {
+                                serde_json::json!({
+                                    "filename": n,
+                                    "size_bytes": l,
+                                    "quarantined_at": ts
+                                })
+                            }).collect::<Vec<_>>()
+                        })
+                    );
+                } else {
+                    println!("========================================================================================");
+                    println!("                 QUARANTINED POISONED/CORRUPTED CHUNKS                                  ");
+                    println!("========================================================================================");
+                    println!("Quarantine Directory : {}", quarantine_dir.display());
+                    println!("Quarantined Files    : {}", items.len());
+                    println!("----------------------------------------------------------------------------------------");
+                    if items.is_empty() {
+                        println!("  (No chunks currently quarantined)");
+                    } else {
+                        println!("{:<4} {:<48} {:<12} {}", "#", "QUARANTINE RECORD", "SIZE (B)", "EPOCH TIMESTAMP");
+                        println!("----------------------------------------------------------------------------------------");
+                        for (i, (name, len, ts)) in items.iter().enumerate() {
+                            println!("{:<4} {:<48} {:<12} {}", i + 1, name, len, ts);
+                        }
+                    }
+                    println!("========================================================================================");
+                }
+            }
+            QuarantineSubCmd::Purge { chunk_store } => {
+                let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+                let quarantine_dir = root.join(".quarantine");
+                let items = scan_quarantine_dir(&quarantine_dir);
+                let count = items.len();
+                let bytes: u64 = items.iter().map(|(_, l, _)| *l).sum();
+
+                if quarantine_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&quarantine_dir);
+                    let _ = std::fs::create_dir_all(&quarantine_dir);
+                }
+
+                if cli_log_json(cli) {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "quarantine_purge",
+                            "quarantine_dir": quarantine_dir.display().to_string(),
+                            "purged_count": count,
+                            "reclaimed_bytes": bytes
+                        })
+                    );
+                } else {
+                    println!("Purged {} quarantined chunks ({} bytes reclaimed).", count, bytes);
+                }
+            }
+        },
+    }
+    Ok(())
 }

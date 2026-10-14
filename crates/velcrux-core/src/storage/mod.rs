@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 pub mod chunk_store;
 pub mod cluster;
+pub mod dedup_defense;
 pub mod direct_io;
 pub mod gc;
 pub mod memory;
@@ -31,6 +32,10 @@ pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use dedup_defense::{
+    ChunkAclEntry, ChunkPoisonReport, ChunkQuarantineManager, DedupAuditReport,
+    DedupNamespacePolicy, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
+};
 pub use scrub::{
     BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
     ScrubOptions, ScrubReport,

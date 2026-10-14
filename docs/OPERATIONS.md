@@ -2215,5 +2215,83 @@ velcrux --bandwidth-schedule "Mon-Fri 09:00-17:00: 20Mbps; default: 500Mbps" upl
 velcrux --bandwidth-schedule /etc/velcrux/sync_schedule.sched sync ./dataset velcrux://remote-storage:7443/shared/
 ```
 
+---
+
+## 44. Multi-Tenant Deduplication Poisoning Defense, Proof-of-Ownership & Quarantine Namespacing (Option BJ)
+
+Per `ADR-026`, `SECURITY.md` §8 & §9, and resolving `CLAUDE.md` §4 Open Questions #3 & #4, Velcrux implements physical and cryptographic multi-tenant deduplication defense. This eliminates cross-tenant data leakage, content existence oracles, and deduplication cache poisoning across shared storage clusters.
+
+### 1. Architectural Model & Policies
+
+| Policy | Storage Path Layout | Security Invariant | Use Case |
+|---|---|---|---|
+| `isolated` (default) | `<root>/tenants/<tenant_id>/chunks/ab/cd/<hash>.chunk` | Physical directory partitioning. Tenant stores cannot observe or access chunks belonging to other tenants. | Multi-tenant SaaS, enterprise cloud, zero-trust environments. |
+| `proof-of-ownership` | `<root>/shared/chunks/ab/cd/<hash>.chunk` + ACL table | Convergent deduplication. Tenants must present a cryptographic BLAKE3-KeyedHash Proof-of-Ownership token before referencing existing chunks. | Multi-tenant clusters sharing identical public datasets or container layers. |
+| `global` | `<root>/chunks/ab/cd/<hash>.chunk` | Unrestricted single-tenant deduplication pool. | Single-tenant private clusters and local workstation transfers. |
+
+### 2. In-Flight BLAKE3 Verification & Automated Quarantine
+
+Any chunk copied from disk into a transfer staging file undergoes streaming BLAKE3 verification:
+- If the computed hash does not match the chunk's content-addressed identity, the chunk is identified as corrupted or poisoned.
+- The manager automatically removes the chunk from the live index and isolates it into `<root>/.quarantine/<hash>_<timestamp>_<random>.quarantine`.
+- The in-flight transfer fails closed with `ProtocolError::Malformed`, protecting downstream file integrity and incrementing `poison_attempts` telemetry.
+
+### 3. Server Configuration (`server.toml`)
+
+```toml
+[storage]
+root = "/var/lib/velcrux/data"
+staging = "/var/lib/velcrux/staging"
+chunk_store = "/var/lib/velcrux/chunks"
+dedup_policy = "isolated" # "isolated" (default), "proof-of-ownership", or "global"
+# Optional 32-byte hex secret for Proof of Ownership token validation
+dedup_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+Environment variable overrides:
+```bash
+export VELCRUX_STORAGE_DEDUP_POLICY="isolated"
+export VELCRUX_STORAGE_DEDUP_SECRET="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+### 4. Operational CLI Commands & Examples
+
+#### 1. Deduplication Status & Namespace Telemetry (`velcrux dedup status`)
+```bash
+# Inspect deduplication policy, active tenant stores, and quarantine metrics
+velcrux dedup status --chunk-store /var/lib/velcrux/chunks
+
+# Filter status for a specific tenant namespace
+velcrux dedup status --chunk-store /var/lib/velcrux/chunks --tenant tenant-alpha
+
+# Machine-readable JSON output for cluster monitoring
+velcrux --json dedup status --chunk-store /var/lib/velcrux/chunks
+```
+
+#### 2. Deduplication Integrity Audit & Auto-Quarantine (`velcrux dedup verify`)
+```bash
+# Audit all chunk files across tenant and shared stores
+velcrux dedup verify --chunk-store /var/lib/velcrux/chunks
+
+# Verify specific tenant and quarantine corrupted chunks
+velcrux dedup verify --chunk-store /var/lib/velcrux/chunks --tenant tenant-alpha --auto-quarantine true
+
+# JSON audit report
+velcrux --json dedup verify --chunk-store /var/lib/velcrux/chunks
+```
+
+#### 3. Quarantined Chunk Inspection & Purge (`velcrux dedup quarantine`)
+```bash
+# List all quarantined poisoned/corrupted chunks with timestamps and sizes
+velcrux dedup quarantine list --chunk-store /var/lib/velcrux/chunks
+
+# JSON quarantine inventory
+velcrux --json dedup quarantine list --chunk-store /var/lib/velcrux/chunks
+
+# Purge (permanently delete) all quarantined chunks to reclaim storage
+velcrux dedup quarantine purge --chunk-store /var/lib/velcrux/chunks
+```
+
+
 
 

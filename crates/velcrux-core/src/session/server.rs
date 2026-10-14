@@ -249,6 +249,8 @@ pub struct ServerConn {
     authorizer: Arc<dyn Authorizer>,
     /// Optional content-addressed chunk store for cross-file deduplication.
     chunk_store: Option<Arc<LocalChunkStore>>,
+    /// Optional namespaced chunk store with dedup poisoning defense (Option BJ).
+    namespaced_chunk_store: Option<Arc<crate::storage::NamespacedChunkStore>>,
     /// Optional limits provider for bandwidth and quota enforcement (Option O).
     limits_provider: Option<Arc<dyn LimitsProvider>>,
     /// Optional drain signal receiver (Option M).
@@ -378,6 +380,7 @@ impl ServerConn {
             authenticator,
             authorizer,
             chunk_store: None,
+            namespaced_chunk_store: None,
             limits_provider: None,
             drain_signal: None,
             kill_signal: None,
@@ -416,6 +419,15 @@ impl ServerConn {
     /// Attach an optional content-addressed LocalChunkStore for deduplication.
     pub fn with_chunk_store(mut self, chunk_store: Option<Arc<LocalChunkStore>>) -> Self {
         self.chunk_store = chunk_store;
+        self
+    }
+
+    /// Attach an optional namespaced chunk store with dedup poisoning defense (Option BJ).
+    pub fn with_namespaced_chunk_store(
+        mut self,
+        namespaced_chunk_store: Option<Arc<crate::storage::NamespacedChunkStore>>,
+    ) -> Self {
+        self.namespaced_chunk_store = namespaced_chunk_store;
         self
     }
 
@@ -877,6 +889,7 @@ impl ServerConn {
                                 self.authorizer.as_ref(),
                                 &self.state,
                                 &self.chunk_store,
+                                &self.namespaced_chunk_store,
                                 &self.limits_provider,
                                 &self.idempotency_ledger,
                                 &self.checkpoint_policy,
@@ -1063,6 +1076,7 @@ async fn handle_transfer_create(
     authorizer: &dyn Authorizer,
     state: &Option<Arc<dyn StateStore>>,
     chunk_store: &Option<Arc<LocalChunkStore>>,
+    namespaced_chunk_store: &Option<Arc<crate::storage::NamespacedChunkStore>>,
     limits_provider: &Option<Arc<dyn LimitsProvider>>,
     idempotency_ledger: &Option<Arc<IdempotencyLedger>>,
     _checkpoint_policy: &Option<CheckpointPolicy>,
@@ -1636,7 +1650,7 @@ async fn handle_transfer_create(
 
     let existing_path = backend.root().join(dst.as_path());
     let has_existing = backend.exists(&dst).await.unwrap_or(false);
-    let has_chunk_store = chunk_store.is_some();
+    let has_chunk_store = chunk_store.is_some() || namespaced_chunk_store.is_some();
 
     if create.op == TransferOp::Upload && create.file_hash != crate::util::Hash::ZERO && (has_existing || has_chunk_store) {
         let meta_len = if has_existing {
@@ -1709,7 +1723,19 @@ async fn handle_transfer_create(
                         .fetch_add(bytes_total, std::sync::atomic::Ordering::Relaxed);
 
                     // If chunk store is enabled, ensure this file is indexed
-                    if let Some(cs) = chunk_store {
+                    if let Some(ncs) = namespaced_chunk_store {
+                        let params =
+                            crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                .unwrap();
+                        let _ = ncs
+                            .ingest_file_for_tenant(
+                                &identity.name,
+                                &existing_path,
+                                crate::chunking::ChunkMode::Fixed,
+                                params,
+                            )
+                            .await;
+                    } else if let Some(cs) = chunk_store {
                         let params =
                             crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
                                 .unwrap();
@@ -1768,17 +1794,25 @@ async fn handle_transfer_create(
             };
             write_frame(send, &Message::TransferCreated(created), 0).await?;
 
-            let bloom = match (&inv_opt, chunk_store) {
-                (Some(inv), Some(cs)) => {
+            let bloom = match (&inv_opt, chunk_store, namespaced_chunk_store) {
+                (Some(inv), _, Some(ncs)) => {
+                    let mut b = ncs.bloom_filter_for_tenant(&identity.name).await?;
+                    for h in inv.chunk_hashes() {
+                        b.insert(h);
+                    }
+                    b
+                }
+                (None, _, Some(ncs)) => ncs.bloom_filter_for_tenant(&identity.name).await?,
+                (Some(inv), Some(cs), None) => {
                     let mut b = cs.bloom_filter();
                     for h in inv.chunk_hashes() {
                         b.insert(h);
                     }
                     b
                 }
-                (Some(inv), None) => inv.create_bloom_filter(0.01),
-                (None, Some(cs)) => cs.bloom_filter(),
-                (None, None) => unreachable!(),
+                (Some(inv), None, None) => inv.create_bloom_filter(0.01),
+                (None, Some(cs), None) => cs.bloom_filter(),
+                (None, None, None) => unreachable!(),
             };
 
             let hint = crate::protocol::message::InventoryHint {
@@ -1803,6 +1837,13 @@ async fn handle_transfer_create(
                     if let Some(extent) = inv_opt.as_ref().and_then(|inv| inv.lookup(h)) {
                         have_bits.push(true);
                         matching_chunks.push((dst_off, extent.offset, extent.length));
+                    } else if namespaced_chunk_store
+                        .as_ref()
+                        .map(|ncs| ncs.contains_for_tenant(&identity.name, h))
+                        .unwrap_or(false)
+                    {
+                        have_bits.push(true);
+                        matching_store_chunks.push((dst_off, *h, chunk_len));
                     } else if chunk_store
                         .as_ref()
                         .map(|cs| cs.contains_sync(h))
@@ -1861,7 +1902,18 @@ async fn handle_transfer_create(
                 }
 
                 // 2. Copy from content-addressed chunk store
-                if let Some(cs) = chunk_store {
+                if let Some(ncs) = namespaced_chunk_store {
+                    for (dst_offset, hash, len) in matching_store_chunks {
+                        let _ = ncs.copy_chunk_for_tenant(
+                            &identity.name,
+                            &hash,
+                            &mut staging_f,
+                            dst_offset,
+                        );
+                        let chunk_idx = dst_offset / (64 * 1024);
+                        initial_bitmap.mark_complete(chunk_idx, len);
+                    }
+                } else if let Some(cs) = chunk_store {
                     for (dst_offset, hash, len) in matching_store_chunks {
                         let _ = cs.copy_to_std_file(&hash, &mut staging_f, dst_offset);
                         let chunk_idx = dst_offset / (64 * 1024);
@@ -1945,7 +1997,22 @@ async fn handle_transfer_create(
                     stats
                         .bytes_reused
                         .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
-                    if let Some(cs) = chunk_store {
+                    if let Some(ncs) = namespaced_chunk_store {
+                        if backend.backend_type() == "local" {
+                            let final_path = backend.root().join(dst.as_path());
+                            let params =
+                                crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                    .unwrap();
+                            let _ = ncs
+                                .ingest_file_for_tenant(
+                                    &identity.name,
+                                    &final_path,
+                                    crate::chunking::ChunkMode::Fixed,
+                                    params,
+                                )
+                                .await;
+                        }
+                    } else if let Some(cs) = chunk_store {
                         if backend.backend_type() == "local" {
                             let final_path = backend.root().join(dst.as_path());
                             let params =
@@ -2002,7 +2069,22 @@ async fn handle_transfer_create(
                         .fetch_add(plan.bytes_reusable, std::sync::atomic::Ordering::Relaxed);
 
                     // Ingest newly committed file into chunk store for future cross-file deduplication
-                    if let Some(cs) = chunk_store {
+                    if let Some(ncs) = namespaced_chunk_store {
+                        if backend.backend_type() == "local" {
+                            let final_path = backend.root().join(dst.as_path());
+                            let params =
+                                crate::chunking::ChunkParams::new(64 * 1024, 64 * 1024, 64 * 1024)
+                                    .unwrap();
+                            let _ = ncs
+                                .ingest_file_for_tenant(
+                                    &identity.name,
+                                    &final_path,
+                                    crate::chunking::ChunkMode::Fixed,
+                                    params,
+                                )
+                                .await;
+                        }
+                    } else if let Some(cs) = chunk_store {
                         if backend.backend_type() == "local" {
                             let final_path = backend.root().join(dst.as_path());
                             let params =

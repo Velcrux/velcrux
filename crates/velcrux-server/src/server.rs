@@ -221,25 +221,47 @@ where
             }
         };
 
-    // Optional LocalChunkStore for deduplication (Option D)
-    let chunk_store: Option<Arc<velcrux_core::storage::LocalChunkStore>> =
-        match &cfg.storage.chunk_store {
-            Some(path) => {
-                let p = std::path::PathBuf::from(path);
-                match velcrux_core::storage::LocalChunkStore::new(&p).await {
-                    Ok(cs) => {
-                        info!(chunk_store = %p.display(), "LocalChunkStore initialized");
-                        server_caps.set(Capability::DedupChunkStore);
-                        Some(Arc::new(cs))
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "failed to initialize chunk store");
-                        None
+    // Optional LocalChunkStore / NamespacedChunkStore for deduplication (Option D & Option BJ)
+    let dedup_policy = cfg
+        .storage
+        .dedup_policy
+        .as_deref()
+        .and_then(|s| s.parse::<velcrux_core::storage::DedupNamespacePolicy>().ok())
+        .unwrap_or(velcrux_core::storage::DedupNamespacePolicy::Isolated);
+
+    let (chunk_store, namespaced_chunk_store): (
+        Option<Arc<velcrux_core::storage::LocalChunkStore>>,
+        Option<Arc<velcrux_core::storage::NamespacedChunkStore>>,
+    ) = match &cfg.storage.chunk_store {
+        Some(path) => {
+            let p = std::path::PathBuf::from(path);
+            let secret_bytes: Option<[u8; 32]> = cfg.storage.dedup_secret.as_ref().and_then(|s| {
+                velcrux_core::util::Hash::from_hex(s).map(|h| *h.as_bytes())
+            });
+            match velcrux_core::storage::NamespacedChunkStore::new(&p, dedup_policy, secret_bytes).await {
+                Ok(ncs) => {
+                    info!(chunk_store = %p.display(), policy = %dedup_policy, "NamespacedChunkStore initialized");
+                    server_caps.set(Capability::DedupChunkStore);
+                    let shared = Arc::clone(ncs.shared_store());
+                    (Some(shared), Some(Arc::new(ncs)))
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to initialize namespaced chunk store; falling back to LocalChunkStore");
+                    match velcrux_core::storage::LocalChunkStore::new(&p).await {
+                        Ok(cs) => {
+                            server_caps.set(Capability::DedupChunkStore);
+                            (Some(Arc::new(cs)), None)
+                        }
+                        Err(e2) => {
+                            warn!(error = %e2, "failed to initialize fallback chunk store");
+                            (None, None)
+                        }
                     }
                 }
             }
-            None => None,
-        };
+        }
+        None => (None, None),
+    };
 
     // M3 state DB. The path must be absolute per ADR-005.
     use velcrux_core::state::StateStore as _;
@@ -451,6 +473,7 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
+                .with_namespaced_chunk_store(namespaced_chunk_store.clone())
                 .with_limits_provider(Some(Arc::clone(&limits_provider)))
                 .with_idempotency_ledger(Some(Arc::clone(&idempotency_ledger)))
                 .with_migration_coordinator(Some(Arc::clone(&migration_coordinator)))
@@ -547,6 +570,7 @@ where
                     Some(Arc::clone(&authorizer)),
                 )
                 .with_chunk_store(chunk_store.clone())
+                .with_namespaced_chunk_store(namespaced_chunk_store.clone())
                 .with_limits_provider(Some(Arc::clone(&limits_provider)))
                 .with_idempotency_ledger(Some(Arc::clone(&idempotency_ledger)))
                 .with_migration_coordinator(Some(Arc::clone(&migration_coordinator)))

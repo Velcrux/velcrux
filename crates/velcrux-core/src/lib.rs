@@ -87,6 +87,8 @@ pub use storage::{
     Staging, StagingGcReport, StorageBackend, VPath, VPathError, SNAPSHOT_CHUNK_SIZE,
     BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
     ScrubOptions, ScrubReport,
+    ChunkAclEntry, ChunkPoisonReport, ChunkQuarantineManager, DedupAuditReport,
+    DedupNamespacePolicy, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,

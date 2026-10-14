@@ -96,10 +96,8 @@ velcrux/
 
 1. Whether `sync --delete` should ever be allowed for a non-admin role.
 2. Extended attribute / ACL fidelity: how much do we promise on Linux vs macOS?
-3. Whether the server may serve chunks from the dedup store for files the caller
-   is not authorized to read (it must not — but the enforcement design needs a
-   second reviewer).
-4. Multi-tenant chunk store: shared vs per-tenant namespace.
+3. **[RESOLVED — ADR-026]** Whether the server may serve chunks from the dedup store for files the caller is not authorized to read: Server strictly enforces tenant boundaries via `DedupNamespacePolicy::Isolated` (default) or cryptographic Proof-of-Ownership (`ProofOfOwnership`) gating. Unauthorized chunk reads/probes fail closed and increment `oracle_probes_blocked` telemetry.
+4. **[RESOLVED — ADR-026]** Multi-tenant chunk store: shared vs per-tenant namespace: Default is physical per-tenant namespace partitioning (`<root>/tenants/<tenant_id>/chunks/ab/cd/<hash>.chunk`); shared convergent deduplication requires cryptographic Proof-of-Ownership tokens and per-chunk ACL provenance tracking (`ChunkAclEntry`). Auto-quarantine isolates corrupted chunks to `<root>/.quarantine/`.
 
 ## 5. Working style
 

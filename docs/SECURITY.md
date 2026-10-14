@@ -249,6 +249,7 @@ Required in CI, not optional:
 - **Authorization matrix test**: every (identity, op, path) pair from a fixture,
   asserted against an expected allow/deny table — including cross-tenant reads,
   dedup-store reads for unauthorized content, and `delete` without the permission.
+- **Multi-tenant deduplication poisoning defense & namespace isolation** (`crates/velcrux-server/tests/server_dedup_defense.rs`, `crates/velcrux-client/tests/cli_dedup_defense.rs`): physical tenant partitioning (`<root>/tenants/<tenant_id>/chunks/`), BLAKE3 in-flight chunk verification, automatic quarantine of corrupted/poisoned chunks into `<root>/.quarantine/`, and constant-time Proof-of-Ownership verification (`ADR-026`).
 - **Invalid state transitions**: every message type sent in every state, asserting
   a clean `PROTOCOL_VIOLATION` close and, critically, that the server process
   survives and other connections are unaffected.
@@ -268,7 +269,7 @@ Stated plainly rather than left to be discovered:
 - Whole-directory commit is not atomic (see `ARCHITECTURE.md` §9).
 - `RESOLVE_BENEATH` requires Linux ≥ 5.6. The fallback path is sound but has more
   moving parts, and is the place to look first for a traversal bug.
-- Multi-tenant dedup namespace design is unresolved (`CLAUDE.md` §4).
+- Multi-tenant dedup namespace and poisoning defense is fully resolved via `ADR-026` (`DedupNamespacePolicy::Isolated` default physical partitioning and `ProofOfOwnership` cryptographic verification).
 
 ## 10. Reporting
 
