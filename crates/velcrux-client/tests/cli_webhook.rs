@@ -19,7 +19,11 @@ fn test_cli_webhook_list_table() {
         .output()
         .expect("execute velcrux webhook list");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("PLUGGABLE WEBHOOK EVENT NOTIFICATIONS & AUDIT BUS"));
@@ -41,9 +45,13 @@ fn test_cli_webhook_list_json() {
         .output()
         .expect("execute velcrux --json webhook list");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
-    let json_val: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json webhook list");
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("valid JSON expected from --json webhook list");
 
     assert_eq!(json_val["event"], "webhook_list");
     assert!(json_val["subscriptions"].is_array());
@@ -65,7 +73,11 @@ fn test_cli_webhook_test_table() {
         .output()
         .expect("execute velcrux webhook test");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("WEBHOOK TEST NOTIFICATION DISPATCHED"));
@@ -90,9 +102,13 @@ fn test_cli_webhook_test_json() {
         .output()
         .expect("execute velcrux --json webhook test");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
-    let json_val: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json webhook test");
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("valid JSON expected from --json webhook test");
 
     assert_eq!(json_val["event"], "webhook_test_dispatched");
     assert_eq!(json_val["url"], "https://api.datadoghq.com/v1/events");
@@ -111,7 +127,11 @@ fn test_cli_webhook_dlq_operations() {
         .output()
         .expect("execute velcrux webhook dlq");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("WEBHOOK DEAD-LETTER QUEUE (DLQ)"));
     assert!(stdout.contains("Initial DLQ Entries  : 0"));
@@ -126,9 +146,13 @@ fn test_cli_webhook_dlq_operations() {
         .output()
         .expect("execute velcrux --json webhook dlq --drain");
 
-    assert!(output_drain.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output_drain.stderr));
-    let json_val: serde_json::Value =
-        serde_json::from_slice(&output_drain.stdout).expect("valid JSON expected from --json webhook dlq --drain");
+    assert!(
+        output_drain.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output_drain.stderr)
+    );
+    let json_val: serde_json::Value = serde_json::from_slice(&output_drain.stdout)
+        .expect("valid JSON expected from --json webhook dlq --drain");
 
     assert_eq!(json_val["event"], "webhook_dlq");
     assert_eq!(json_val["drained"], true);

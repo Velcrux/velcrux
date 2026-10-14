@@ -22,21 +22,23 @@ async fn test_cli_dedup_status_table_and_json() {
     let tmp = tempdir().unwrap();
     let root = tmp.path().join("dedup_store");
 
-    let store = NamespacedChunkStore::new(
-        &root,
-        DedupNamespacePolicy::Isolated,
-        None,
-    )
-    .await
-    .unwrap();
+    let store = NamespacedChunkStore::new(&root, DedupNamespacePolicy::Isolated, None)
+        .await
+        .unwrap();
 
     let data_a = b"tenant A dedicated dataset payload";
     let hash_a = Hash::of(data_a);
-    store.put_for_tenant("tenant-a", &hash_a, data_a).await.unwrap();
+    store
+        .put_for_tenant("tenant-a", &hash_a, data_a)
+        .await
+        .unwrap();
 
     let data_b = b"tenant B secure dataset payload";
     let hash_b = Hash::of(data_b);
-    store.put_for_tenant("tenant-b", &hash_b, data_b).await.unwrap();
+    store
+        .put_for_tenant("tenant-b", &hash_b, data_b)
+        .await
+        .unwrap();
 
     // 1. Text table output
     let out = Command::new(velcrux_bin())
@@ -47,7 +49,11 @@ async fn test_cli_dedup_status_table_and_json() {
         .output()
         .expect("run dedup status");
 
-    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("MULTI-TENANT DEDUPLICATION & NAMESPACE STATUS"));
     assert!(stdout.contains("tenant-a"));
@@ -63,7 +69,11 @@ async fn test_cli_dedup_status_table_and_json() {
         .output()
         .expect("run dedup status json");
 
-    assert!(out_json.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out_json.stderr));
+    assert!(
+        out_json.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out_json.stderr)
+    );
     let stdout_json = String::from_utf8_lossy(&out_json.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout_json).expect("parse JSON");
     assert_eq!(parsed["event"], "dedup_status");
@@ -76,17 +86,16 @@ async fn test_cli_dedup_verify_quarantine_and_purge() {
     let tmp = tempdir().unwrap();
     let root = tmp.path().join("dedup_store");
 
-    let store = NamespacedChunkStore::new(
-        &root,
-        DedupNamespacePolicy::Isolated,
-        None,
-    )
-    .await
-    .unwrap();
+    let store = NamespacedChunkStore::new(&root, DedupNamespacePolicy::Isolated, None)
+        .await
+        .unwrap();
 
     let data = b"clean tenant payload for CLI verify test";
     let hash = Hash::of(data);
-    store.put_for_tenant("tenant-alpha", &hash, data).await.unwrap();
+    store
+        .put_for_tenant("tenant-alpha", &hash, data)
+        .await
+        .unwrap();
 
     // 1. Verify clean store
     let out_clean = Command::new(velcrux_bin())

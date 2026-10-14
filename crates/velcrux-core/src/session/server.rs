@@ -1652,7 +1652,10 @@ async fn handle_transfer_create(
     let has_existing = backend.exists(&dst).await.unwrap_or(false);
     let has_chunk_store = chunk_store.is_some() || namespaced_chunk_store.is_some();
 
-    if create.op == TransferOp::Upload && create.file_hash != crate::util::Hash::ZERO && (has_existing || has_chunk_store) {
+    if create.op == TransferOp::Upload
+        && create.file_hash != crate::util::Hash::ZERO
+        && (has_existing || has_chunk_store)
+    {
         let meta_len = if has_existing {
             backend
                 .stat(&dst)

@@ -254,7 +254,8 @@ impl DataScrubber {
             if let Some(limit) = options.rate_limit_bytes_per_sec {
                 if bytes_since_throttle >= 1024 * 1024 {
                     let elapsed = rate_limiter_last.elapsed();
-                    let expected_time = Duration::from_secs_f64(bytes_since_throttle as f64 / limit as f64);
+                    let expected_time =
+                        Duration::from_secs_f64(bytes_since_throttle as f64 / limit as f64);
                     if expected_time > elapsed {
                         tokio::time::sleep(expected_time - elapsed).await;
                     }
@@ -311,7 +312,9 @@ impl DataScrubber {
                                     path: path.clone(),
                                     actual_hash: Some(computed_hash.to_string()),
                                     status: ChunkIntegrityStatus::Unrecoverable,
-                                    details: "Peer store did not have a valid replica for this chunk".into(),
+                                    details:
+                                        "Peer store did not have a valid replica for this chunk"
+                                            .into(),
                                 });
                                 continue;
                             }
@@ -321,7 +324,8 @@ impl DataScrubber {
 
                 // Quarantine branch
                 if options.mode == ScrubMode::Quarantine {
-                    let quarantine_dest = quarantine_path.join(format!("{}.corrupt", expected_hash));
+                    let quarantine_dest =
+                        quarantine_path.join(format!("{}.corrupt", expected_hash));
                     if let Err(e) = fs::rename(&path, &quarantine_dest) {
                         report.unrecoverable_chunks += 1;
                         report.findings.push(ScrubFinding {
@@ -347,7 +351,10 @@ impl DataScrubber {
                         path: path.clone(),
                         actual_hash: Some(computed_hash.to_string()),
                         status: status_initial,
-                        details: format!("Checksum mismatch: expected {}, got {}", expected_hash, computed_hash),
+                        details: format!(
+                            "Checksum mismatch: expected {}, got {}",
+                            expected_hash, computed_hash
+                        ),
                     });
                 }
             }
@@ -391,8 +398,9 @@ impl DataScrubber {
             fs::create_dir_all(parent)?;
         }
         let tmp = dest_file.with_extension(format!("tmp-{}", rand::random::<u32>()));
-        let json_bytes = serde_json::to_vec_pretty(report)
-            .map_err(|e| VelcruxError::Internal(format!("failed to serialize scrub report: {}", e)))?;
+        let json_bytes = serde_json::to_vec_pretty(report).map_err(|e| {
+            VelcruxError::Internal(format!("failed to serialize scrub report: {}", e))
+        })?;
 
         {
             let mut f = OpenOptions::new()

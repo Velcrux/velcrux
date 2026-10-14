@@ -237,20 +237,32 @@ impl FecCodec {
         } else {
             GfMatrix::zeros(0, k)
         };
-        Self { k, m, cauchy_matrix }
+        Self {
+            k,
+            m,
+            cauchy_matrix,
+        }
     }
 
     /// Encode K source symbols into M repair symbols.
     /// All source symbols must have identical length.
     pub fn encode(&self, source_symbols: &[Vec<u8>]) -> Vec<FecSymbol> {
-        assert_eq!(source_symbols.len(), self.k, "Must provide exactly K source symbols");
+        assert_eq!(
+            source_symbols.len(),
+            self.k,
+            "Must provide exactly K source symbols"
+        );
         if self.m == 0 {
             return Vec::new();
         }
 
         let symbol_len = source_symbols[0].len();
         for s in source_symbols {
-            assert_eq!(s.len(), symbol_len, "All symbols must have identical length");
+            assert_eq!(
+                s.len(),
+                symbol_len,
+                "All symbols must have identical length"
+            );
         }
 
         let mut repair = Vec::with_capacity(self.m);
@@ -391,8 +403,7 @@ impl FecCodec {
                 if coeff != 0 {
                     let sym_data = &selected[col_idx].data;
                     for b in 0..symbol_len {
-                        result[src_idx][b] =
-                            gf_add(result[src_idx][b], gf_mul(coeff, sym_data[b]));
+                        result[src_idx][b] = gf_add(result[src_idx][b], gf_mul(coeff, sym_data[b]));
                     }
                 }
             }
@@ -521,7 +532,11 @@ impl AdaptiveFecController {
     pub fn snapshot(&self) -> FecStatsSnapshot {
         let k = self.current_k;
         let m = self.current_m;
-        let redundancy_pct = if k > 0 { (m as f64 / k as f64) * 100.0 } else { 0.0 };
+        let redundancy_pct = if k > 0 {
+            (m as f64 / k as f64) * 100.0
+        } else {
+            0.0
+        };
 
         FecStatsSnapshot {
             profile: self.profile,
@@ -598,10 +613,7 @@ impl FecBlockEncoder {
 
         let mut all_symbols = Vec::with_capacity(k + m);
         for (i, s) in sources.into_iter().enumerate() {
-            all_symbols.push(FecSymbol {
-                index: i,
-                data: s,
-            });
+            all_symbols.push(FecSymbol { index: i, data: s });
         }
         all_symbols.extend(repair_symbols);
 
@@ -720,8 +732,7 @@ pub fn simulate_fec_recovery(
 
     for (chunk_idx, chunk) in data.chunks(block_size).enumerate() {
         total_blocks += 1;
-        let (header, all_symbols) =
-            FecBlockEncoder::encode_block(chunk_idx as u64, chunk, k, m);
+        let (header, all_symbols) = FecBlockEncoder::encode_block(chunk_idx as u64, chunk, k, m);
 
         total_symbols_sent += all_symbols.len();
 
@@ -737,7 +748,10 @@ pub fn simulate_fec_recovery(
 
         let (recovered, report) = FecBlockDecoder::decode_block(&header, &received);
         if let Some(ref rec_bytes) = recovered {
-            assert_eq!(rec_bytes, chunk, "Reconstructed block must match original byte-for-byte");
+            assert_eq!(
+                rec_bytes, chunk,
+                "Reconstructed block must match original byte-for-byte"
+            );
             symbols_recovered += report.recovered_source_count;
         } else {
             unrecoverable_blocks += 1;
@@ -756,7 +770,11 @@ pub fn simulate_fec_recovery(
         100.0
     };
 
-    let redundancy_multiplier = if k > 0 { 1.0 + (m as f64 / k as f64) } else { 1.0 };
+    let redundancy_multiplier = if k > 0 {
+        1.0 + (m as f64 / k as f64)
+    } else {
+        1.0
+    };
     let effective_goodput_ratio = if unrecoverable_blocks == 0 {
         1.0 / redundancy_multiplier
     } else {
@@ -836,10 +854,19 @@ mod tests {
 
         // Simulate losing symbol S1
         let received = vec![
-            FecSymbol { index: 0, data: s0.clone() },
+            FecSymbol {
+                index: 0,
+                data: s0.clone(),
+            },
             // S1 is lost!
-            FecSymbol { index: 2, data: s2.clone() },
-            FecSymbol { index: 3, data: s3.clone() },
+            FecSymbol {
+                index: 2,
+                data: s2.clone(),
+            },
+            FecSymbol {
+                index: 3,
+                data: s3.clone(),
+            },
             repair[0].clone(), // Parity symbol R0
         ];
 
@@ -866,8 +893,14 @@ mod tests {
 
         // Case 1: Lose S0 and S2, receive S1, S3, R0, R1
         let received = vec![
-            FecSymbol { index: 1, data: s1.clone() },
-            FecSymbol { index: 3, data: s3.clone() },
+            FecSymbol {
+                index: 1,
+                data: s1.clone(),
+            },
+            FecSymbol {
+                index: 3,
+                data: s3.clone(),
+            },
             repair[0].clone(),
             repair[1].clone(),
         ];
@@ -880,8 +913,14 @@ mod tests {
 
         // Case 2: Lose S2 and S3, receive S0, S1, R0, R1
         let received2 = vec![
-            FecSymbol { index: 0, data: s0.clone() },
-            FecSymbol { index: 1, data: s1.clone() },
+            FecSymbol {
+                index: 0,
+                data: s0.clone(),
+            },
+            FecSymbol {
+                index: 1,
+                data: s1.clone(),
+            },
             repair[0].clone(),
             repair[1].clone(),
         ];
@@ -905,13 +944,19 @@ mod tests {
 
         // Receive only 3 symbols (4 required)
         let received = vec![
-            FecSymbol { index: 0, data: b"Data 000".to_vec() },
+            FecSymbol {
+                index: 0,
+                data: b"Data 000".to_vec(),
+            },
             repair[0].clone(),
             repair[1].clone(),
         ];
 
         let decoded = codec.decode(&received);
-        assert!(decoded.is_none(), "Decode must return None when fewer than K symbols are present");
+        assert!(
+            decoded.is_none(),
+            "Decode must return None when fewer than K symbols are present"
+        );
     }
 
     #[test]
@@ -945,7 +990,8 @@ mod tests {
 
     #[test]
     fn test_fec_block_encoding_and_reassembly() {
-        let payload = b"The quick brown fox jumps over the lazy dog. 1234567890! Fast erasure coding.";
+        let payload =
+            b"The quick brown fox jumps over the lazy dog. 1234567890! Fast erasure coding.";
         let (header, all_symbols) = FecBlockEncoder::encode_block(101, payload, 8, 2);
         assert_eq!(all_symbols.len(), 10); // 8 source + 2 parity
 
@@ -969,7 +1015,10 @@ mod tests {
     fn test_simulate_fec_recovery_satellite() {
         let test_data = vec![0xFEu8; 256 * 1024]; // 256 KiB
         let report = simulate_fec_recovery(&test_data, FecProfile::Satellite, 0.02, 42);
-        assert_eq!(report.unrecoverable_blocks, 0, "All blocks must be recovered under 2% satellite loss");
+        assert_eq!(
+            report.unrecoverable_blocks, 0,
+            "All blocks must be recovered under 2% satellite loss"
+        );
         assert_eq!(report.successful_recovery_pct, 100.0);
         assert!(report.symbols_recovered > 0, "Must recover erased symbols");
     }

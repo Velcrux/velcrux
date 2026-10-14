@@ -21,7 +21,11 @@ fn test_cli_schedule_inspect_human() {
         .output()
         .expect("execute velcrux schedule inspect");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("BANDWIDTH CALENDAR SCHEDULE INSPECTION"));
@@ -46,13 +50,19 @@ fn test_cli_schedule_inspect_json() {
         .output()
         .expect("execute velcrux --json schedule inspect");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
-    let json_val: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json schedule inspect");
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("valid JSON expected from --json schedule inspect");
 
     assert_eq!(json_val["event"], "schedule_inspect");
     assert_eq!(json_val["schedule"]["default_rate"], "500Mbps");
-    let rules = json_val["schedule"]["rules"].as_array().expect("rules array");
+    let rules = json_val["schedule"]["rules"]
+        .as_array()
+        .expect("rules array");
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0]["id"], "peak");
     assert_eq!(rules[0]["days"], "Mon-Fri");
@@ -82,7 +92,11 @@ fn test_cli_schedule_eval_human() {
         .output()
         .expect("execute velcrux schedule eval");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("BANDWIDTH SCHEDULE EVALUATION"));
@@ -153,7 +167,11 @@ fn test_cli_schedule_file_loading() {
         .output()
         .expect("inspect file schedule");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let j: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(j["schedule"]["rules"].as_array().unwrap().len(), 2);
     assert_eq!(j["schedule"]["default_rate"], "500Mbps");
@@ -170,7 +188,11 @@ fn test_cli_schedule_global_flag() {
         .output()
         .expect("inspect via global flag");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let j: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(j["schedule"]["default_rate"], "2500Mbps");
     assert_eq!(j["schedule"]["rules"][0]["rate"], "75Mbps");
@@ -192,7 +214,11 @@ fn test_cli_schedule_overnight_window() {
         .output()
         .expect("eval overnight");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let j: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(j["evaluation"]["active_rate"], "10Gbps");
 }

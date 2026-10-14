@@ -3,9 +3,7 @@
 use std::fs;
 use tempfile::tempdir;
 use velcrux_core::storage::chunk_store::{ChunkStore, LocalChunkStore};
-use velcrux_core::storage::scrub::{
-    ChunkIntegrityStatus, DataScrubber, ScrubMode, ScrubOptions,
-};
+use velcrux_core::storage::scrub::{ChunkIntegrityStatus, DataScrubber, ScrubMode, ScrubOptions};
 use velcrux_core::util::Hash;
 
 #[tokio::test]
@@ -198,12 +196,16 @@ async fn test_scrub_report_save_and_load() {
     store.put(&hash, data).await.unwrap();
 
     let options = ScrubOptions::default();
-    let report = DataScrubber::scrub_local_store(&store, &options).await.unwrap();
+    let report = DataScrubber::scrub_local_store(&store, &options)
+        .await
+        .unwrap();
 
     DataScrubber::save_report(&report, &report_file).unwrap();
     assert!(report_file.exists());
 
-    let loaded = DataScrubber::load_latest_report(&report_file).unwrap().expect("must exist");
+    let loaded = DataScrubber::load_latest_report(&report_file)
+        .unwrap()
+        .expect("must exist");
     assert_eq!(loaded.scanned_chunks, 1);
     assert_eq!(loaded.healthy_chunks, 1);
     assert_eq!(loaded.target_path, store.root().display().to_string());

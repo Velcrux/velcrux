@@ -52,7 +52,12 @@ fn test_multipath_weighted_bandwidth_proportional_distribution() {
     }
 
     // Proportional ratio should strongly favour the 10G path (~10:1 ratio)
-    assert!(count_10g > count_1g * 5, "10G path ({}) must handle significantly more chunks than 1G path ({})", count_10g, count_1g);
+    assert!(
+        count_10g > count_1g * 5,
+        "10G path ({}) must handle significantly more chunks than 1G path ({})",
+        count_10g,
+        count_1g
+    );
 }
 
 #[test]

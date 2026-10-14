@@ -11,8 +11,8 @@
 #![forbid(unsafe_code)]
 
 use velcrux_core::transport::fec::{
-    gf_add, gf_div, gf_inv, gf_mul, simulate_fec_recovery, AdaptiveFecController,
-    FecBlockDecoder, FecBlockEncoder, FecCodec, FecProfile, FecSymbol, GfMatrix,
+    gf_add, gf_div, gf_inv, gf_mul, simulate_fec_recovery, AdaptiveFecController, FecBlockDecoder,
+    FecBlockEncoder, FecCodec, FecProfile, FecSymbol, GfMatrix,
 };
 use velcrux_core::transport::impairment::DeterministicLossPrng;
 use velcrux_core::util::Hash;
@@ -74,7 +74,11 @@ fn test_cauchy_matrix_invertibility_and_mds_property() {
         }
 
         let inv = sys.invert();
-        assert!(inv.is_some(), "Cauchy systematic submatrix must be invertible for K={}", k);
+        assert!(
+            inv.is_some(),
+            "Cauchy systematic submatrix must be invertible for K={}",
+            k
+        );
     }
 }
 
@@ -118,7 +122,9 @@ fn test_fec_codec_recovers_arbitrary_erasure_patterns() {
             }
 
             assert_eq!(received.len(), k);
-            let recovered = codec.decode(&received).expect("decoding must succeed when K symbols are present");
+            let recovered = codec
+                .decode(&received)
+                .expect("decoding must succeed when K symbols are present");
             assert_eq!(recovered.len(), k);
             for i in 0..k {
                 assert_eq!(
@@ -239,9 +245,16 @@ fn test_high_loss_satellite_channel_block_recovery_and_blake3_integrity() {
         );
 
         let (reconstructed, report) = FecBlockDecoder::decode_block(&header, &received);
-        assert!(report.is_successful, "Block {} reconstruction failed", chunk_idx);
+        assert!(
+            report.is_successful,
+            "Block {} reconstruction failed",
+            chunk_idx
+        );
         let block_bytes = reconstructed.expect("reconstructed data");
-        assert_eq!(&block_bytes, chunk, "Reconstructed block must match original");
+        assert_eq!(
+            &block_bytes, chunk,
+            "Reconstructed block must match original"
+        );
 
         total_recovered_symbols += report.recovered_source_count;
         reconstructed_full.extend_from_slice(&block_bytes);
@@ -253,7 +266,10 @@ fn test_high_loss_satellite_channel_block_recovery_and_blake3_integrity() {
         original_hash, final_hash,
         "Cryptographic BLAKE3 hash must match original after channel loss recovery"
     );
-    assert!(total_recovered_symbols > 0, "Loss simulation should have erased and recovered symbols");
+    assert!(
+        total_recovered_symbols > 0,
+        "Loss simulation should have erased and recovered symbols"
+    );
 }
 
 #[test]

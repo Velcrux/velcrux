@@ -35,7 +35,11 @@ fn test_cli_watch_bounded_batches() {
         .output()
         .expect("execute velcrux watch");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("VELCRUX REAL-TIME CONTINUOUS FILE WATCHER & SYNC"));
@@ -70,7 +74,11 @@ fn test_cli_watch_json_output() {
         .output()
         .expect("execute velcrux --json watch");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify JSON lines or output
@@ -100,7 +108,11 @@ fn test_cli_sync_with_watch_flag() {
         .output()
         .expect("execute velcrux sync --watch");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("VELCRUX REAL-TIME CONTINUOUS FILE WATCHER & SYNC"));
     assert!(stdout.contains("CONTINUOUS WATCH SYNCHRONIZATION SUMMARY"));

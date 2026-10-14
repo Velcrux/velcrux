@@ -21,7 +21,11 @@ fn test_cli_snapshot_lifecycle_table() {
     let restore_dir = tmp.path().join("restored");
 
     fs::create_dir_all(&src_dir).unwrap();
-    fs::write(src_dir.join("file1.txt"), b"Hello from Snapshot CLI test file 1").unwrap();
+    fs::write(
+        src_dir.join("file1.txt"),
+        b"Hello from Snapshot CLI test file 1",
+    )
+    .unwrap();
     fs::write(src_dir.join("file2.bin"), vec![0x42; 4096]).unwrap();
 
     // 1. Create snapshot snap-v1
@@ -37,7 +41,11 @@ fn test_cli_snapshot_lifecycle_table() {
         .output()
         .expect("execute velcrux snapshot create");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("POINT-IN-TIME DIRECTORY SNAPSHOT CREATED"));
     assert!(stdout.contains("Snapshot Tag         : snap-v1"));
@@ -111,7 +119,10 @@ fn test_cli_snapshot_lifecycle_table() {
     assert!(stdout_restore.contains("POINT-IN-TIME SNAPSHOT RESTORED"));
     assert!(stdout_restore.contains("Restored Files       : 2"));
     assert!(stdout_restore.contains("100% BLAKE3 Verified"));
-    assert_eq!(fs::read(restore_dir.join("file1.txt")).unwrap(), b"Hello from Snapshot CLI test file 1");
+    assert_eq!(
+        fs::read(restore_dir.join("file1.txt")).unwrap(),
+        b"Hello from Snapshot CLI test file 1"
+    );
 
     // 6. Delete snapshot snap-v1
     let output_del = Command::new(velcrux_bin())
@@ -124,7 +135,8 @@ fn test_cli_snapshot_lifecycle_table() {
         .expect("execute velcrux snapshot delete");
 
     assert!(output_del.status.success());
-    assert!(String::from_utf8_lossy(&output_del.stdout).contains("Snapshot 'snap-v1' deleted successfully."));
+    assert!(String::from_utf8_lossy(&output_del.stdout)
+        .contains("Snapshot 'snap-v1' deleted successfully."));
 }
 
 #[test]

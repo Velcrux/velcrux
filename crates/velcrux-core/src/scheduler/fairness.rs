@@ -352,7 +352,13 @@ impl HierarchicalBandwidthAllocator {
 
     /// Calculate and consume tokens across all tiers at a specific Unix timestamp.
     /// Dynamically evaluates and applies active schedule rate if configured.
-    pub fn consume_at(&self, user: &str, transfer_id: &TransferId, bytes: usize, timestamp_secs: u64) -> Duration {
+    pub fn consume_at(
+        &self,
+        user: &str,
+        transfer_id: &TransferId,
+        bytes: usize,
+        timestamp_secs: u64,
+    ) -> Duration {
         // If a schedule is active, ensure global rate matches current schedule window
         if let Some(ref sched) = *self.schedule.lock().unwrap() {
             let active = sched.resolve_at(timestamp_secs);

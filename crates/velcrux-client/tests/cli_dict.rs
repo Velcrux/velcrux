@@ -25,7 +25,9 @@ fn test_cli_dict_lifecycle_table() {
     for i in 0..12 {
         let content = format!(
             r#"{{"event":"metric_record","node_id":"cluster-node-{}","value":{},"unit":"ms","status":"HEALTHY","trace":"tx_{:08x}"}}"#,
-            i % 4, i * 42, i * 1337
+            i % 4,
+            i * 42,
+            i * 1337
         );
         fs::write(sample_dir.join(format!("sample_{}.json", i)), content).unwrap();
     }
@@ -46,7 +48,11 @@ fn test_cli_dict_lifecycle_table() {
         .output()
         .expect("train dictionary");
 
-    assert!(train_out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&train_out.stderr));
+    assert!(
+        train_out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&train_out.stderr)
+    );
     let train_str = String::from_utf8_lossy(&train_out.stdout);
     assert!(train_str.contains("ZSTANDARD PRE-TRAINED DICTIONARY GENERATED"));
     assert!(train_str.contains("Name                 : metrics-dict-v1"));
@@ -141,7 +147,11 @@ fn test_cli_dict_json_mode() {
     fs::create_dir_all(&sample_dir).unwrap();
 
     for i in 0..10 {
-        let content = format!(r#"{{"sensor_id":"sen_{}","reading":{}.5,"timestamp":1791800000}}"#, i, i * 11);
+        let content = format!(
+            r#"{{"sensor_id":"sen_{}","reading":{}.5,"timestamp":1791800000}}"#,
+            i,
+            i * 11
+        );
         fs::write(sample_dir.join(format!("s_{}.json", i)), content).unwrap();
     }
 
@@ -159,7 +169,8 @@ fn test_cli_dict_json_mode() {
         .expect("train json");
 
     assert!(train_out.status.success());
-    let train_val: serde_json::Value = serde_json::from_slice(&train_out.stdout).expect("parse train json");
+    let train_val: serde_json::Value =
+        serde_json::from_slice(&train_out.stdout).expect("parse train json");
     assert_eq!(train_val["event"], "dict_trained");
     assert_eq!(train_val["dictionary"]["name"], "sensor-telemetry");
     let dict_id = train_val["dictionary"]["dict_id"].as_u64().unwrap() as u32;
@@ -175,7 +186,8 @@ fn test_cli_dict_json_mode() {
         .expect("list json");
 
     assert!(list_out.status.success());
-    let list_val: serde_json::Value = serde_json::from_slice(&list_out.stdout).expect("parse list json");
+    let list_val: serde_json::Value =
+        serde_json::from_slice(&list_out.stdout).expect("parse list json");
     assert_eq!(list_val["event"], "dict_list");
     assert_eq!(list_val["count"], 1);
 
@@ -192,7 +204,8 @@ fn test_cli_dict_json_mode() {
         .expect("test json");
 
     assert!(test_out.status.success());
-    let test_val: serde_json::Value = serde_json::from_slice(&test_out.stdout).expect("parse test json");
+    let test_val: serde_json::Value =
+        serde_json::from_slice(&test_out.stdout).expect("parse test json");
     assert_eq!(test_val["event"], "dict_test");
     assert_eq!(test_val["dict_id"], dict_id);
     assert!(test_val["evaluation"]["raw_bytes"].as_u64().unwrap() > 0);
@@ -209,7 +222,8 @@ fn test_cli_dict_json_mode() {
         .expect("delete json");
 
     assert!(del_out.status.success());
-    let del_val: serde_json::Value = serde_json::from_slice(&del_out.stdout).expect("parse delete json");
+    let del_val: serde_json::Value =
+        serde_json::from_slice(&del_out.stdout).expect("parse delete json");
     assert_eq!(del_val["event"], "dict_deleted");
     assert_eq!(del_val["deleted"], true);
 }

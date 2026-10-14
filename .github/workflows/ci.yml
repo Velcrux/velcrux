@@ -18,7 +18,7 @@ jobs:
   # --------------------------------------------------------------------------
   lint:
     name: Lint & Formatting
-    runs-on: ubuntu-latestcontinue
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository

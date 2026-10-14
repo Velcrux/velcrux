@@ -383,7 +383,8 @@ impl MultipathCoordinator {
 
             // Exponential Moving Average (alpha = 0.125 per RFC 6298)
             let alpha = 0.125;
-            path.metrics.smoothed_rtt_ms = (1.0 - alpha) * path.metrics.smoothed_rtt_ms + alpha * rtt_ms;
+            path.metrics.smoothed_rtt_ms =
+                (1.0 - alpha) * path.metrics.smoothed_rtt_ms + alpha * rtt_ms;
             path.metrics.loss_rate = loss_rate;
             path.metrics.cwnd_bytes = cwnd_bytes;
             path.metrics.bytes_in_flight = in_flight;
@@ -509,7 +510,10 @@ impl MultipathCoordinator {
 
                 for p in &routable {
                     // Check if window is not choked
-                    let headroom = p.metrics.cwnd_bytes.saturating_sub(p.metrics.bytes_in_flight);
+                    let headroom = p
+                        .metrics
+                        .cwnd_bytes
+                        .saturating_sub(p.metrics.bytes_in_flight);
                     if headroom >= chunk_size as u64 && p.metrics.smoothed_rtt_ms < best_rtt {
                         best = p;
                         best_rtt = p.metrics.smoothed_rtt_ms;
@@ -536,7 +540,10 @@ impl MultipathCoordinator {
 
             MultipathSchedulerPolicy::PrimaryBackup => {
                 // Prefer primary if routable and not Dead
-                if let Some(prim) = routable.iter().find(|p| p.is_primary && p.state == PathState::Active) {
+                if let Some(prim) = routable
+                    .iter()
+                    .find(|p| p.is_primary && p.state == PathState::Active)
+                {
                     vec![prim.id]
                 } else if let Some(prim) = routable.iter().find(|p| p.is_primary) {
                     vec![prim.id]
@@ -620,8 +627,20 @@ mod tests {
         cfg.policy = MultipathSchedulerPolicy::RoundRobin;
         let coord = MultipathCoordinator::new(cfg);
 
-        let p1 = coord.add_subflow_path("eth0".into(), dummy_socket(1001), dummy_socket(7443), 1, true);
-        let p2 = coord.add_subflow_path("wlan0".into(), dummy_socket(1002), dummy_socket(7443), 1, false);
+        let p1 = coord.add_subflow_path(
+            "eth0".into(),
+            dummy_socket(1001),
+            dummy_socket(7443),
+            1,
+            true,
+        );
+        let p2 = coord.add_subflow_path(
+            "wlan0".into(),
+            dummy_socket(1002),
+            dummy_socket(7443),
+            1,
+            false,
+        );
 
         assert_eq!(coord.path_count(), 2);
         assert_eq!(coord.routable_path_count(), 2);
@@ -641,8 +660,20 @@ mod tests {
         cfg.policy = MultipathSchedulerPolicy::PrimaryBackup;
         let coord = MultipathCoordinator::new(cfg);
 
-        let p_prim = coord.add_subflow_path("eth0".into(), dummy_socket(1001), dummy_socket(7443), 1, true);
-        let p_bkup = coord.add_subflow_path("wlan0".into(), dummy_socket(1002), dummy_socket(7443), 1, false);
+        let p_prim = coord.add_subflow_path(
+            "eth0".into(),
+            dummy_socket(1001),
+            dummy_socket(7443),
+            1,
+            true,
+        );
+        let p_bkup = coord.add_subflow_path(
+            "wlan0".into(),
+            dummy_socket(1002),
+            dummy_socket(7443),
+            1,
+            false,
+        );
 
         // When primary is Active, select primary
         assert_eq!(coord.select_path_for_chunk(1024, false), vec![p_prim]);
@@ -666,8 +697,20 @@ mod tests {
         cfg.policy = MultipathSchedulerPolicy::LowestLatencyFirst;
         let coord = MultipathCoordinator::new(cfg);
 
-        let p_fast = coord.add_subflow_path("eth0".into(), dummy_socket(1001), dummy_socket(7443), 1, true);
-        let p_slow = coord.add_subflow_path("cell0".into(), dummy_socket(1002), dummy_socket(7443), 1, false);
+        let p_fast = coord.add_subflow_path(
+            "eth0".into(),
+            dummy_socket(1001),
+            dummy_socket(7443),
+            1,
+            true,
+        );
+        let p_slow = coord.add_subflow_path(
+            "cell0".into(),
+            dummy_socket(1002),
+            dummy_socket(7443),
+            1,
+            false,
+        );
 
         // Fast path: 5ms RTT, 1MB cwnd
         coord.record_path_sample(p_fast, Duration::from_millis(5), 0.0, 1_000_000, 0);
@@ -688,8 +731,20 @@ mod tests {
         cfg.policy = MultipathSchedulerPolicy::Redundant;
         let coord = MultipathCoordinator::new(cfg);
 
-        let p1 = coord.add_subflow_path("eth0".into(), dummy_socket(1001), dummy_socket(7443), 1, true);
-        let p2 = coord.add_subflow_path("wlan0".into(), dummy_socket(1002), dummy_socket(7443), 1, false);
+        let p1 = coord.add_subflow_path(
+            "eth0".into(),
+            dummy_socket(1001),
+            dummy_socket(7443),
+            1,
+            true,
+        );
+        let p2 = coord.add_subflow_path(
+            "wlan0".into(),
+            dummy_socket(1002),
+            dummy_socket(7443),
+            1,
+            false,
+        );
 
         let paths = coord.select_path_for_chunk(1024, false);
         assert_eq!(paths, vec![p1, p2]);
@@ -700,8 +755,20 @@ mod tests {
         let cfg = MultipathConfig::default();
         let coord = MultipathCoordinator::new(cfg);
 
-        let p1 = coord.add_subflow_path("eth0".into(), dummy_socket(1001), dummy_socket(7443), 1, true);
-        let p2 = coord.add_subflow_path("eth1".into(), dummy_socket(1002), dummy_socket(7443), 1, false);
+        let p1 = coord.add_subflow_path(
+            "eth0".into(),
+            dummy_socket(1001),
+            dummy_socket(7443),
+            1,
+            true,
+        );
+        let p2 = coord.add_subflow_path(
+            "eth1".into(),
+            dummy_socket(1002),
+            dummy_socket(7443),
+            1,
+            false,
+        );
 
         coord.record_bytes_sent(p1, 100_000);
         coord.record_bytes_acked(p1, 95_000);

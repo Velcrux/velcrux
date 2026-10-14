@@ -20,7 +20,11 @@ fn test_cli_multipath_status_table() {
         .output()
         .expect("execute velcrux multipath");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("VELCRUX MULTI-PATH TRANSPORT AGGREGATION STATUS"));
@@ -41,7 +45,11 @@ fn test_cli_multipath_json_output() {
         .output()
         .expect("execute velcrux --json multipath");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json multipath");
 

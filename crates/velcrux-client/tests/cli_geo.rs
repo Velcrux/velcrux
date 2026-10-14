@@ -19,7 +19,11 @@ fn test_cli_geo_status_table() {
         .output()
         .expect("execute velcrux geo status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("VELCRUX CROSS-CLUSTER WAN GEO-REPLICATION STATUS"));
@@ -40,7 +44,11 @@ fn test_cli_geo_status_json() {
         .output()
         .expect("execute velcrux --json geo status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json geo status");
 
@@ -69,7 +77,11 @@ fn test_cli_geo_status_custom_regions_and_policy() {
         .output()
         .expect("execute velcrux geo status custom");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected");
 
@@ -90,7 +102,11 @@ fn test_cli_geo_sync_table() {
         .output()
         .expect("execute velcrux geo sync");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("CROSS-CLUSTER WAN GEO-REPLICATION SYNCHRONIZED"));
     assert!(stdout.contains("Source Region        : us-east-1"));
@@ -111,7 +127,11 @@ fn test_cli_geo_sync_json() {
         .output()
         .expect("execute velcrux --json geo sync");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json geo sync");
 

@@ -13,11 +13,8 @@ fn test_webhook_bus_multi_subscriber_fanout() {
     let bus = WebhookEventBus::with_sink("cluster-node-alpha", mock_sink.clone());
 
     // 1. Subscription A: Receives all events
-    let sub_all = WebhookSubscription::new(
-        "sub-all",
-        "https://sink.all.corp/events",
-        "secret-all-123",
-    );
+    let sub_all =
+        WebhookSubscription::new("sub-all", "https://sink.all.corp/events", "secret-all-123");
     bus.register_subscription(sub_all);
 
     // 2. Subscription B: Only receives TransferCompleted
@@ -47,8 +44,14 @@ fn test_webhook_bus_multi_subscriber_fanout() {
 
     // Sub A and Sub B received it; Sub C did not
     assert_eq!(mock_sink.delivery_count("https://sink.all.corp/events"), 1);
-    assert_eq!(mock_sink.delivery_count("https://sink.transfers.corp/events"), 1);
-    assert_eq!(mock_sink.delivery_count("https://sink.audit.corp/events"), 0);
+    assert_eq!(
+        mock_sink.delivery_count("https://sink.transfers.corp/events"),
+        1
+    );
+    assert_eq!(
+        mock_sink.delivery_count("https://sink.audit.corp/events"),
+        0
+    );
 
     // Publish AuditAction
     let p2 = bus.publish(
@@ -59,8 +62,14 @@ fn test_webhook_bus_multi_subscriber_fanout() {
 
     // Sub A and Sub C received it; Sub B did not
     assert_eq!(mock_sink.delivery_count("https://sink.all.corp/events"), 2);
-    assert_eq!(mock_sink.delivery_count("https://sink.transfers.corp/events"), 1);
-    assert_eq!(mock_sink.delivery_count("https://sink.audit.corp/events"), 1);
+    assert_eq!(
+        mock_sink.delivery_count("https://sink.transfers.corp/events"),
+        1
+    );
+    assert_eq!(
+        mock_sink.delivery_count("https://sink.audit.corp/events"),
+        1
+    );
 
     // Verify aggregate bus metrics
     let metrics = bus.metrics();
@@ -135,8 +144,8 @@ fn test_webhook_retry_backoff_and_dlq_lifecycle() {
 
     let bus = WebhookEventBus::with_sink("node-beta", mock_sink.clone());
 
-    let sub = WebhookSubscription::new("sub-failing", failing_url, "secret-xyz")
-        .with_max_retries(2);
+    let sub =
+        WebhookSubscription::new("sub-failing", failing_url, "secret-xyz").with_max_retries(2);
     bus.register_subscription(sub);
 
     // Publish event

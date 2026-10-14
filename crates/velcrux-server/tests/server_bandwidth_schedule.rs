@@ -41,14 +41,24 @@ limit = "unlimited"
 "#;
 
     let cfg: ServerConfig = toml::from_str(toml_data).expect("parse config TOML");
-    let schedule = cfg.bandwidth.build_schedule().expect("build schedule").expect("schedule present");
+    let schedule = cfg
+        .bandwidth
+        .build_schedule()
+        .expect("build schedule")
+        .expect("schedule present");
 
-    assert_eq!(schedule.default_rate, BandwidthRate::from_bytes_per_sec(125_000_000)); // 1Gbps = 125 MB/s
+    assert_eq!(
+        schedule.default_rate,
+        BandwidthRate::from_bytes_per_sec(125_000_000)
+    ); // 1Gbps = 125 MB/s
     assert_eq!(schedule.utc_offset_minutes, -300);
     assert_eq!(schedule.rules.len(), 2);
 
     assert_eq!(schedule.rules[0].id, "biz-day");
-    assert_eq!(schedule.rules[0].rate, BandwidthRate::from_bytes_per_sec(6_250_000)); // 50Mbps
+    assert_eq!(
+        schedule.rules[0].rate,
+        BandwidthRate::from_bytes_per_sec(6_250_000)
+    ); // 50Mbps
     assert!(schedule.rules[0].time.is_some());
 
     assert_eq!(schedule.rules[1].id, "weekend");
@@ -76,10 +86,17 @@ schedule = "Mon-Fri 09:00-17:00: 100Mbps; Sat-Sun: unlimited; default: 10Gbps"
 "#;
 
     let cfg: ServerConfig = toml::from_str(toml_data).expect("parse config TOML");
-    let schedule = cfg.bandwidth.build_schedule().expect("build schedule").expect("schedule present");
+    let schedule = cfg
+        .bandwidth
+        .build_schedule()
+        .expect("build schedule")
+        .expect("schedule present");
 
     assert_eq!(schedule.rules.len(), 2);
-    assert_eq!(schedule.default_rate, BandwidthRate::from_bytes_per_sec(1_250_000_000));
+    assert_eq!(
+        schedule.default_rate,
+        BandwidthRate::from_bytes_per_sec(1_250_000_000)
+    );
 }
 
 #[test]
@@ -98,14 +115,24 @@ root = "/tmp"
 staging = "/tmp"
 "#;
 
-    std::env::set_var("VELCRUX_BANDWIDTH_SCHEDULE", "Mon-Fri: 200Mbps; default: 5Gbps");
+    std::env::set_var(
+        "VELCRUX_BANDWIDTH_SCHEDULE",
+        "Mon-Fri: 200Mbps; default: 5Gbps",
+    );
     let mut cfg: ServerConfig = toml::from_str(toml_data).expect("parse config TOML");
     cfg.apply_env_overrides();
     std::env::remove_var("VELCRUX_BANDWIDTH_SCHEDULE");
 
-    let schedule = cfg.bandwidth.build_schedule().expect("build schedule").expect("schedule present");
+    let schedule = cfg
+        .bandwidth
+        .build_schedule()
+        .expect("build schedule")
+        .expect("schedule present");
     assert_eq!(schedule.rules.len(), 1);
-    assert_eq!(schedule.default_rate, BandwidthRate::from_bytes_per_sec(625_000_000));
+    assert_eq!(
+        schedule.default_rate,
+        BandwidthRate::from_bytes_per_sec(625_000_000)
+    );
 }
 
 #[tokio::test]
@@ -120,16 +147,9 @@ async fn test_limits_manager_with_bandwidth_schedule() {
         description: "all day test rule".into(),
     });
 
-    let manager = LimitsManager::new(
-        Some("1Gbps"),
-        Some(10),
-        None,
-        None,
-        &[],
-        Arc::clone(&stats),
-    )
-    .expect("create limits manager")
-    .with_schedule(Some(Arc::new(sched)));
+    let manager = LimitsManager::new(Some("1Gbps"), Some(10), None, None, &[], Arc::clone(&stats))
+        .expect("create limits manager")
+        .with_schedule(Some(Arc::new(sched)));
 
     assert!(manager.schedule().is_some());
     // Schedule rule matches all day, so effective rate should be 10 MB/s = 10,000,000 bytes/sec

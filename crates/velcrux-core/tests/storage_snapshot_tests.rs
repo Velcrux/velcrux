@@ -5,9 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 use tempfile::tempdir;
-use velcrux_core::storage::{
-    gc_chunk_store_with_snapshots, LocalChunkStore, SnapshotManager,
-};
+use velcrux_core::storage::{gc_chunk_store_with_snapshots, LocalChunkStore, SnapshotManager};
 use velcrux_core::util::Hash;
 
 #[tokio::test]
@@ -50,7 +48,9 @@ async fn test_snapshot_create_list_and_get() {
     assert!(snap.files.contains_key("empty.log"));
 
     // 3. Duplicate snapshot creation rejected
-    assert!(manager.create_snapshot("release-v1.0", &src_dir, None).is_err());
+    assert!(manager
+        .create_snapshot("release-v1.0", &src_dir, None)
+        .is_err());
 
     // 4. List snapshots
     let list = manager.list_snapshots().expect("list snapshots");
@@ -87,9 +87,17 @@ async fn test_snapshot_diff_detection() {
     // - delete temp.log
     // - add new_feature.rs
     // - keep base.bin untouched
-    fs::write(src_dir.join("doc.txt"), b"Version 2 updated document content with more text").unwrap();
+    fs::write(
+        src_dir.join("doc.txt"),
+        b"Version 2 updated document content with more text",
+    )
+    .unwrap();
     fs::remove_file(src_dir.join("temp.log")).unwrap();
-    fs::write(src_dir.join("new_feature.rs"), b"fn main() { println!(\"new\"); }").unwrap();
+    fs::write(
+        src_dir.join("new_feature.rs"),
+        b"fn main() { println!(\"new\"); }",
+    )
+    .unwrap();
 
     manager
         .create_snapshot("snap-updated", &src_dir, None)
@@ -124,7 +132,11 @@ async fn test_snapshot_cas_chunk_store_and_restore() {
     // Generate multi-chunk file (> 128 KiB to produce multiple chunks)
     let large_payload: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
     fs::write(src_dir.join("large_dataset.bin"), &large_payload).unwrap();
-    fs::write(src_dir.join("logs/server.log"), b"System startup complete 200 OK").unwrap();
+    fs::write(
+        src_dir.join("logs/server.log"),
+        b"System startup complete 200 OK",
+    )
+    .unwrap();
 
     // Initialize LocalChunkStore
     let chunk_store = Arc::new(LocalChunkStore::new(&cas_dir).await.unwrap());

@@ -195,7 +195,10 @@ impl FromStr for DayMatcher {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let trimmed = s.trim();
-        if trimmed == "*" || trimmed.eq_ignore_ascii_case("all") || trimmed.eq_ignore_ascii_case("everyday") {
+        if trimmed == "*"
+            || trimmed.eq_ignore_ascii_case("all")
+            || trimmed.eq_ignore_ascii_case("everyday")
+        {
             return Ok(Self::All);
         }
         if trimmed.eq_ignore_ascii_case("weekdays") || trimmed.eq_ignore_ascii_case("mon-fri") {
@@ -275,7 +278,10 @@ impl TimeWindow {
         if sh >= 24 || eh >= 24 || sm >= 60 || em >= 60 {
             return Err(ParseScheduleError("invalid HH:MM specification".into()));
         }
-        Self::new((sh as u16) * 60 + (sm as u16), (eh as u16) * 60 + (em as u16))
+        Self::new(
+            (sh as u16) * 60 + (sm as u16),
+            (eh as u16) * 60 + (em as u16),
+        )
     }
 
     /// Whether this window spans past midnight (start > end).
@@ -343,7 +349,9 @@ impl FromStr for TimeWindow {
                 .parse::<u8>()
                 .map_err(|_| ParseScheduleError(format!("invalid minute '{m_str}'")))?;
             if h >= 24 || m >= 60 {
-                return Err(ParseScheduleError(format!("time {h:02}:{m:02} out of range")));
+                return Err(ParseScheduleError(format!(
+                    "time {h:02}:{m:02} out of range"
+                )));
             }
             Ok((h, m))
         };
@@ -415,12 +423,13 @@ impl FromStr for BandwidthScheduleRule {
         };
 
         let (pattern_part, rate_part) = content.rsplit_once(':').ok_or_else(|| {
-            ParseScheduleError(format!("missing ':' separating pattern and rate in '{content}'"))
+            ParseScheduleError(format!(
+                "missing ':' separating pattern and rate in '{content}'"
+            ))
         })?;
 
-        let rate = BandwidthRate::from_str(rate_part.trim()).map_err(|e| {
-            ParseScheduleError(format!("invalid rate in schedule rule: {}", e.0))
-        })?;
+        let rate = BandwidthRate::from_str(rate_part.trim())
+            .map_err(|e| ParseScheduleError(format!("invalid rate in schedule rule: {}", e.0)))?;
 
         let mut tokens = pattern_part.split_whitespace();
         let first = tokens
@@ -458,7 +467,10 @@ impl FromStr for BandwidthScheduleRule {
         };
 
         if id.is_empty() {
-            id = format!("{days}{}", time.map(|t| format!("_{t}")).unwrap_or_default());
+            id = format!(
+                "{days}{}",
+                time.map(|t| format!("_{t}")).unwrap_or_default()
+            );
         }
 
         Ok(Self {
@@ -648,10 +660,20 @@ impl fmt::Display for BandwidthSchedule {
             write!(f, "default: {}", self.default_rate)?;
         } else {
             let rule_strs: Vec<String> = self.rules.iter().map(|r| r.to_string()).collect();
-            write!(f, "{}; default: {}", rule_strs.join("; "), self.default_rate)?;
+            write!(
+                f,
+                "{}; default: {}",
+                rule_strs.join("; "),
+                self.default_rate
+            )?;
         }
         if self.utc_offset_minutes != 0 {
-            write!(f, " [UTC{:+03}:{:02}]", self.utc_offset_minutes / 60, (self.utc_offset_minutes % 60).abs())?;
+            write!(
+                f,
+                " [UTC{:+03}:{:02}]",
+                self.utc_offset_minutes / 60,
+                (self.utc_offset_minutes % 60).abs()
+            )?;
         }
         Ok(())
     }
@@ -762,7 +784,10 @@ impl ScheduledBandwidthLimiter {
 
 /// Calculate local (DayOfWeek, Hour, Minute, Second) from Unix timestamp with UTC offset.
 /// Pure integer arithmetic without external crates.
-pub fn civil_time_from_timestamp(timestamp_secs: u64, utc_offset_minutes: i32) -> (DayOfWeek, u8, u8, u8) {
+pub fn civil_time_from_timestamp(
+    timestamp_secs: u64,
+    utc_offset_minutes: i32,
+) -> (DayOfWeek, u8, u8, u8) {
     let offset_secs = (utc_offset_minutes as i64) * 60;
     let local_secs = (timestamp_secs as i64) + offset_secs;
 
@@ -844,8 +869,8 @@ mod tests {
         assert_eq!(win.end_minute, 1020);
         assert!(!win.spans_midnight());
         assert!(!win.contains(539)); // 08:59
-        assert!(win.contains(540));  // 09:00
-        assert!(win.contains(720));  // 12:00
+        assert!(win.contains(540)); // 09:00
+        assert!(win.contains(720)); // 12:00
         assert!(win.contains(1019)); // 16:59
         assert!(!win.contains(1020)); // 17:00
 
@@ -855,16 +880,18 @@ mod tests {
         assert_eq!(overnight.end_minute, 360);
         assert!(overnight.spans_midnight());
         assert!(!overnight.contains(1319)); // 21:59
-        assert!(overnight.contains(1320));  // 22:00
-        assert!(overnight.contains(1400));  // 23:20
-        assert!(overnight.contains(0));     // 00:00
-        assert!(overnight.contains(359));   // 05:59
-        assert!(!overnight.contains(360));  // 06:00
+        assert!(overnight.contains(1320)); // 22:00
+        assert!(overnight.contains(1400)); // 23:20
+        assert!(overnight.contains(0)); // 00:00
+        assert!(overnight.contains(359)); // 05:59
+        assert!(!overnight.contains(360)); // 06:00
     }
 
     #[test]
     fn test_schedule_rule_parsing_and_evaluation() {
-        let rule = BandwidthScheduleRule::from_str("Mon-Fri 09:00-17:00: 50Mbps # Business throttle").unwrap();
+        let rule =
+            BandwidthScheduleRule::from_str("Mon-Fri 09:00-17:00: 50Mbps # Business throttle")
+                .unwrap();
         assert_eq!(rule.days, DayMatcher::Weekdays);
         assert_eq!(rule.rate, BandwidthRate::from_bps(50_000_000));
         assert_eq!(rule.description, "Business throttle");
@@ -876,11 +903,15 @@ mod tests {
 
     #[test]
     fn test_bandwidth_schedule_multi_rule_resolution() {
-        let schedule_str = "Mon-Fri 09:00-17:00: 50Mbps; Sat-Sun: unlimited; 22:00-06:00: 10Gbps; default: 1Gbps";
+        let schedule_str =
+            "Mon-Fri 09:00-17:00: 50Mbps; Sat-Sun: unlimited; 22:00-06:00: 10Gbps; default: 1Gbps";
         let schedule = BandwidthSchedule::from_str(schedule_str).unwrap();
 
         // Check fallback default
-        assert_eq!(schedule.default_rate, BandwidthRate::from_bps(1_000_000_000));
+        assert_eq!(
+            schedule.default_rate,
+            BandwidthRate::from_bps(1_000_000_000)
+        );
         assert_eq!(schedule.rules.len(), 3);
 
         // Wednesday 10:00 (minute 600) -> should match 50Mbps business rule
@@ -896,12 +927,18 @@ mod tests {
 
         // Wednesday 19:00 (minute 1140) -> falls outside business window & before 22:00 -> default 1Gbps
         let status_evening = schedule.resolve_at(1791972000 + 9 * 3600);
-        assert_eq!(status_evening.active_rate, BandwidthRate::from_bps(1_000_000_000));
+        assert_eq!(
+            status_evening.active_rate,
+            BandwidthRate::from_bps(1_000_000_000)
+        );
         assert!(status_evening.is_default);
 
         // Wednesday 23:00 (minute 1380) -> matches overnight 10Gbps
         let status_night = schedule.resolve_at(1791972000 + 13 * 3600);
-        assert_eq!(status_night.active_rate, BandwidthRate::from_bps(10_000_000_000));
+        assert_eq!(
+            status_night.active_rate,
+            BandwidthRate::from_bps(10_000_000_000)
+        );
         assert!(!status_night.is_default);
 
         // Saturday 12:00 -> matches weekend unlimited

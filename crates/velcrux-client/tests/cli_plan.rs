@@ -115,7 +115,10 @@ fn test_cli_sync_delete_guardrails_abort_and_force() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Deletion guardrail triggered") || stderr.contains("exceeds safety threshold"));
+    assert!(
+        stderr.contains("Deletion guardrail triggered")
+            || stderr.contains("exceeds safety threshold")
+    );
 
     // Verify destination files were NOT deleted
     assert!(dst.join("del1.txt").exists());

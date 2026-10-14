@@ -30,7 +30,11 @@ fn test_cli_s3_put_stat_ls_get_delete() {
         .output()
         .expect("execute s3 put");
 
-    assert!(put_out.status.success(), "s3 put failed: {:?}", String::from_utf8_lossy(&put_out.stderr));
+    assert!(
+        put_out.status.success(),
+        "s3 put failed: {:?}",
+        String::from_utf8_lossy(&put_out.stderr)
+    );
     let put_str = String::from_utf8_lossy(&put_out.stdout);
     assert!(put_str.contains("Successfully uploaded"));
 
@@ -82,7 +86,10 @@ fn test_cli_s3_put_stat_ls_get_delete() {
         .expect("execute s3 get");
 
     assert!(get_out.status.success());
-    assert_eq!(fs::read(&dl_file).unwrap(), b"Velcrux S3 Object Storage Gateway");
+    assert_eq!(
+        fs::read(&dl_file).unwrap(),
+        b"Velcrux S3 Object Storage Gateway"
+    );
 
     // 6. Delete object
     let del_out = Command::new(velcrux_bin())
@@ -116,7 +123,11 @@ fn test_cli_s3_sync_bidirectional() {
         .output()
         .expect("execute s3 sync upload");
 
-    assert!(sync_up.status.success(), "stderr: {:?}", String::from_utf8_lossy(&sync_up.stderr));
+    assert!(
+        sync_up.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&sync_up.stderr)
+    );
     let sync_up_str = String::from_utf8_lossy(&sync_up.stdout);
     assert!(sync_up_str.contains("S3 Upload Sync Complete"));
 
@@ -128,7 +139,14 @@ fn test_cli_s3_sync_bidirectional() {
         .output()
         .expect("execute sync download");
 
-    assert!(sync_down.status.success(), "stderr: {:?}", String::from_utf8_lossy(&sync_down.stderr));
+    assert!(
+        sync_down.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&sync_down.stderr)
+    );
     assert_eq!(fs::read(dst_dir.join("file1.bin")).unwrap(), b"file1-data");
-    assert_eq!(fs::read(dst_dir.join("sub/file2.bin")).unwrap(), b"file2-nested-data");
+    assert_eq!(
+        fs::read(dst_dir.join("sub/file2.bin")).unwrap(),
+        b"file2-nested-data"
+    );
 }

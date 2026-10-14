@@ -146,8 +146,7 @@ async fn start_test_server(
     );
 
     let authenticator: Arc<dyn Authenticator> = Arc::new(MtlsAuthenticator::new());
-    let authorizer: Arc<dyn Authorizer> =
-        Arc::new(FileAuthorizer::load(&grants_path).unwrap());
+    let authorizer: Arc<dyn Authorizer> = Arc::new(FileAuthorizer::load(&grants_path).unwrap());
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let stats = Arc::new(ServerStats::default());
@@ -275,7 +274,10 @@ permissions = ["upload", "download", "list", "delete", "sync", "resume", "admin"
 
     // Verify committed file on server storage
     let on_disk_server = storage_root.join("streams/archive.tar");
-    assert!(on_disk_server.exists(), "staged/committed file must exist on server");
+    assert!(
+        on_disk_server.exists(),
+        "staged/committed file must exist on server"
+    );
     let server_content = std::fs::read(&on_disk_server).expect("read server file");
     assert_eq!(server_content.len(), test_bytes.len());
     assert_eq!(Hash::of(&server_content), expected_hash);

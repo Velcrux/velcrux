@@ -180,7 +180,11 @@ struct Cli {
     interfaces: Option<String>,
 
     /// Designated primary interface name for multi-path failover scheduling (Option AX).
-    #[arg(long = "primary-interface", env = "VELCRUX_PRIMARY_INTERFACE", global = true)]
+    #[arg(
+        long = "primary-interface",
+        env = "VELCRUX_PRIMARY_INTERFACE",
+        global = true
+    )]
     primary_interface: Option<String>,
 
     /// Duplicate critical metadata frames across all active bonded subflow paths (Option AX).
@@ -1346,9 +1350,12 @@ fn get_rate_limiter(cli: &Cli) -> anyhow::Result<Option<velcrux_core::RateLimite
         } else {
             s.clone()
         };
-        let parsed: velcrux_core::BandwidthSchedule = content
-            .parse()
-            .map_err(|e: velcrux_core::ParseScheduleError| anyhow::anyhow!("invalid --bandwidth-schedule: {e}"))?;
+        let parsed: velcrux_core::BandwidthSchedule =
+            content
+                .parse()
+                .map_err(|e: velcrux_core::ParseScheduleError| {
+                    anyhow::anyhow!("invalid --bandwidth-schedule: {e}")
+                })?;
         let default_rate = parsed.default_rate.bytes_per_sec();
         let limiter = velcrux_core::RateLimiter::new(default_rate).with_schedule(Arc::new(parsed));
         return Ok(Some(limiter));
@@ -4283,12 +4290,22 @@ async fn run_multipath_status(cli: &Cli, target: Option<&str>) -> anyhow::Result
     };
 
     let policy = velcrux_core::MultipathSchedulerPolicy::parse(&cli.multipath_scheduler)
-        .ok_or_else(|| anyhow::anyhow!("unknown multipath scheduler policy: {}", cli.multipath_scheduler))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown multipath scheduler policy: {}",
+                cli.multipath_scheduler
+            )
+        })?;
 
     let iface_list: Vec<String> = cli
         .interfaces
         .as_ref()
-        .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+        .map(|s| {
+            s.split(',')
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
 
     let cfg = velcrux_core::MultipathConfig {
@@ -4315,14 +4332,24 @@ async fn run_multipath_status(cli: &Cli, target: Option<&str>) -> anyhow::Result
         println!("Active Paths         : {}", report.active_paths);
         println!("Degraded Paths       : {}", report.degraded_paths);
         println!("Dead Paths           : {}", report.dead_paths);
-        println!("Aggregate Bandwidth  : {:.2} Mbps", report.aggregate_bandwidth_mbps);
+        println!(
+            "Aggregate Bandwidth  : {:.2} Mbps",
+            report.aggregate_bandwidth_mbps
+        );
         println!("Reordering Skew      : {:.2} ms", report.reordering_skew_ms);
         println!("----------------------------------------------------------------------------------------");
-        println!("{:<8} {:<12} {:<22} {:<10} {:>10} {:>10}", "PATH ID", "INTERFACE", "LOCAL ADDR", "STATE", "RTT (ms)", "BW (Mbps)");
-        println!("{:-<8} {:-<12} {:-<22} {:-<10} {:-<10} {:-<10}", "", "", "", "", "", "");
+        println!(
+            "{:<8} {:<12} {:<22} {:<10} {:>10} {:>10}",
+            "PATH ID", "INTERFACE", "LOCAL ADDR", "STATE", "RTT (ms)", "BW (Mbps)"
+        );
+        println!(
+            "{:-<8} {:-<12} {:-<22} {:-<10} {:-<10} {:-<10}",
+            "", "", "", "", "", ""
+        );
         for p in &report.paths {
             let bw_mbps = (p.metrics.estimated_bw_bps as f64) / 1_000_000.0;
-            println!("{:<8} {:<12} {:<22} {:<10?} {:>10.2} {:>10.2}",
+            println!(
+                "{:<8} {:<12} {:<22} {:<10?} {:>10.2} {:>10.2}",
                 p.path_id,
                 p.interface_name,
                 p.local_addr,
@@ -4377,9 +4404,9 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
 
             for (idx, addr_str) in node_specs.iter().enumerate() {
                 let node_id = format!("node-{}", idx + 1);
-                let addr: SocketAddr = addr_str
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1)));
+                let addr: SocketAddr = addr_str.parse().unwrap_or_else(|_| {
+                    SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1))
+                });
                 let node_dir = base_dir.join(&node_id);
                 tokio::fs::create_dir_all(&node_dir).await?;
                 let store = Arc::new(
@@ -4393,7 +4420,10 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
                     .map_err(|e| anyhow::anyhow!(e))?;
             }
 
-            let report = cluster.generate_report().await.map_err(|e| anyhow::anyhow!(e))?;
+            let report = cluster
+                .generate_report()
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
 
             if is_json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -4419,8 +4449,14 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
                 println!("Total Unique Chunks  : {}", report.total_unique_chunks);
                 println!("Total Unique Bytes   : {} bytes", report.total_unique_bytes);
                 println!("----------------------------------------------------------------------------------------");
-                println!("{:<12} {:<24} {:<12} {:>10} {:>10}", "NODE ID", "ADDRESS", "STATE", "VNODES", "WEIGHT");
-                println!("{:-<12} {:-<24} {:-<12} {:-<10} {:-<10}", "", "", "", "", "");
+                println!(
+                    "{:<12} {:<24} {:<12} {:>10} {:>10}",
+                    "NODE ID", "ADDRESS", "STATE", "VNODES", "WEIGHT"
+                );
+                println!(
+                    "{:-<12} {:-<24} {:-<12} {:-<10} {:-<10}",
+                    "", "", "", "", ""
+                );
                 for node in &report.nodes {
                     println!(
                         "{:<12} {:<24} {:<12?} {:>10} {:>10}",
@@ -4464,9 +4500,9 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
 
             for (idx, addr_str) in node_specs.iter().enumerate() {
                 let node_id = format!("node-{}", idx + 1);
-                let addr: SocketAddr = addr_str
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1)));
+                let addr: SocketAddr = addr_str.parse().unwrap_or_else(|_| {
+                    SocketAddr::from(([127, 0, 0, 1], 8000 + (idx as u16) + 1))
+                });
                 let node_dir = base_dir.join(&node_id);
                 tokio::fs::create_dir_all(&node_dir).await?;
                 let store = Arc::new(
@@ -4488,7 +4524,10 @@ async fn run_cluster(cli: &Cli, sub: &ClusterSubCmd) -> anyhow::Result<()> {
                 println!("Anti-Entropy Rebalance Summary:");
                 println!("  Chunks Inspected       : {}", report.chunks_inspected);
                 println!("  Replicas Created       : {}", report.replicas_created);
-                println!("  Fully Replicated Chunks: {}", report.fully_replicated_chunks);
+                println!(
+                    "  Fully Replicated Chunks: {}",
+                    report.fully_replicated_chunks
+                );
                 println!("  Bytes Replicated       : {}", report.bytes_replicated);
                 println!("  Rebalance Status       : OK");
             }
@@ -4532,8 +4571,9 @@ async fn run_watch(
         config = config.with_exclude(exc);
     }
 
-    let mut coordinator = velcrux_core::sync::ContinuousSyncCoordinator::new(src_path.clone(), config)
-        .map_err(|e| anyhow::anyhow!("failed to initialize watch coordinator: {}", e))?;
+    let mut coordinator =
+        velcrux_core::sync::ContinuousSyncCoordinator::new(src_path.clone(), config)
+            .map_err(|e| anyhow::anyhow!("failed to initialize watch coordinator: {}", e))?;
 
     if !is_json {
         println!("========================================================================================");
@@ -4652,7 +4692,10 @@ async fn run_watch(
         println!("Total Files Synced   : {}", summary.total_files_synced);
         println!("Raw Events Detected  : {}", summary.total_events_detected);
         println!("Events Coalesced     : {}", summary.total_events_coalesced);
-        println!("Elapsed Runtime      : {:.2} s", summary.elapsed_duration_secs);
+        println!(
+            "Elapsed Runtime      : {:.2} s",
+            summary.elapsed_duration_secs
+        );
         println!("Final Status         : {}", summary.status);
         println!("========================================================================================");
     }
@@ -4704,13 +4747,21 @@ async fn run_geo(cli: &Cli, sub: &GeoSubCmd) -> anyhow::Result<()> {
                 list
             } else {
                 vec![
-                    ("eu-central-1".to_string(), SocketAddr::from(([127, 0, 0, 1], 8002))),
-                    ("ap-tokyo-1".to_string(), SocketAddr::from(([127, 0, 0, 1], 8003))),
+                    (
+                        "eu-central-1".to_string(),
+                        SocketAddr::from(([127, 0, 0, 1], 8002)),
+                    ),
+                    (
+                        "ap-tokyo-1".to_string(),
+                        SocketAddr::from(([127, 0, 0, 1], 8003)),
+                    ),
                 ]
             };
 
             for (reg_id, endpoint) in region_specs {
-                coord.register_region(velcrux_core::sync::GeoRegionDescriptor::new(reg_id, endpoint));
+                coord.register_region(velcrux_core::sync::GeoRegionDescriptor::new(
+                    reg_id, endpoint,
+                ));
             }
 
             let report = coord.generate_status_report();
@@ -4730,10 +4781,17 @@ async fn run_geo(cli: &Cli, sub: &GeoSubCmd) -> anyhow::Result<()> {
                 println!("Pending WAN Changes  : {}", report.pending_outbound_changes);
                 println!("Conflicts Resolved   : {}", report.total_conflicts_resolved);
                 println!("----------------------------------------------------------------------------------------");
-                println!("{:<16} {:<24} {:<10} {:>10} {:>10} {:>10}", "REGION ID", "ENDPOINT", "STATE", "PRIORITY", "LAG (ms)", "PENDING");
-                println!("{:-<16} {:-<24} {:-<10} {:-<10} {:-<10} {:-<10}", "", "", "", "", "", "");
+                println!(
+                    "{:<16} {:<24} {:<10} {:>10} {:>10} {:>10}",
+                    "REGION ID", "ENDPOINT", "STATE", "PRIORITY", "LAG (ms)", "PENDING"
+                );
+                println!(
+                    "{:-<16} {:-<24} {:-<10} {:-<10} {:-<10} {:-<10}",
+                    "", "", "", "", "", ""
+                );
                 for r in &report.regions {
-                    println!("{:<16} {:<24} {:<10?} {:>10} {:>10} {:>10}",
+                    println!(
+                        "{:<16} {:<24} {:<10?} {:>10} {:>10} {:>10}",
                         r.region_id,
                         r.endpoint,
                         r.state,
@@ -4768,7 +4826,10 @@ async fn run_geo(cli: &Cli, sub: &GeoSubCmd) -> anyhow::Result<()> {
             };
 
             let coord = velcrux_core::sync::GeoReplicationCoordinator::new(source_region, policy);
-            coord.register_region(velcrux_core::sync::GeoRegionDescriptor::new(target_region, *target_addr));
+            coord.register_region(velcrux_core::sync::GeoRegionDescriptor::new(
+                target_region,
+                *target_addr,
+            ));
 
             // Perform anti-entropy sweep and tombstone prune
             let now_secs = std::time::SystemTime::now()
@@ -4779,15 +4840,18 @@ async fn run_geo(cli: &Cli, sub: &GeoSubCmd) -> anyhow::Result<()> {
             let report = coord.generate_status_report();
 
             if is_json {
-                println!("{}", serde_json::json!({
-                    "event": "geo_sync_completed",
-                    "source_region": source_region,
-                    "target_region": target_region,
-                    "target_addr": target_addr,
-                    "conflict_policy": report.conflict_policy,
-                    "tombstones_pruned": tombstones_pruned,
-                    "status": "synchronized"
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "geo_sync_completed",
+                        "source_region": source_region,
+                        "target_region": target_region,
+                        "target_addr": target_addr,
+                        "conflict_policy": report.conflict_policy,
+                        "tombstones_pruned": tombstones_pruned,
+                        "status": "synchronized"
+                    })
+                );
             } else {
                 println!("========================================================================================");
                 println!("                 CROSS-CLUSTER WAN GEO-REPLICATION SYNCHRONIZED                        ");
@@ -4857,17 +4921,26 @@ async fn run_webhook(cli: &Cli, sub: &WebhookSubCmd) -> anyhow::Result<()> {
                 println!("                 PLUGGABLE WEBHOOK EVENT NOTIFICATIONS & AUDIT BUS                      ");
                 println!("========================================================================================");
                 println!("Total Published      : {}", metrics.total_events_published);
-                println!("Deliveries Succeeded : {}", metrics.total_deliveries_succeeded);
+                println!(
+                    "Deliveries Succeeded : {}",
+                    metrics.total_deliveries_succeeded
+                );
                 println!("Deliveries Failed    : {}", metrics.total_deliveries_failed);
                 println!("Retries Scheduled    : {}", metrics.total_retries_scheduled);
                 println!("Dead-Lettered (DLQ)  : {}", metrics.total_dead_lettered);
                 println!("DLQ Size             : {}", dlq_size);
                 println!("----------------------------------------------------------------------------------------");
-                println!("{:<18} {:<36} {:<10} {:>10}", "SUBSCRIPTION ID", "ENDPOINT URL", "STATUS", "RETRIES");
+                println!(
+                    "{:<18} {:<36} {:<10} {:>10}",
+                    "SUBSCRIPTION ID", "ENDPOINT URL", "STATUS", "RETRIES"
+                );
                 println!("{:-<18} {:-<36} {:-<10} {:-<10}", "", "", "", "");
                 for s in &subs {
                     let status = if s.enabled { "Active" } else { "Disabled" };
-                    println!("{:<18} {:<36} {:<10} {:>10}", s.id, s.url, status, s.max_retries);
+                    println!(
+                        "{:<18} {:<36} {:<10} {:>10}",
+                        s.id, s.url, status, s.max_retries
+                    );
                 }
                 println!("========================================================================================");
             }
@@ -4895,8 +4968,11 @@ async fn run_webhook(cli: &Cli, sub: &WebhookSubCmd) -> anyhow::Result<()> {
             );
 
             let payload_json = serde_json::to_string(&payload)?;
-            let signature =
-                velcrux_core::telemetry::WebhookSigner::sign(secret, payload.timestamp, &payload_json);
+            let signature = velcrux_core::telemetry::WebhookSigner::sign(
+                secret,
+                payload.timestamp,
+                &payload_json,
+            );
             let verified = velcrux_core::telemetry::WebhookSigner::verify(
                 secret,
                 &signature,
@@ -4963,7 +5039,14 @@ async fn run_webhook(cli: &Cli, sub: &WebhookSubCmd) -> anyhow::Result<()> {
                 println!("                 WEBHOOK DEAD-LETTER QUEUE (DLQ)                                        ");
                 println!("========================================================================================");
                 println!("Initial DLQ Entries  : {}", total_entries);
-                println!("Queue Drained        : {}", if *drain { "Yes (all items cleared)" } else { "No" });
+                println!(
+                    "Queue Drained        : {}",
+                    if *drain {
+                        "Yes (all items cleared)"
+                    } else {
+                        "No"
+                    }
+                );
                 println!("Remaining Entries    : {}", dlq.len());
                 println!("========================================================================================");
             }
@@ -5060,7 +5143,10 @@ async fn run_snapshot(cli: &Cli, sub: &SnapshotSubCmd) -> anyhow::Result<()> {
                     "{:<20} {:<12} {:>10} {:>14} {:<24}",
                     "SNAPSHOT TAG", "CREATED (s)", "FILES", "TOTAL BYTES", "ROOT DIRECTORY"
                 );
-                println!("{:-<20} {:-<12} {:-<10} {:-<14} {:-<24}", "", "", "", "", "");
+                println!(
+                    "{:-<20} {:-<12} {:-<10} {:-<14} {:-<24}",
+                    "", "", "", "", ""
+                );
                 for s in &list {
                     println!(
                         "{:<20} {:<12} {:>10} {:>14} {:<24}",
@@ -5222,7 +5308,10 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
                         println!("Leaseholder ID       : {}", lease.holder_id);
                         println!("Lock Mode            : {}", lease.mode);
                         println!("Lamport Fencing Token: {}", lease.fencing_token);
-                        println!("Expires In           : {}s (at timestamp {})", lease.ttl_secs, lease.expires_at_secs);
+                        println!(
+                            "Expires In           : {}s (at timestamp {})",
+                            lease.ttl_secs, lease.expires_at_secs
+                        );
                         println!("Status               : ACTIVE MUTEX LEASE");
                         println!("========================================================================================");
                     }
@@ -5271,7 +5360,10 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
                         println!("Lock Lease ID        : {}", lease.lock_id);
                         println!("Resource Path        : {}", lease.resource);
                         println!("Leaseholder ID       : {}", lease.holder_id);
-                        println!("New Expiration       : {}s (at timestamp {})", lease.ttl_secs, lease.expires_at_secs);
+                        println!(
+                            "New Expiration       : {}s (at timestamp {})",
+                            lease.ttl_secs, lease.expires_at_secs
+                        );
                         println!("Lamport Fencing Token: {}", lease.fencing_token);
                         println!("========================================================================================");
                     }
@@ -5313,7 +5405,10 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
                             })
                         );
                     } else {
-                        println!("Lock lease '{}' successfully released by '{}'.", lock_id, holder);
+                        println!(
+                            "Lock lease '{}' successfully released by '{}'.",
+                            lock_id, holder
+                        );
                     }
                 }
                 Ok(false) => {
@@ -5366,7 +5461,11 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
                             .iter()
                             .filter(|l| l.mode == velcrux_core::sync::LockMode::Shared)
                             .count(),
-                        highest_fencing_token: active.iter().map(|l| l.fencing_token).max().unwrap_or(0),
+                        highest_fencing_token: active
+                            .iter()
+                            .map(|l| l.fencing_token)
+                            .max()
+                            .unwrap_or(0),
                         active_locks: active,
                     }
                 }
@@ -5390,11 +5489,20 @@ async fn run_lock(cli: &Cli, sub: &LockSubCmd) -> anyhow::Result<()> {
                 println!("Shared Read Locks    : {}", report.total_shared_locks);
                 println!("Highest Fencing Token: {}", report.highest_fencing_token);
                 println!("----------------------------------------------------------------------------------------");
-                println!("{:<16} {:<24} {:<16} {:<10} {:>8} {:>10}", "LOCK ID", "RESOURCE", "HOLDER", "MODE", "FENCE", "EXPIRES IN");
-                println!("{:-<16} {:-<24} {:-<16} {:-<10} {:-<8} {:-<10}", "", "", "", "", "", "");
+                println!(
+                    "{:<16} {:<24} {:<16} {:<10} {:>8} {:>10}",
+                    "LOCK ID", "RESOURCE", "HOLDER", "MODE", "FENCE", "EXPIRES IN"
+                );
+                println!(
+                    "{:-<16} {:-<24} {:-<16} {:-<10} {:-<8} {:-<10}",
+                    "", "", "", "", "", ""
+                );
                 for l in &report.active_locks {
                     let rem = l.remaining_ttl_secs(now_secs);
-                    println!("{:<16} {:<24} {:<16} {:<10} {:>8} {:>9}s", l.lock_id, l.resource, l.holder_id, l.mode, l.fencing_token, rem);
+                    println!(
+                        "{:<16} {:<24} {:<16} {:<10} {:>8} {:>9}s",
+                        l.lock_id, l.resource, l.holder_id, l.mode, l.fencing_token, rem
+                    );
                 }
                 println!("========================================================================================");
             }
@@ -5458,7 +5566,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
 
             let dict = velcrux_core::protocol::dict::DictionaryTrainer::train_from_directory(
                 source_dir,
@@ -5488,8 +5597,15 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                 println!("Dictionary ID        : {}", dict.metadata.dict_id);
                 println!("Name                 : {}", dict.metadata.name);
                 println!("Ingested Samples     : {}", dict.metadata.sample_count);
-                println!("Raw Training Data    : {}", format_bytes(dict.metadata.trained_bytes as u64));
-                println!("Trained Dict Size    : {} ({} bytes)", format_bytes(dict.metadata.dict_size as u64), dict.metadata.dict_size);
+                println!(
+                    "Raw Training Data    : {}",
+                    format_bytes(dict.metadata.trained_bytes as u64)
+                );
+                println!(
+                    "Trained Dict Size    : {} ({} bytes)",
+                    format_bytes(dict.metadata.dict_size as u64),
+                    dict.metadata.dict_size
+                );
                 println!("BLAKE3 Checksum      : {}", dict.metadata.checksum);
                 println!("Description          : {}", dict.metadata.description);
                 println!("Catalog Directory    : {}", cat_dir.display());
@@ -5501,7 +5617,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
             let list = catalog.list();
 
             if is_json {
@@ -5521,8 +5638,14 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                 println!("Total Dictionaries   : {}", list.len());
                 println!("Catalog Directory    : {}", cat_dir.display());
                 println!("----------------------------------------------------------------------------------------");
-                println!("{:<10} {:<20} {:>8} {:>12} {:>10} {:<16}", "DICT ID", "NAME", "SAMPLES", "TRAINED", "SIZE", "CHECKSUM");
-                println!("{:-<10} {:-<20} {:-<8} {:-<12} {:-<10} {:-<16}", "", "", "", "", "", "");
+                println!(
+                    "{:<10} {:<20} {:>8} {:>12} {:>10} {:<16}",
+                    "DICT ID", "NAME", "SAMPLES", "TRAINED", "SIZE", "CHECKSUM"
+                );
+                println!(
+                    "{:-<10} {:-<20} {:-<8} {:-<12} {:-<10} {:-<16}",
+                    "", "", "", "", "", ""
+                );
                 for d in &list {
                     println!(
                         "{:<10} {:<20} {:>8} {:>12} {:>10} {:<16}",
@@ -5546,7 +5669,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
 
             let dict = catalog
                 .get_by_id(*dict_id)?
@@ -5589,10 +5713,24 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                 println!("========================================================================================");
                 println!("Dictionary Evaluated : {} (ID: {})", dict.name(), dict_id);
                 println!("Target Evaluated     : {}", target_path.display());
-                println!("Raw Payload Size     : {}", format_bytes(eval.raw_bytes as u64));
-                println!("Vanilla Zstd Size    : {} (ratio: {:.2}x)", format_bytes(eval.vanilla_zstd_bytes as u64), eval.vanilla_ratio);
-                println!("Dict-Assisted Size   : {} (ratio: {:.2}x)", format_bytes(eval.dict_zstd_bytes as u64), eval.dict_ratio);
-                println!("Bandwidth Reduction  : {:.1}% extra savings over vanilla zstd", eval.extra_savings_pct);
+                println!(
+                    "Raw Payload Size     : {}",
+                    format_bytes(eval.raw_bytes as u64)
+                );
+                println!(
+                    "Vanilla Zstd Size    : {} (ratio: {:.2}x)",
+                    format_bytes(eval.vanilla_zstd_bytes as u64),
+                    eval.vanilla_ratio
+                );
+                println!(
+                    "Dict-Assisted Size   : {} (ratio: {:.2}x)",
+                    format_bytes(eval.dict_zstd_bytes as u64),
+                    eval.dict_ratio
+                );
+                println!(
+                    "Bandwidth Reduction  : {:.1}% extra savings over vanilla zstd",
+                    eval.extra_savings_pct
+                );
                 println!("========================================================================================");
             }
         }
@@ -5605,7 +5743,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
 
             catalog.export_dictionary(*dict_id, dest_file)?;
 
@@ -5619,7 +5758,11 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                     })
                 );
             } else {
-                println!("Dictionary ID {} exported successfully to '{}'.", dict_id, dest_file.display());
+                println!(
+                    "Dictionary ID {} exported successfully to '{}'.",
+                    dict_id,
+                    dest_file.display()
+                );
             }
         }
         DictSubCmd::Import {
@@ -5632,7 +5775,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
 
             let dict = catalog.import_dictionary(
                 source_file,
@@ -5656,7 +5800,11 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
                 println!("========================================================================================");
                 println!("Dictionary ID        : {}", dict.metadata.dict_id);
                 println!("Name                 : {}", dict.metadata.name);
-                println!("Dictionary Size      : {} ({} bytes)", format_bytes(dict.metadata.dict_size as u64), dict.metadata.dict_size);
+                println!(
+                    "Dictionary Size      : {} ({} bytes)",
+                    format_bytes(dict.metadata.dict_size as u64),
+                    dict.metadata.dict_size
+                );
                 println!("BLAKE3 Checksum      : {}", dict.metadata.checksum);
                 println!("Source File          : {}", source_file.display());
                 println!("========================================================================================");
@@ -5667,7 +5815,8 @@ async fn run_dict(cli: &Cli, sub: &DictSubCmd) -> anyhow::Result<()> {
             let cat_dir = dict_dir
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(".velcrux/dictionaries"));
-            let catalog = velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
+            let catalog =
+                velcrux_core::protocol::dict::DictionaryCatalog::open_or_create(&cat_dir)?;
 
             let deleted = catalog.delete(*dict_id)?;
 
@@ -5706,7 +5855,10 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                 "verify" | "check" | "v" => velcrux_core::storage::ScrubMode::VerifyOnly,
                 "quarantine" | "isolate" | "q" => velcrux_core::storage::ScrubMode::Quarantine,
                 "heal" | "repair" | "h" => velcrux_core::storage::ScrubMode::HealFromPeer,
-                other => anyhow::bail!("unknown scrub mode '{}': expected 'verify', 'quarantine', or 'heal'", other),
+                other => anyhow::bail!(
+                    "unknown scrub mode '{}': expected 'verify', 'quarantine', or 'heal'",
+                    other
+                ),
             };
 
             let options = velcrux_core::storage::ScrubOptions {
@@ -5746,8 +5898,14 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                 println!("Successfully Healed  : {}", report.repaired_chunks);
                 println!("Isolated Quarantine  : {}", report.quarantined_chunks);
                 println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
-                println!("Total Bytes Scanned  : {}", format_bytes(report.scanned_bytes));
-                println!("Total Bytes Repaired : {}", format_bytes(report.repaired_bytes));
+                println!(
+                    "Total Bytes Scanned  : {}",
+                    format_bytes(report.scanned_bytes)
+                );
+                println!(
+                    "Total Bytes Repaired : {}",
+                    format_bytes(report.repaired_bytes)
+                );
                 println!("Elapsed Duration     : {} ms", report.duration_ms);
                 println!("Verification Speed   : {:.2} MB/s", report.throughput_mb_s);
                 if !report.findings.is_empty() {
@@ -5757,7 +5915,10 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                         println!(" - [{}] Chunk {}: {}", f.status, f.chunk_hash, f.details);
                     }
                     if report.findings.len() > 10 {
-                        println!(" ... and {} additional findings", report.findings.len() - 10);
+                        println!(
+                            " ... and {} additional findings",
+                            report.findings.len() - 10
+                        );
                     }
                 }
                 println!("========================================================================================");
@@ -5789,9 +5950,19 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                         println!("Repaired Chunks      : {}", report.repaired_chunks);
                         println!("Quarantined Chunks   : {}", report.quarantined_chunks);
                         println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
-                        println!("Scanned Volume       : {}", format_bytes(report.scanned_bytes));
+                        println!(
+                            "Scanned Volume       : {}",
+                            format_bytes(report.scanned_bytes)
+                        );
                         println!("Audit Throughput     : {:.2} MB/s", report.throughput_mb_s);
-                        println!("Health Verdict       : {}", if report.corrupted_chunks == 0 { "100% HEALTHY (ZERO BIT-ROT DETECTED)" } else { "ANOMALIES / BIT-ROT DETECTED" });
+                        println!(
+                            "Health Verdict       : {}",
+                            if report.corrupted_chunks == 0 {
+                                "100% HEALTHY (ZERO BIT-ROT DETECTED)"
+                            } else {
+                                "ANOMALIES / BIT-ROT DETECTED"
+                            }
+                        );
                         println!("========================================================================================");
                     }
                 }
@@ -5826,7 +5997,9 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                 quarantine_dir: None,
             };
 
-            let report = velcrux_core::storage::DataScrubber::scrub_and_heal(&local, &peer, &options).await?;
+            let report =
+                velcrux_core::storage::DataScrubber::scrub_and_heal(&local, &peer, &options)
+                    .await?;
             let report_file = chunk_store.join(".velcrux").join("last_scrub.json");
             let _ = velcrux_core::storage::DataScrubber::save_report(&report, &report_file);
 
@@ -5847,7 +6020,10 @@ async fn run_scrub(cli: &Cli, sub: &ScrubSubCmd) -> anyhow::Result<()> {
                 println!("Corrupted Detected   : {}", report.corrupted_chunks);
                 println!("Successfully Healed  : {}", report.repaired_chunks);
                 println!("Unrecoverable Chunks : {}", report.unrecoverable_chunks);
-                println!("Restored Data Volume : {}", format_bytes(report.repaired_bytes));
+                println!(
+                    "Restored Data Volume : {}",
+                    format_bytes(report.repaired_bytes)
+                );
                 println!("Repair Elapsed Time  : {} ms", report.duration_ms);
                 println!("========================================================================================");
             }
@@ -5862,9 +6038,9 @@ async fn run_fec(cli: &Cli, sub: &FecSubCmd) -> anyhow::Result<()> {
             let is_json = cli_log_json(cli);
             let parsed_profile = velcrux_core::transport::FecProfile::from_str_name(profile)
                 .context(format!(
-                    "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
-                    profile
-                ))?;
+                "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
+                profile
+            ))?;
             let ctrl = velcrux_core::transport::AdaptiveFecController::new(parsed_profile);
             let snapshot = ctrl.snapshot();
 
@@ -5904,11 +6080,15 @@ async fn run_fec(cli: &Cli, sub: &FecSubCmd) -> anyhow::Result<()> {
                 );
                 println!("----------------------------------------------------------------------------------------");
                 println!("Dynamic Loss Tiers (Adaptive Rate Scaling):");
-                println!("  < 0.5% Loss Rate   : K=20, M=0 ( 0.0% parity overhead, maximum goodput)");
+                println!(
+                    "  < 0.5% Loss Rate   : K=20, M=0 ( 0.0% parity overhead, maximum goodput)"
+                );
                 println!("  0.5% - 2.0% Loss   : K=20, M=1 ( 5.0% parity overhead, fast-path XOR)");
                 println!("  2.0% - 5.0% Loss   : K=16, M=2 (12.5% parity overhead, Cauchy MDS)");
                 println!("  5.0% - 10.0% Loss  : K=10, M=2 (20.0% parity overhead, Cauchy MDS)");
-                println!("  >= 10.0% Loss      : K=8,  M=2 (25.0% parity overhead, Satellite Grade)");
+                println!(
+                    "  >= 10.0% Loss      : K=8,  M=2 (25.0% parity overhead, Satellite Grade)"
+                );
                 println!("========================================================================================");
             }
         }
@@ -5921,9 +6101,9 @@ async fn run_fec(cli: &Cli, sub: &FecSubCmd) -> anyhow::Result<()> {
             let is_json = cli_log_json(cli);
             let parsed_profile = velcrux_core::transport::FecProfile::from_str_name(profile)
                 .context(format!(
-                    "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
-                    profile
-                ))?;
+                "Unknown FEC profile '{}'. Supported: disabled, low, medium, high, satellite, auto",
+                profile
+            ))?;
 
             // Generate deterministic payload pattern
             let mut data = Vec::with_capacity(*payload_size);
@@ -5955,9 +6135,15 @@ async fn run_fec(cli: &Cli, sub: &FecSubCmd) -> anyhow::Result<()> {
                     "Coding Rate (K+M, K) : ({} + {}, {})",
                     report.k, report.m, report.k
                 );
-                println!("Simulated Loss Rate  : {:.2}%", report.simulated_loss_rate * 100.0);
+                println!(
+                    "Simulated Loss Rate  : {:.2}%",
+                    report.simulated_loss_rate * 100.0
+                );
                 println!("Total Blocks Tested  : {}", report.total_blocks);
-                println!("Payload Volume       : {}", format_bytes(report.payload_bytes as u64));
+                println!(
+                    "Payload Volume       : {}",
+                    format_bytes(report.payload_bytes as u64)
+                );
                 println!("Symbols Transmitted  : {}", report.total_symbols_sent);
                 println!(
                     "Symbols Dropped      : {} ({:.2}% channel loss)",
@@ -6270,7 +6456,11 @@ fn scan_quarantine_dir(dir: &Path) -> Vec<(String, u64, u64)> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let len = path.metadata().map(|m| m.len()).unwrap_or(0);
                 let ts = path
                     .metadata()
@@ -6288,7 +6478,10 @@ fn scan_quarantine_dir(dir: &Path) -> Vec<(String, u64, u64)> {
 
 async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
     match sub {
-        DedupSubCmd::Status { chunk_store, tenant } => {
+        DedupSubCmd::Status {
+            chunk_store,
+            tenant,
+        } => {
             let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
             let policy_str = &cli.dedup_namespace;
             let filter_tenant = tenant.as_deref().or(cli.tenant.as_deref());
@@ -6301,7 +6494,11 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_dir() {
-                            let tname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            let tname = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
                             if let Some(ft) = filter_tenant {
                                 if tname != ft {
                                     continue;
@@ -6360,13 +6557,27 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                 println!("Store Root Path      : {}", root.display());
                 println!("Namespace Policy     : {}", policy_str);
                 println!("Active Tenants       : {}", tenant_stats.len());
-                println!("Shared Store Chunks  : {} ({} MB)", shared_chunks, shared_bytes / (1024 * 1024));
-                println!("Quarantined Chunks   : {} ({} KB)", quarantined_count, quarantined_bytes / 1024);
+                println!(
+                    "Shared Store Chunks  : {} ({} MB)",
+                    shared_chunks,
+                    shared_bytes / (1024 * 1024)
+                );
+                println!(
+                    "Quarantined Chunks   : {} ({} KB)",
+                    quarantined_count,
+                    quarantined_bytes / 1024
+                );
                 println!("----------------------------------------------------------------------------------------");
                 if tenant_stats.is_empty() {
-                    println!("  (No isolated tenant stores discovered in {})", tenants_dir.display());
+                    println!(
+                        "  (No isolated tenant stores discovered in {})",
+                        tenants_dir.display()
+                    );
                 } else {
-                    println!("{:<4} {:<24} {:<16} {}", "#", "TENANT ID", "CHUNKS", "STORAGE SIZE");
+                    println!(
+                        "{:<4} {:<24} {:<16} {}",
+                        "#", "TENANT ID", "CHUNKS", "STORAGE SIZE"
+                    );
                     println!("----------------------------------------------------------------------------------------");
                     for (i, (tname, chunks, bytes)) in tenant_stats.iter().enumerate() {
                         println!(
@@ -6403,7 +6614,11 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                         for entry in entries.flatten() {
                             let path = entry.path();
                             if path.is_dir() {
-                                let tname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                let tname = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
                                 targets.push((tname, path));
                             }
                         }
@@ -6438,7 +6653,11 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                                 stack.push(path);
                             } else if path.extension().and_then(|s| s.to_str()) == Some("chunk") {
                                 total_scanned += 1;
-                                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                                let stem = path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
                                 let expected_hash = velcrux_core::util::Hash::from_hex(&stem);
                                 match std::fs::read(&path) {
                                     Ok(data) => {
@@ -6459,7 +6678,12 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                                                 "reason": reason
                                             }));
                                             if *auto_quarantine {
-                                                let qname = format!("{}_{}_{}.quarantine", stem, now, rand::random::<u32>());
+                                                let qname = format!(
+                                                    "{}_{}_{}.quarantine",
+                                                    stem,
+                                                    now,
+                                                    rand::random::<u32>()
+                                                );
                                                 let qtarget = quarantine_dir.join(qname);
                                                 if std::fs::rename(&path, &qtarget).is_ok() {
                                                     quarantined_chunks += 1;
@@ -6503,7 +6727,14 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                 println!("Corrupted/Poisoned   : {}", corrupted_chunks);
                 println!("Quarantined Chunks   : {}", quarantined_chunks);
                 println!("Audit Duration       : {} ms", elapsed_ms);
-                println!("Integrity Status     : {}", if corrupted_chunks == 0 { "PASS (Clean)" } else { "FAIL (Poisoning/Corruption Detected)" });
+                println!(
+                    "Integrity Status     : {}",
+                    if corrupted_chunks == 0 {
+                        "PASS (Clean)"
+                    } else {
+                        "FAIL (Poisoning/Corruption Detected)"
+                    }
+                );
                 println!("========================================================================================");
             }
         }
@@ -6539,7 +6770,10 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                     if items.is_empty() {
                         println!("  (No chunks currently quarantined)");
                     } else {
-                        println!("{:<4} {:<48} {:<12} {}", "#", "QUARANTINE RECORD", "SIZE (B)", "EPOCH TIMESTAMP");
+                        println!(
+                            "{:<4} {:<48} {:<12} {}",
+                            "#", "QUARANTINE RECORD", "SIZE (B)", "EPOCH TIMESTAMP"
+                        );
                         println!("----------------------------------------------------------------------------------------");
                         for (i, (name, len, ts)) in items.iter().enumerate() {
                             println!("{:<4} {:<48} {:<12} {}", i + 1, name, len, ts);
@@ -6571,7 +6805,10 @@ async fn run_dedup(cli: &Cli, sub: &DedupSubCmd) -> anyhow::Result<()> {
                         })
                     );
                 } else {
-                    println!("Purged {} quarantined chunks ({} bytes reclaimed).", count, bytes);
+                    println!(
+                        "Purged {} quarantined chunks ({} bytes reclaimed).",
+                        count, bytes
+                    );
                 }
             }
         },

@@ -216,7 +216,12 @@ impl ChunkQuarantineManager {
     }
 
     /// Isolate a corrupted chunk into the quarantine directory.
-    pub fn quarantine(&self, hash: &Hash, file_path: &Path, reason: &str) -> Result<PathBuf, VelcruxError> {
+    pub fn quarantine(
+        &self,
+        hash: &Hash,
+        file_path: &Path,
+        reason: &str,
+    ) -> Result<PathBuf, VelcruxError> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -362,17 +367,22 @@ impl NamespacedChunkStore {
     /// Total detected deduplication poisoning attempts.
     #[inline]
     pub fn poison_attempts(&self) -> u64 {
-        self.poison_attempts.load(std::sync::atomic::Ordering::Relaxed)
+        self.poison_attempts
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Total cross-tenant existence oracle probing attempts blocked.
     #[inline]
     pub fn oracle_probes_blocked(&self) -> u64 {
-        self.oracle_probes_blocked.load(std::sync::atomic::Ordering::Relaxed)
+        self.oracle_probes_blocked
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Resolve or lazily instantiate the isolated `LocalChunkStore` for a tenant.
-    pub async fn get_tenant_store(&self, tenant_id: &str) -> Result<Arc<LocalChunkStore>, VelcruxError> {
+    pub async fn get_tenant_store(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Arc<LocalChunkStore>, VelcruxError> {
         if self.policy != DedupNamespacePolicy::Isolated {
             return Ok(Arc::clone(&self.shared_store));
         }
@@ -387,7 +397,9 @@ impl NamespacedChunkStore {
         let tenant_dir = self.root.join("tenants").join(&clean_tenant);
         let store = Arc::new(LocalChunkStore::new(&tenant_dir).await?);
         if let Ok(mut map) = self.tenant_stores.write() {
-            let entry = map.entry(clean_tenant).or_insert_with(|| Arc::clone(&store));
+            let entry = map
+                .entry(clean_tenant)
+                .or_insert_with(|| Arc::clone(&store));
             Ok(Arc::clone(entry))
         } else {
             Ok(store)
@@ -420,9 +432,12 @@ impl NamespacedChunkStore {
                     return true;
                 }
                 if let Ok(map) = self.tenant_stores.read() {
-                    let in_other_tenant = map.iter().any(|(t, s)| t != &clean_tenant && s.contains_sync(h));
+                    let in_other_tenant = map
+                        .iter()
+                        .any(|(t, s)| t != &clean_tenant && s.contains_sync(h));
                     if in_other_tenant || self.shared_store.contains_sync(h) {
-                        self.oracle_probes_blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        self.oracle_probes_blocked
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 false
@@ -439,7 +454,8 @@ impl NamespacedChunkStore {
                     }
                 }
                 // Exists in shared store, but tenant is not authorized yet
-                self.oracle_probes_blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.oracle_probes_blocked
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 false
             }
             DedupNamespacePolicy::Global => self.shared_store.contains_sync(h),
@@ -457,12 +473,15 @@ impl NamespacedChunkStore {
         token: &[u8; 32],
     ) -> bool {
         if !self.pow_engine.verify_token(chunk_hash, chunk_data, token) {
-            self.poison_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.poison_attempts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return false;
         }
 
         if let Ok(mut acl) = self.acl_table.write() {
-            let entry = acl.entry(*chunk_hash).or_insert_with(|| ChunkAclEntry::new(tenant_id));
+            let entry = acl
+                .entry(*chunk_hash)
+                .or_insert_with(|| ChunkAclEntry::new(tenant_id));
             entry.authorize_tenant(tenant_id);
         }
         true
@@ -495,7 +514,8 @@ impl NamespacedChunkStore {
                 if let Ok(acl) = self.acl_table.read() {
                     if let Some(entry) = acl.get(h) {
                         if !entry.is_authorized(tenant_id) {
-                            self.oracle_probes_blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            self.oracle_probes_blocked
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             return Err(VelcruxError::Protocol(ProtocolError::Malformed(
                                 "unauthorized access to chunk in shared store",
                             )));
@@ -506,11 +526,15 @@ impl NamespacedChunkStore {
                         )));
                     }
                 }
-                (Some(Arc::clone(&self.shared_store)), self.shared_store.chunk_path(h))
+                (
+                    Some(Arc::clone(&self.shared_store)),
+                    self.shared_store.chunk_path(h),
+                )
             }
-            DedupNamespacePolicy::Global => {
-                (Some(Arc::clone(&self.shared_store)), self.shared_store.chunk_path(h))
-            }
+            DedupNamespacePolicy::Global => (
+                Some(Arc::clone(&self.shared_store)),
+                self.shared_store.chunk_path(h),
+            ),
         };
 
         if !chunk_path.exists() {
@@ -532,8 +556,11 @@ impl NamespacedChunkStore {
             let n = chunk_file.read(&mut buf[..to_read])?;
             if n == 0 {
                 // Poisoning / corruption detected: truncated chunk
-                let _ = self.quarantine.quarantine(h, &chunk_path, "truncated chunk payload");
-                self.poison_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let _ = self
+                    .quarantine
+                    .quarantine(h, &chunk_path, "truncated chunk payload");
+                self.poison_attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return Err(VelcruxError::Protocol(ProtocolError::Malformed(
                     "checksum mismatch: truncated chunk quarantined",
                 )));
@@ -546,8 +573,13 @@ impl NamespacedChunkStore {
         let computed = Hash::from_bytes(hasher.finalize().as_bytes()).unwrap();
         if computed != *h {
             // Poisoning detected: content does not match hash! Quarantine immediately.
-            let _ = self.quarantine.quarantine(h, &chunk_path, "blake3_checksum_mismatch: checksum mismatch");
-            self.poison_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let _ = self.quarantine.quarantine(
+                h,
+                &chunk_path,
+                "blake3_checksum_mismatch: checksum mismatch",
+            );
+            self.poison_attempts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Err(VelcruxError::Protocol(ProtocolError::Malformed(
                 "checksum mismatch: poisoned chunk quarantined",
             )));
@@ -572,7 +604,9 @@ impl NamespacedChunkStore {
         if let Ok(data) = self.shared_store.get_sync(h) {
             if self.pow_engine.verify_token(h, &data, token) {
                 if let Ok(mut acl) = self.acl_table.write() {
-                    let entry = acl.entry(*h).or_insert_with(|| ChunkAclEntry::new(tenant_id));
+                    let entry = acl
+                        .entry(*h)
+                        .or_insert_with(|| ChunkAclEntry::new(tenant_id));
                     entry.authorize_tenant(tenant_id);
                     return true;
                 }
@@ -590,7 +624,8 @@ impl NamespacedChunkStore {
     ) -> Result<(), VelcruxError> {
         let computed = Hash::of(data);
         if computed != *h {
-            self.poison_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.poison_attempts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Err(VelcruxError::Protocol(ProtocolError::Malformed(
                 "checksum mismatch: rejected corrupted chunk put",
             )));
@@ -604,7 +639,9 @@ impl NamespacedChunkStore {
             DedupNamespacePolicy::ProofOfOwnership => {
                 self.shared_store.put(h, data).await?;
                 if let Ok(mut acl) = self.acl_table.write() {
-                    let entry = acl.entry(*h).or_insert_with(|| ChunkAclEntry::new(tenant_id));
+                    let entry = acl
+                        .entry(*h)
+                        .or_insert_with(|| ChunkAclEntry::new(tenant_id));
                     entry.authorize_tenant(tenant_id);
                 }
                 Ok(())
@@ -630,12 +667,15 @@ impl NamespacedChunkStore {
                 let count = self.shared_store.ingest_file_sync(&path, mode, params)?;
                 // Authorize tenant for all chunks in the file
                 let file = File::open(&path)?;
-                let reader = std::io::BufReader::with_capacity(params.max.max(64 * 1024) as usize, file);
+                let reader =
+                    std::io::BufReader::with_capacity(params.max.max(64 * 1024) as usize, file);
                 let acl_table = &self.acl_table;
                 ChunkEngine::chunk_reader(reader, mode, params, params.max as usize, |desc, _| {
                     if let Some(hash) = desc.hash {
                         if let Ok(mut acl) = acl_table.write() {
-                            let entry = acl.entry(hash).or_insert_with(|| ChunkAclEntry::new(tenant_id));
+                            let entry = acl
+                                .entry(hash)
+                                .or_insert_with(|| ChunkAclEntry::new(tenant_id));
                             entry.authorize_tenant(tenant_id);
                         }
                     }
@@ -648,7 +688,10 @@ impl NamespacedChunkStore {
     }
 
     /// Return Bloom filter appropriate for `tenant_id`.
-    pub async fn bloom_filter_for_tenant(&self, tenant_id: &str) -> Result<BloomFilter, VelcruxError> {
+    pub async fn bloom_filter_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<BloomFilter, VelcruxError> {
         match self.policy {
             DedupNamespacePolicy::Isolated => {
                 let store = self.get_tenant_store(tenant_id).await?;
@@ -717,7 +760,9 @@ impl NamespacedChunkStore {
 
             let mut data = Vec::new();
             if f.read_to_end(&mut data).is_err() {
-                let _ = self.quarantine.quarantine(&expected_hash, &chunk_path, "I/O read failure");
+                let _ = self
+                    .quarantine
+                    .quarantine(&expected_hash, &chunk_path, "I/O read failure");
                 report.corrupt_chunks_quarantined += 1;
                 continue;
             }
@@ -791,11 +836,28 @@ mod tests {
 
     #[test]
     fn test_dedup_namespace_policy_parsing() {
-        assert_eq!("isolated".parse::<DedupNamespacePolicy>().unwrap(), DedupNamespacePolicy::Isolated);
-        assert_eq!("tenant".parse::<DedupNamespacePolicy>().unwrap(), DedupNamespacePolicy::Isolated);
-        assert_eq!("proof".parse::<DedupNamespacePolicy>().unwrap(), DedupNamespacePolicy::ProofOfOwnership);
-        assert_eq!("proof_of_ownership".parse::<DedupNamespacePolicy>().unwrap(), DedupNamespacePolicy::ProofOfOwnership);
-        assert_eq!("global".parse::<DedupNamespacePolicy>().unwrap(), DedupNamespacePolicy::Global);
+        assert_eq!(
+            "isolated".parse::<DedupNamespacePolicy>().unwrap(),
+            DedupNamespacePolicy::Isolated
+        );
+        assert_eq!(
+            "tenant".parse::<DedupNamespacePolicy>().unwrap(),
+            DedupNamespacePolicy::Isolated
+        );
+        assert_eq!(
+            "proof".parse::<DedupNamespacePolicy>().unwrap(),
+            DedupNamespacePolicy::ProofOfOwnership
+        );
+        assert_eq!(
+            "proof_of_ownership"
+                .parse::<DedupNamespacePolicy>()
+                .unwrap(),
+            DedupNamespacePolicy::ProofOfOwnership
+        );
+        assert_eq!(
+            "global".parse::<DedupNamespacePolicy>().unwrap(),
+            DedupNamespacePolicy::Global
+        );
         assert!("invalid".parse::<DedupNamespacePolicy>().is_err());
     }
 
@@ -821,13 +883,9 @@ mod tests {
     #[tokio::test]
     async fn test_isolated_namespacing_prevents_cross_tenant_leak() {
         let temp = tempfile::tempdir().unwrap();
-        let store = NamespacedChunkStore::new(
-            temp.path(),
-            DedupNamespacePolicy::Isolated,
-            None,
-        )
-        .await
-        .unwrap();
+        let store = NamespacedChunkStore::new(temp.path(), DedupNamespacePolicy::Isolated, None)
+            .await
+            .unwrap();
 
         let data = b"Tenant A secret document chunk";
         let hash = Hash::of(data);
@@ -876,20 +934,18 @@ mod tests {
         assert!(store.contains_for_tenant("tenant-b", &hash));
 
         let mut dst = tempfile::tempfile().unwrap();
-        let copied = store.copy_chunk_for_tenant("tenant-b", &hash, &mut dst, 0).unwrap();
+        let copied = store
+            .copy_chunk_for_tenant("tenant-b", &hash, &mut dst, 0)
+            .unwrap();
         assert_eq!(copied, data.len() as u64);
     }
 
     #[tokio::test]
     async fn test_quarantine_corrupted_chunk_poisoning() {
         let temp = tempfile::tempdir().unwrap();
-        let store = NamespacedChunkStore::new(
-            temp.path(),
-            DedupNamespacePolicy::Global,
-            None,
-        )
-        .await
-        .unwrap();
+        let store = NamespacedChunkStore::new(temp.path(), DedupNamespacePolicy::Global, None)
+            .await
+            .unwrap();
 
         let data = b"Legitimate chunk payload";
         let hash = Hash::of(data);

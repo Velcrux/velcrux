@@ -19,7 +19,11 @@ fn test_cli_fec_status_human() {
         .output()
         .expect("execute velcrux fec status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("FORWARD ERROR CORRECTION (FEC) OPERATIONAL STATUS"));
@@ -41,7 +45,11 @@ fn test_cli_fec_status_json() {
         .output()
         .expect("execute velcrux --json fec status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json fec status");
 
@@ -68,7 +76,11 @@ fn test_cli_fec_test_simulation_human() {
         .output()
         .expect("execute velcrux fec test");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("FEC ERASURE CODING RECOVERY SIMULATION"));
@@ -93,7 +105,11 @@ fn test_cli_fec_test_simulation_json() {
         .output()
         .expect("execute velcrux --json fec test");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json fec test");
 

@@ -57,11 +57,10 @@ pub use manifest::{
     ManifestStore, ManifestWriter,
 };
 pub use protocol::{
-    compute_shannon_entropy, estimate_entropy, AdaptiveCompressionConfig,
-    AdaptiveCompressionSelector, AdaptiveCompressionStats, CompressionDecision, EntropyTier,
-    compress_with_dict, decompress_with_dict_bounded, evaluate_dictionary_ratio,
-    CompressionRatioEvaluation, DictionaryCatalog, DictionaryMetadata, DictionaryTrainer,
-    ZstdDictionary,
+    compress_with_dict, compute_shannon_entropy, decompress_with_dict_bounded, estimate_entropy,
+    evaluate_dictionary_ratio, AdaptiveCompressionConfig, AdaptiveCompressionSelector,
+    AdaptiveCompressionStats, CompressionDecision, CompressionRatioEvaluation, DictionaryCatalog,
+    DictionaryMetadata, DictionaryTrainer, EntropyTier, ZstdDictionary,
 };
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
@@ -73,22 +72,21 @@ pub use state::{
 
 pub use scheduler::{
     civil_time_from_timestamp, ActiveScheduleStatus, BandwidthRate, BandwidthSchedule,
-    BandwidthScheduleRule, DayMatcher, DayOfWeek, FairnessScheduler, HierarchicalBandwidthAllocator,
-    ParseBandwidthError, ParseScheduleError, PriorityClass, ScheduledBandwidthLimiter,
-    ScheduledItem, TimeWindow,
+    BandwidthScheduleRule, DayMatcher, DayOfWeek, FairnessScheduler,
+    HierarchicalBandwidthAllocator, ParseBandwidthError, ParseScheduleError, PriorityClass,
+    ScheduledBandwidthLimiter, ScheduledItem, TimeWindow,
 };
 pub use storage::{
-    gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, AlignedSectorBuffer, ChunkStore,
-    ChunkStoreGcReport,
-    ClusteredChunkStore, ClusterNode, ClusterNodeState, ClusterReport, ConsistentHashRing,
-    DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode, FileMeta, LocalChunkStore,
-    LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, QuorumPolicy, ReplicationReport,
-    S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer, SnapshotDiff,
-    Staging, StagingGcReport, StorageBackend, VPath, VPathError, SNAPSHOT_CHUNK_SIZE,
-    BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
-    ScrubOptions, ScrubReport,
-    ChunkAclEntry, ChunkPoisonReport, ChunkQuarantineManager, DedupAuditReport,
-    DedupNamespacePolicy, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
+    gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, AlignedSectorBuffer,
+    BackgroundScrubDaemon, ChunkAclEntry, ChunkIntegrityStatus, ChunkPoisonReport,
+    ChunkQuarantineManager, ChunkStore, ChunkStoreGcReport, ClusterNode, ClusterNodeState,
+    ClusterReport, ClusteredChunkStore, ConsistentHashRing, DataScrubber, DedupAuditReport,
+    DedupNamespacePolicy, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
+    FileMeta, LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend,
+    NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk, QuorumPolicy,
+    ReplicationReport, S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport,
+    ScrubFinding, ScrubMode, ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff, Staging,
+    StagingGcReport, StorageBackend, VPath, VPathError, SNAPSHOT_CHUNK_SIZE,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
@@ -99,14 +97,14 @@ pub use sync::{
     ConflictResolutionResult, ContinuousSyncCoordinator, CostBreakdown, CostDecision,
     CostEstimator, DebounceQueue, DeleteGuardrails, DeleteMode, DeleteSafetyError, DeltaProgress,
     DeltaReconstructor, DeltaSyncReport, DeviceProfile, DirectoryDiffSummary, DirectoryPlan,
-    DirectoryScanner, DirectorySyncOptions, DirectorySyncResult, DistributedLockManager, FileAction,
-    FileActionType, FileChangeEvent, GeoItemMetadata, GeoRegionDescriptor, GeoRegionState,
-    GeoReplicationCoordinator, GeoReplicationQueue, GeoStatusReport, LeaseLock, LocalInventory,
-    LockError, LockMode, LockReport, NetworkProfile,
-    PathFilter, ReplicationChange, RleBitmap, RleRun, ScannedEntry, SmallFileBatch,
-    SmallFileBatchConfig, SmallFileBatchPlanner, SyncDecision, SyncError, SyncPlan, TransferMode,
-    TransferPlan, UnpackedBatchReport, VectorClock, WatchConfig, WatchMetrics, WatchSummary,
-    DEFAULT_BATCH_MAX_BYTES, DEFAULT_BATCH_MAX_FILES, DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
+    DirectoryScanner, DirectorySyncOptions, DirectorySyncResult, DistributedLockManager,
+    FileAction, FileActionType, FileChangeEvent, GeoItemMetadata, GeoRegionDescriptor,
+    GeoRegionState, GeoReplicationCoordinator, GeoReplicationQueue, GeoStatusReport, LeaseLock,
+    LocalInventory, LockError, LockMode, LockReport, NetworkProfile, PathFilter, ReplicationChange,
+    RleBitmap, RleRun, ScannedEntry, SmallFileBatch, SmallFileBatchConfig, SmallFileBatchPlanner,
+    SyncDecision, SyncError, SyncPlan, TransferMode, TransferPlan, UnpackedBatchReport,
+    VectorClock, WatchConfig, WatchMetrics, WatchSummary, DEFAULT_BATCH_MAX_BYTES,
+    DEFAULT_BATCH_MAX_FILES, DEFAULT_SMALL_FILE_THRESHOLD, VBATCH_MAGIC,
 };
 pub use telemetry::{
     sample_current_process_rss, BottleneckDiagnosis, BottleneckKind, ComponentKind,
@@ -129,16 +127,16 @@ pub use transfer::{
 
 pub use transport::{
     simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController, BaselineComparator,
-    BdpEstimator, BenchmarkMetrics, BenchmarkScenario, Connection, FecBlockDecoder, FecBlockEncoder,
-    FecBlockHeader, FecCodec, FecProfile, FecRecoveryReport, FecSimulationReport, FecStats,
-    FecStatsSnapshot, FecSymbol, ImpairedChannel, ImpairmentProfile, ImpairmentStats,
+    BdpEstimator, BenchmarkMetrics, BenchmarkScenario, Connection, FecBlockDecoder,
+    FecBlockEncoder, FecBlockHeader, FecCodec, FecProfile, FecRecoveryReport, FecSimulationReport,
+    FecStats, FecStatsSnapshot, FecSymbol, ImpairedChannel, ImpairmentProfile, ImpairmentStats,
     MigrationCoordinator, MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode,
     MigrationStats, MultipathConfig, MultipathCoordinator, MultipathSchedulerPolicy,
     MultipathSessionReport, NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator,
-    PacingController, PathState, PmtuConfig, PmtuCoordinator, PmtuState, PmtuStats, SharedTransport,
-    SubflowPathDescriptor, SubflowQualityMetrics, TokenBucket, TransportConfigTunables,
-    WanMatrixReport, WanMatrixRunner, BASE_PLPMTU, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU,
-    JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
+    PacingController, PathState, PmtuConfig, PmtuCoordinator, PmtuState, PmtuStats,
+    SharedTransport, SubflowPathDescriptor, SubflowQualityMetrics, TokenBucket,
+    TransportConfigTunables, WanMatrixReport, WanMatrixRunner, BASE_PLPMTU,
+    DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU, JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,

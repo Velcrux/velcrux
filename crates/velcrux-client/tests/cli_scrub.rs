@@ -39,7 +39,11 @@ async fn test_cli_scrub_verify_and_quarantine_table() {
         .output()
         .expect("run scrub verify");
 
-    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("DATA INTEGRITY SCRUBBING & BIT-ROT AUDIT REPORT"));
     assert!(stdout.contains("Total Chunks Scanned : 5"));
@@ -138,7 +142,8 @@ async fn test_cli_scrub_repair_and_json_mode() {
         .expect("run scrub heal json");
 
     assert!(out_heal.status.success());
-    let heal_json: serde_json::Value = serde_json::from_slice(&out_heal.stdout).expect("parse heal json");
+    let heal_json: serde_json::Value =
+        serde_json::from_slice(&out_heal.stdout).expect("parse heal json");
     assert_eq!(heal_json["event"], "scrub_completed");
     assert_eq!(heal_json["report"]["corrupted_chunks"], 2);
     assert_eq!(heal_json["report"]["repaired_chunks"], 2);
@@ -153,7 +158,8 @@ async fn test_cli_scrub_repair_and_json_mode() {
         .expect("status json");
 
     assert!(out_status.status.success());
-    let status_json: serde_json::Value = serde_json::from_slice(&out_status.stdout).expect("parse status json");
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&out_status.stdout).expect("parse status json");
     assert_eq!(status_json["event"], "scrub_status");
     assert_eq!(status_json["report"]["repaired_chunks"], 2);
 
@@ -169,6 +175,7 @@ async fn test_cli_scrub_repair_and_json_mode() {
         .expect("repair subcommand json");
 
     assert!(out_repair.status.success());
-    let repair_json: serde_json::Value = serde_json::from_slice(&out_repair.stdout).expect("parse repair json");
+    let repair_json: serde_json::Value =
+        serde_json::from_slice(&out_repair.stdout).expect("parse repair json");
     assert_eq!(repair_json["event"], "scrub_repair_completed");
 }

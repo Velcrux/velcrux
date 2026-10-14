@@ -33,7 +33,11 @@ fn test_cli_lock_lifecycle_table() {
         .output()
         .expect("execute velcrux lock acquire");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("DISTRIBUTED LOCK LEASE ACQUIRED"));
     assert!(stdout.contains("Resource Path        : /dataset/imagenet"));
@@ -218,7 +222,8 @@ fn test_cli_lock_json_mode_and_shared_locks() {
         .output()
         .expect("list json");
     assert!(list_out.status.success());
-    let list_json: serde_json::Value = serde_json::from_slice(&list_out.stdout).expect("parse list json");
+    let list_json: serde_json::Value =
+        serde_json::from_slice(&list_out.stdout).expect("parse list json");
     assert_eq!(list_json["event"], "lock_list");
     assert_eq!(list_json["report"]["total_active_locks"], 2);
     assert_eq!(list_json["report"]["total_shared_locks"], 2);

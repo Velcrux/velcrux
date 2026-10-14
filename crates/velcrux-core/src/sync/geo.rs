@@ -601,13 +601,15 @@ impl GeoReplicationCoordinator {
                         ConflictResolutionResult {
                             action: ConflictAction::ApplyRemote,
                             was_conflict: true,
-                            details: "Conflict resolved via LWW tie-breaker: Remote region won".to_string(),
+                            details: "Conflict resolved via LWW tie-breaker: Remote region won"
+                                .to_string(),
                         }
                     } else {
                         ConflictResolutionResult {
                             action: ConflictAction::KeepLocal,
                             was_conflict: true,
-                            details: "Conflict resolved via LWW tie-breaker: Local region won".to_string(),
+                            details: "Conflict resolved via LWW tie-breaker: Local region won"
+                                .to_string(),
                         }
                     }
                 }
@@ -639,9 +641,12 @@ impl GeoReplicationCoordinator {
                     local.rel_path, remote.origin_region, remote.physical_time_ms
                 );
                 ConflictResolutionResult {
-                    action: ConflictAction::CreateBranch { branch_path: branch },
+                    action: ConflictAction::CreateBranch {
+                        branch_path: branch,
+                    },
                     was_conflict: true,
-                    details: "Conflict resolved via KeepBoth: remote saved as conflict branch".to_string(),
+                    details: "Conflict resolved via KeepBoth: remote saved as conflict branch"
+                        .to_string(),
                 }
             }
             ConflictPolicy::RejectConcurrent => ConflictResolutionResult {
@@ -745,8 +750,13 @@ mod tests {
         let mut remote_vc = VectorClock::new();
         remote_vc.increment("eu-central");
 
-        let mut remote_meta =
-            GeoItemMetadata::file("doc.txt", 120, Hash::of(b"version 2"), remote_vc, "eu-central");
+        let mut remote_meta = GeoItemMetadata::file(
+            "doc.txt",
+            120,
+            Hash::of(b"version 2"),
+            remote_vc,
+            "eu-central",
+        );
         remote_meta.physical_time_ms = 1_000_000; // deliberately older
 
         let change = ReplicationChange {
@@ -770,8 +780,13 @@ mod tests {
         let mut remote_vc = VectorClock::new();
         remote_vc.increment("ap-tokyo");
 
-        let remote_meta =
-            GeoItemMetadata::file("config.toml", 60, Hash::of(b"branch 2"), remote_vc, "ap-tokyo");
+        let remote_meta = GeoItemMetadata::file(
+            "config.toml",
+            60,
+            Hash::of(b"branch 2"),
+            remote_vc,
+            "ap-tokyo",
+        );
 
         let change = ReplicationChange {
             sequence_id: 2,

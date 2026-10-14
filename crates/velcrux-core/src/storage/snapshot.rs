@@ -137,7 +137,9 @@ impl SnapshotManager {
     /// Validate snapshot tag against directory traversal or invalid syntax.
     pub fn validate_tag(tag: &str) -> Result<(), VelcruxError> {
         if tag.is_empty() {
-            return Err(VelcruxError::Config("snapshot tag cannot be empty".to_string()));
+            return Err(VelcruxError::Config(
+                "snapshot tag cannot be empty".to_string(),
+            ));
         }
         if tag.contains('/') || tag.contains('\\') || tag.contains("..") {
             return Err(VelcruxError::Config(format!(
@@ -145,7 +147,10 @@ impl SnapshotManager {
                 tag
             )));
         }
-        if !tag.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        if !tag
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+        {
             return Err(VelcruxError::Config(format!(
                 "invalid snapshot tag '{}': characters must be alphanumeric, '-', '_', or '.'",
                 tag
@@ -259,7 +264,11 @@ impl SnapshotManager {
         let entry = SnapshotEntry {
             tag: tag.to_string(),
             created_at_secs: now_secs,
-            root_path: root_path.canonicalize().unwrap_or_else(|_| root_path.to_path_buf()).to_string_lossy().to_string(),
+            root_path: root_path
+                .canonicalize()
+                .unwrap_or_else(|_| root_path.to_path_buf())
+                .to_string_lossy()
+                .to_string(),
             file_count: files.len(),
             total_bytes,
             files,
@@ -267,7 +276,9 @@ impl SnapshotManager {
         };
 
         // Write snapshot atomically
-        let temp_path = self.snapshot_dir.join(format!("{}.json.tmp-{}", tag, rand::random::<u64>()));
+        let temp_path =
+            self.snapshot_dir
+                .join(format!("{}.json.tmp-{}", tag, rand::random::<u64>()));
         let json_bytes = serde_json::to_vec_pretty(&entry)
             .map_err(|e| VelcruxError::Internal(format!("failed to serialize snapshot: {}", e)))?;
 
@@ -292,7 +303,9 @@ impl SnapshotManager {
             let entry = entry?;
             let path = entry.path();
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if file_name.starts_with('.') && (file_name.ends_with(".tmp") || file_name.ends_with(".partial")) {
+            if file_name.starts_with('.')
+                && (file_name.ends_with(".tmp") || file_name.ends_with(".partial"))
+            {
                 continue;
             }
             if path.is_dir() {
@@ -483,9 +496,11 @@ impl SnapshotManager {
             // Verify integrity
             let computed = Hash::of(&assembled);
             if computed != meta.file_hash {
-                return Err(VelcruxError::Protocol(crate::error::ProtocolError::Malformed(
-                    "restored file cryptographic checksum mismatch",
-                )));
+                return Err(VelcruxError::Protocol(
+                    crate::error::ProtocolError::Malformed(
+                        "restored file cryptographic checksum mismatch",
+                    ),
+                ));
             }
 
             // Atomically write file

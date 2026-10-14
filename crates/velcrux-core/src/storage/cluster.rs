@@ -426,7 +426,9 @@ impl ChunkStore for ClusteredChunkStore {
         };
 
         if preference_nodes.is_empty() {
-            return Err(VelcruxError::Internal("no cluster nodes available for write".to_string()));
+            return Err(VelcruxError::Internal(
+                "no cluster nodes available for write".to_string(),
+            ));
         }
 
         let nodes = {
@@ -473,7 +475,9 @@ impl ChunkStore for ClusteredChunkStore {
         };
 
         if preference_nodes.is_empty() {
-            return Err(VelcruxError::Internal("no cluster nodes available for read".to_string()));
+            return Err(VelcruxError::Internal(
+                "no cluster nodes available for read".to_string(),
+            ));
         }
 
         let nodes = {
@@ -646,9 +650,15 @@ mod tests {
         let store2 = Arc::new(LocalChunkStore::new(temp2.path()).await.unwrap());
         let store3 = Arc::new(LocalChunkStore::new(temp3.path()).await.unwrap());
 
-        cluster.register_node(ClusterNode::new("node-1", socket(8001)), store1.clone()).unwrap();
-        cluster.register_node(ClusterNode::new("node-2", socket(8002)), store2.clone()).unwrap();
-        cluster.register_node(ClusterNode::new("node-3", socket(8003)), store3.clone()).unwrap();
+        cluster
+            .register_node(ClusterNode::new("node-1", socket(8001)), store1.clone())
+            .unwrap();
+        cluster
+            .register_node(ClusterNode::new("node-2", socket(8002)), store2.clone())
+            .unwrap();
+        cluster
+            .register_node(ClusterNode::new("node-3", socket(8003)), store3.clone())
+            .unwrap();
 
         let data = b"Distributed Raven Chunk Data";
         let h = Hash::of(data);
@@ -693,8 +703,12 @@ mod tests {
         let mut node3 = ClusterNode::new("node-3", socket(8003));
         node3.state = ClusterNodeState::Dead;
 
-        cluster.register_node(ClusterNode::new("node-1", socket(8001)), store1.clone()).unwrap();
-        cluster.register_node(ClusterNode::new("node-2", socket(8002)), store2.clone()).unwrap();
+        cluster
+            .register_node(ClusterNode::new("node-1", socket(8001)), store1.clone())
+            .unwrap();
+        cluster
+            .register_node(ClusterNode::new("node-2", socket(8002)), store2.clone())
+            .unwrap();
         cluster.register_node(node3, store3.clone()).unwrap();
 
         let data = b"Chunk written while node 3 was dead";
@@ -724,6 +738,9 @@ mod tests {
         }
 
         // Verify Node 3 was repaired
-        assert!(repaired, "read-repair should restore missing replica on node-3");
+        assert!(
+            repaired,
+            "read-repair should restore missing replica on node-3"
+        );
     }
 }

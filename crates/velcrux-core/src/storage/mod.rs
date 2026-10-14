@@ -32,17 +32,13 @@ pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use cluster::{
+    ClusterNode, ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing,
+    QuorumPolicy, ReplicationReport,
+};
 pub use dedup_defense::{
     ChunkAclEntry, ChunkPoisonReport, ChunkQuarantineManager, DedupAuditReport,
     DedupNamespacePolicy, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
-};
-pub use scrub::{
-    BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
-    ScrubOptions, ScrubReport,
-};
-pub use cluster::{
-    ClusteredChunkStore, ClusterNode, ClusterNodeState, ClusterReport,
-    ConsistentHashRing, QuorumPolicy, ReplicationReport,
 };
 pub use direct_io::{
     AlignedSectorBuffer, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
@@ -53,6 +49,10 @@ pub use gc::{
 };
 pub use memory::{MemoryFile, MemoryStorageBackend};
 pub use s3::{S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer};
+pub use scrub::{
+    BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
+    ScrubOptions, ScrubReport,
+};
 pub use snapshot::{
     SnapshotDiff, SnapshotEntry, SnapshotFileMeta, SnapshotManager, SnapshotRestoreReport,
     SnapshotSummary, SNAPSHOT_CHUNK_SIZE,

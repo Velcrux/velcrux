@@ -11,7 +11,13 @@ fn test_dlm_exclusive_lock_mutual_exclusion() {
 
     // 1. Client A acquires exclusive write lease
     let lease_a = dlm
-        .acquire(resource, "client-node-a", LockMode::Exclusive, Some(60), now)
+        .acquire(
+            resource,
+            "client-node-a",
+            LockMode::Exclusive,
+            Some(60),
+            now,
+        )
         .expect("acquire lease A");
 
     assert_eq!(lease_a.resource, resource);
@@ -23,7 +29,13 @@ fn test_dlm_exclusive_lock_mutual_exclusion() {
 
     // 2. Client B attempts exclusive acquisition -> Rejected (ResourceBusy)
     let err_b = dlm
-        .acquire(resource, "client-node-b", LockMode::Exclusive, Some(60), now)
+        .acquire(
+            resource,
+            "client-node-b",
+            LockMode::Exclusive,
+            Some(60),
+            now,
+        )
         .unwrap_err();
 
     match err_b {
@@ -57,7 +69,13 @@ fn test_dlm_exclusive_lock_mutual_exclusion() {
 
     // 6. Client B can now acquire exclusive lease with higher fencing token
     let lease_b = dlm
-        .acquire(resource, "client-node-b", LockMode::Exclusive, Some(60), now)
+        .acquire(
+            resource,
+            "client-node-b",
+            LockMode::Exclusive,
+            Some(60),
+            now,
+        )
         .expect("acquire lease B");
     assert_eq!(lease_b.fencing_token, 102);
     assert_eq!(lease_b.holder_id, "client-node-b");
@@ -111,12 +129,20 @@ fn test_dlm_lease_ttl_expiry_and_deadlock_prevention() {
 
     // 1. Client A acquires lock with 10s TTL
     let lease_a = dlm
-        .acquire(resource, "worker-alpha", LockMode::Exclusive, Some(10), t_start)
+        .acquire(
+            resource,
+            "worker-alpha",
+            LockMode::Exclusive,
+            Some(10),
+            t_start,
+        )
         .expect("acquire alpha");
     assert_eq!(lease_a.expires_at_secs, 5010);
 
     // 2. Worker crashes! Halfway through (t = 5005), lock is still active
-    assert!(dlm.acquire(resource, "worker-beta", LockMode::Exclusive, Some(10), 5005).is_err());
+    assert!(dlm
+        .acquire(resource, "worker-beta", LockMode::Exclusive, Some(10), 5005)
+        .is_err());
 
     // 3. After TTL expiry (t = 5011), Worker Beta attempts acquisition
     // DLM automatically purges expired lease and grants new lock to Beta
@@ -141,7 +167,13 @@ fn test_dlm_lease_heartbeat_renewal() {
     let now = 1000u64;
 
     let lease = dlm
-        .acquire(resource, "stream-writer", LockMode::Exclusive, Some(30), now)
+        .acquire(
+            resource,
+            "stream-writer",
+            LockMode::Exclusive,
+            Some(30),
+            now,
+        )
         .expect("acquire");
     assert_eq!(lease.expires_at_secs, 1030);
 
@@ -215,5 +247,7 @@ fn test_dlm_persistence_recovery() {
     assert_eq!(report.total_shared_locks, 1);
 
     // Verify lock on /sync/a is still busy
-    assert!(dlm2.acquire("/sync/a", "node-3", LockMode::Exclusive, Some(60), now).is_err());
+    assert!(dlm2
+        .acquire("/sync/a", "node-3", LockMode::Exclusive, Some(60), now)
+        .is_err());
 }

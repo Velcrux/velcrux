@@ -43,7 +43,10 @@ impl std::str::FromStr for LockMode {
         match s.to_ascii_lowercase().as_str() {
             "exclusive" | "write" | "ex" | "w" => Ok(Self::Exclusive),
             "shared" | "read" | "sh" | "r" => Ok(Self::Shared),
-            other => Err(format!("unknown lock mode '{}': expected 'exclusive' or 'shared'", other)),
+            other => Err(format!(
+                "unknown lock mode '{}': expected 'exclusive' or 'shared'",
+                other
+            )),
         }
     }
 }
@@ -324,7 +327,9 @@ impl DistributedLockManager {
                     });
                 }
 
-                let ext = extension_secs.unwrap_or(lease.ttl_secs).clamp(5, self.max_ttl_secs);
+                let ext = extension_secs
+                    .unwrap_or(lease.ttl_secs)
+                    .clamp(5, self.max_ttl_secs);
                 lease.expires_at_secs = now_secs + ext;
                 lease.ttl_secs = ext;
 
@@ -496,8 +501,9 @@ impl DistributedLockManager {
         };
 
         let tmp_path = path.with_extension(format!("tmp-{}", rand::random::<u64>()));
-        let json_bytes = serde_json::to_vec_pretty(&report)
-            .map_err(|e| VelcruxError::Internal(format!("failed to serialize lock state: {}", e)))?;
+        let json_bytes = serde_json::to_vec_pretty(&report).map_err(|e| {
+            VelcruxError::Internal(format!("failed to serialize lock state: {}", e))
+        })?;
 
         {
             let mut f = OpenOptions::new()

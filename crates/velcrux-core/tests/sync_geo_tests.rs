@@ -1,8 +1,8 @@
 //! Integration tests for cross-cluster WAN geo-replication and conflict resolution (Option BA).
 
 use velcrux_core::sync::{
-    ClockOrdering, ConflictAction, ConflictPolicy, GeoItemMetadata,
-    GeoReplicationCoordinator, ReplicationChange, VectorClock,
+    ClockOrdering, ConflictAction, ConflictPolicy, GeoItemMetadata, GeoReplicationCoordinator,
+    ReplicationChange, VectorClock,
 };
 use velcrux_core::util::Hash;
 
@@ -72,7 +72,11 @@ fn test_geo_coordinator_primary_authority_conflict_policy() {
         .unwrap();
 
     assert!(res.was_conflict);
-    assert_eq!(res.action, ConflictAction::ApplyRemote, "primary region must win conflict");
+    assert_eq!(
+        res.action,
+        ConflictAction::ApplyRemote,
+        "primary region must win conflict"
+    );
 
     // Concurrent remote modification from non-primary region ap-south
     let mut ap_vc = VectorClock::new();
@@ -94,7 +98,11 @@ fn test_geo_coordinator_primary_authority_conflict_policy() {
         .unwrap();
 
     assert!(res2.was_conflict);
-    assert_eq!(res2.action, ConflictAction::KeepLocal, "non-primary remote change must lose");
+    assert_eq!(
+        res2.action,
+        ConflictAction::KeepLocal,
+        "non-primary remote change must lose"
+    );
 }
 
 #[test]

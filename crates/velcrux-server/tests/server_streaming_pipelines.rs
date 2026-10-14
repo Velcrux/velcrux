@@ -26,7 +26,9 @@ use tempfile::tempdir;
 
 use velcrux_core::auth::{Authorizer, FileAuthorizer, Grant, PermSet};
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
-use velcrux_core::protocol::message::{Auth, Hello, Message, TransferBegin, TransferCreate, TransferOp};
+use velcrux_core::protocol::message::{
+    Auth, Hello, Message, TransferBegin, TransferCreate, TransferOp,
+};
 use velcrux_core::session::{read_frame, write_frame, ServerConn, ServerStats};
 use velcrux_core::storage::LocalFilesystemBackend;
 use velcrux_core::transport::quic::{
@@ -254,7 +256,10 @@ async fn test_streaming_pipeline_upload_and_download() {
         .unwrap();
 
     let f = read_frame(recv.as_mut()).await.unwrap().unwrap();
-    assert_eq!(f.type_byte, velcrux_core::protocol::message::TRANSFER_CREATED);
+    assert_eq!(
+        f.type_byte,
+        velcrux_core::protocol::message::TRANSFER_CREATED
+    );
     let created = velcrux_core::protocol::message::TransferCreated::decode(&f.payload).unwrap();
     let f = read_frame(recv.as_mut()).await.unwrap().unwrap();
     assert_eq!(f.type_byte, velcrux_core::protocol::message::TRANSFER_PLAN);
@@ -284,7 +289,10 @@ async fn test_streaming_pipeline_upload_and_download() {
 
     // Verify committed file on server filesystem
     let committed_file = files_dir.path().join("data/piped_archive.tar");
-    assert!(committed_file.exists(), "committed file must exist on server");
+    assert!(
+        committed_file.exists(),
+        "committed file must exist on server"
+    );
     let on_disk_bytes = fs::read(&committed_file).expect("read server file");
     assert_eq!(on_disk_bytes.len(), test_data.len());
     assert_eq!(Hash::of(&on_disk_bytes), expected_hash);
@@ -306,8 +314,12 @@ async fn test_streaming_pipeline_upload_and_download() {
         .unwrap();
 
     let f = read_frame(recv.as_mut()).await.unwrap().unwrap();
-    assert_eq!(f.type_byte, velcrux_core::protocol::message::TRANSFER_CREATED);
-    let created_down = velcrux_core::protocol::message::TransferCreated::decode(&f.payload).unwrap();
+    assert_eq!(
+        f.type_byte,
+        velcrux_core::protocol::message::TRANSFER_CREATED
+    );
+    let created_down =
+        velcrux_core::protocol::message::TransferCreated::decode(&f.payload).unwrap();
     let f = read_frame(recv.as_mut()).await.unwrap().unwrap();
     assert_eq!(f.type_byte, velcrux_core::protocol::message::TRANSFER_PLAN);
 

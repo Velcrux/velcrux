@@ -226,7 +226,10 @@ where
         .storage
         .dedup_policy
         .as_deref()
-        .and_then(|s| s.parse::<velcrux_core::storage::DedupNamespacePolicy>().ok())
+        .and_then(|s| {
+            s.parse::<velcrux_core::storage::DedupNamespacePolicy>()
+                .ok()
+        })
         .unwrap_or(velcrux_core::storage::DedupNamespacePolicy::Isolated);
 
     let (chunk_store, namespaced_chunk_store): (
@@ -235,10 +238,14 @@ where
     ) = match &cfg.storage.chunk_store {
         Some(path) => {
             let p = std::path::PathBuf::from(path);
-            let secret_bytes: Option<[u8; 32]> = cfg.storage.dedup_secret.as_ref().and_then(|s| {
-                velcrux_core::util::Hash::from_hex(s).map(|h| *h.as_bytes())
-            });
-            match velcrux_core::storage::NamespacedChunkStore::new(&p, dedup_policy, secret_bytes).await {
+            let secret_bytes: Option<[u8; 32]> = cfg
+                .storage
+                .dedup_secret
+                .as_ref()
+                .and_then(|s| velcrux_core::util::Hash::from_hex(s).map(|h| *h.as_bytes()));
+            match velcrux_core::storage::NamespacedChunkStore::new(&p, dedup_policy, secret_bytes)
+                .await
+            {
                 Ok(ncs) => {
                     info!(chunk_store = %p.display(), policy = %dedup_policy, "NamespacedChunkStore initialized");
                     server_caps.set(Capability::DedupChunkStore);

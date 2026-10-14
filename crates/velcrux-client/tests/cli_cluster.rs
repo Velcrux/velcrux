@@ -19,7 +19,11 @@ fn test_cli_cluster_status_table() {
         .output()
         .expect("execute velcrux cluster status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("VELCRUX DISTRIBUTED CHUNK STORE CLUSTER STATUS"));
@@ -43,9 +47,13 @@ fn test_cli_cluster_status_json() {
         .output()
         .expect("execute velcrux --json cluster status");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
-    let json_val: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON expected from --json cluster status");
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json_val: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("valid JSON expected from --json cluster status");
 
     assert_eq!(json_val["total_nodes"], 3);
     assert_eq!(json_val["healthy_nodes"], 3);
@@ -74,7 +82,11 @@ fn test_cli_cluster_custom_nodes_and_weak_consistency() {
         .output()
         .expect("execute velcrux cluster status custom");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected");
 
@@ -91,7 +103,11 @@ fn test_cli_cluster_rebalance() {
         .output()
         .expect("execute velcrux cluster rebalance");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Anti-Entropy Rebalance Summary:"));
     assert!(stdout.contains("Rebalance Status       : OK"));
@@ -106,7 +122,11 @@ fn test_cli_cluster_rebalance_json() {
         .output()
         .expect("execute velcrux --json cluster rebalance");
 
-    assert!(output.status.success(), "stderr: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json_val: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON expected");
     assert!(json_val["chunks_inspected"].is_number());

@@ -38,10 +38,9 @@ dedup_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
 
-    let parsed_policy = DedupNamespacePolicy::from_str(
-        cfg.storage.dedup_policy.as_deref().unwrap(),
-    )
-    .expect("valid policy");
+    let parsed_policy =
+        DedupNamespacePolicy::from_str(cfg.storage.dedup_policy.as_deref().unwrap())
+            .expect("valid policy");
     assert_eq!(parsed_policy, DedupNamespacePolicy::ProofOfOwnership);
 }
 
@@ -73,13 +72,9 @@ dedup_policy = "unsupported-mode"
 #[tokio::test]
 async fn test_namespaced_chunk_store_isolated_mode() {
     let dir = tempdir().expect("tempdir");
-    let store = NamespacedChunkStore::new(
-        dir.path(),
-        DedupNamespacePolicy::Isolated,
-        None,
-    )
-    .await
-    .expect("init store");
+    let store = NamespacedChunkStore::new(dir.path(), DedupNamespacePolicy::Isolated, None)
+        .await
+        .expect("init store");
 
     assert_eq!(store.policy(), DedupNamespacePolicy::Isolated);
 
@@ -102,12 +97,20 @@ async fn test_namespaced_chunk_store_isolated_mode() {
     assert_eq!(store.oracle_probes_blocked(), 1);
 
     // Physical files must be segregated in `<root>/tenants/tenant-alpha/chunks/`
-    let tenant_alpha_dir = dir.path().join("tenants").join("tenant-alpha").join("chunks");
+    let tenant_alpha_dir = dir
+        .path()
+        .join("tenants")
+        .join("tenant-alpha")
+        .join("chunks");
     assert!(
         tenant_alpha_dir.exists(),
         "tenant alpha chunk directory must exist"
     );
-    let tenant_beta_dir = dir.path().join("tenants").join("tenant-beta").join("chunks");
+    let tenant_beta_dir = dir
+        .path()
+        .join("tenants")
+        .join("tenant-beta")
+        .join("chunks");
     assert!(
         !tenant_beta_dir.exists(),
         "tenant beta chunk directory must not exist yet"
@@ -161,13 +164,9 @@ async fn test_namespaced_chunk_store_proof_of_ownership_mode() {
 #[tokio::test]
 async fn test_chunk_quarantine_poisoning_defense() {
     let dir = tempdir().expect("tempdir");
-    let store = NamespacedChunkStore::new(
-        dir.path(),
-        DedupNamespacePolicy::Isolated,
-        None,
-    )
-    .await
-    .expect("init store");
+    let store = NamespacedChunkStore::new(dir.path(), DedupNamespacePolicy::Isolated, None)
+        .await
+        .expect("init store");
 
     let valid_data = b"clean unpoisoned chunk payload";
     let valid_hash = Hash::of(valid_data);
@@ -184,16 +183,12 @@ async fn test_chunk_quarantine_poisoning_defense() {
         .unwrap()
         .chunk_path(&valid_hash);
     assert!(chunk_path.exists());
-    std::fs::write(&chunk_path, b"POISONED_CORRUPTED_BYTES").expect("overwrite with corrupted data");
+    std::fs::write(&chunk_path, b"POISONED_CORRUPTED_BYTES")
+        .expect("overwrite with corrupted data");
 
     // Attempting to copy or read the corrupted chunk triggers in-flight BLAKE3 verification
     let mut dest_file = tempfile::tempfile().expect("temp destination file");
-    let copy_result = store.copy_chunk_for_tenant(
-        "tenant-secure",
-        &valid_hash,
-        &mut dest_file,
-        0,
-    );
+    let copy_result = store.copy_chunk_for_tenant("tenant-secure", &valid_hash, &mut dest_file, 0);
 
     assert!(
         copy_result.is_err(),
@@ -210,7 +205,11 @@ async fn test_chunk_quarantine_poisoning_defense() {
     );
 
     let quarantined = store.quarantine().list();
-    assert_eq!(quarantined.len(), 1, "exactly one chunk must be quarantined");
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "exactly one chunk must be quarantined"
+    );
     assert_eq!(quarantined[0].hash, valid_hash);
     assert!(quarantined[0].reason.contains("blake3_checksum_mismatch"));
     assert!(quarantined[0].quarantine_path.exists());

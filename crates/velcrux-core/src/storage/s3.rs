@@ -123,10 +123,14 @@ impl S3Config {
         if let Ok(st) = std::env::var("AWS_SESSION_TOKEN") {
             cfg.session_token = Some(st);
         }
-        if let Ok(reg) = std::env::var("AWS_REGION").or_else(|_| std::env::var("AWS_DEFAULT_REGION")) {
+        if let Ok(reg) =
+            std::env::var("AWS_REGION").or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+        {
             cfg.region = reg;
         }
-        if let Ok(ep) = std::env::var("AWS_ENDPOINT_URL_S3").or_else(|_| std::env::var("AWS_ENDPOINT_URL")) {
+        if let Ok(ep) =
+            std::env::var("AWS_ENDPOINT_URL_S3").or_else(|_| std::env::var("AWS_ENDPOINT_URL"))
+        {
             cfg.endpoint = ep;
         }
 
@@ -153,7 +157,11 @@ impl S3Config {
             });
         }
 
-        let key_or_prefix = parts.next().unwrap_or("").trim_start_matches('/').to_string();
+        let key_or_prefix = parts
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .to_string();
         Ok((bucket, key_or_prefix))
     }
 
@@ -281,12 +289,7 @@ impl SigV4Signer {
 
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
-            method,
-            canonical_uri,
-            query,
-            canonical_headers,
-            signed_headers,
-            payload_hash
+            method, canonical_uri, query, canonical_headers, signed_headers, payload_hash
         );
 
         let hashed_canonical_request = sha256_hex(canonical_request.as_bytes());
@@ -386,7 +389,9 @@ impl S3StorageBackend {
 
     fn meta_file_path(&self, key: &str) -> PathBuf {
         let norm = key.trim_matches('/').replace('/', "__");
-        self.staging_root.join("meta").join(format!("{}.json", norm))
+        self.staging_root
+            .join("meta")
+            .join(format!("{}.json", norm))
     }
 
     /// Access the configuration.
@@ -401,7 +406,9 @@ impl S3StorageBackend {
             norm
         } else if norm.is_empty() {
             self.config.prefix.clone()
-        } else if norm == self.config.prefix || norm.starts_with(&format!("{}/", self.config.prefix)) {
+        } else if norm == self.config.prefix
+            || norm.starts_with(&format!("{}/", self.config.prefix))
+        {
             norm
         } else {
             format!("{}/{}", self.config.prefix, norm)
@@ -461,7 +468,11 @@ impl S3StorageBackend {
     /// Initiate a multipart upload session.
     pub async fn initiate_multipart_upload(&self, key: &str) -> Result<String, S3Error> {
         let full_key = self.resolve_key(key);
-        let upload_id = format!("upload_{}_{}", ulid::Ulid::new(), full_key.replace('/', "_"));
+        let upload_id = format!(
+            "upload_{}_{}",
+            ulid::Ulid::new(),
+            full_key.replace('/', "_")
+        );
         let mut bucket = self.mock.write().await;
         bucket
             .multipart_uploads
@@ -478,10 +489,9 @@ impl S3StorageBackend {
     ) -> Result<String, S3Error> {
         let etag = format!("\"{}\"", sha256_hex(data));
         let mut bucket = self.mock.write().await;
-        let entry = bucket
-            .multipart_uploads
-            .get_mut(upload_id)
-            .ok_or_else(|| S3Error::Multipart(format!("unknown multipart upload id {}", upload_id)))?;
+        let entry = bucket.multipart_uploads.get_mut(upload_id).ok_or_else(|| {
+            S3Error::Multipart(format!("unknown multipart upload id {}", upload_id))
+        })?;
         entry.1.insert(part_number, data.to_vec());
         Ok(etag)
     }
@@ -494,10 +504,10 @@ impl S3StorageBackend {
         blake3_hash: Option<Hash>,
     ) -> Result<S3ObjectMeta, S3Error> {
         let mut bucket = self.mock.write().await;
-        let (full_key, stored_parts) = bucket
-            .multipart_uploads
-            .remove(upload_id)
-            .ok_or_else(|| S3Error::Multipart(format!("unknown multipart upload id {}", upload_id)))?;
+        let (full_key, stored_parts) =
+            bucket.multipart_uploads.remove(upload_id).ok_or_else(|| {
+                S3Error::Multipart(format!("unknown multipart upload id {}", upload_id))
+            })?;
 
         let mut concatenated = Vec::new();
         for (part_num, _expected_etag) in parts {
@@ -565,7 +575,8 @@ impl S3StorageBackend {
             parts.push((part_num, etag));
         }
 
-        self.complete_multipart_upload(&upload_id, &parts, blake3_hash).await
+        self.complete_multipart_upload(&upload_id, &parts, blake3_hash)
+            .await
     }
 
     /// Get object contents from S3.
@@ -688,10 +699,7 @@ impl S3StorageBackend {
                             .as_ref()
                             .and_then(|m| m.blake3_hash)
                             .or_else(|| Some(Hash::of(&data)));
-                        let last_mod = head_meta
-                            .as_ref()
-                            .map(|m| m.last_modified_sec)
-                            .unwrap_or(0);
+                        let last_mod = head_meta.as_ref().map(|m| m.last_modified_sec).unwrap_or(0);
                         let mut bucket = self.mock.write().await;
                         bucket.objects.entry(k).or_insert(MockS3Object {
                             data,
@@ -713,7 +721,10 @@ impl S3StorageBackend {
                     let suffix = &k[full_prefix.len()..];
                     if let Some(pos) = suffix.find(delim) {
                         let common_prefix = format!("{}{}{}", full_prefix, &suffix[..pos], delim);
-                        if !results.iter().any(|r: &S3ObjectMeta| r.key == common_prefix) {
+                        if !results
+                            .iter()
+                            .any(|r: &S3ObjectMeta| r.key == common_prefix)
+                        {
                             results.push(S3ObjectMeta {
                                 key: common_prefix,
                                 size: 0,
@@ -1029,7 +1040,11 @@ mod tests {
 
     #[test]
     fn test_sigv4_signing_determinism() {
-        let signer = SigV4Signer::new("us-east-1", "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+        let signer = SigV4Signer::new(
+            "us-east-1",
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        );
         let mut headers = BTreeMap::new();
         headers.insert("host".to_string(), "s3.amazonaws.com".to_string());
         headers.insert("x-amz-date".to_string(), "20261012T080000Z".to_string());
@@ -1045,7 +1060,9 @@ mod tests {
         );
 
         assert_eq!(date, "20261012T080000Z");
-        assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261012/us-east-1/s3/aws4_request"));
+        assert!(auth.starts_with(
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261012/us-east-1/s3/aws4_request"
+        ));
         assert!(auth.contains("SignedHeaders=host;x-amz-date"));
         assert!(auth.contains("Signature="));
     }
@@ -1058,7 +1075,10 @@ mod tests {
         // 1. Put object
         let data = b"Hello, S3 Object Storage Gateway!";
         let hash = Hash::of(data);
-        let meta = backend.put_object("greet.txt", data, Some(hash)).await.unwrap();
+        let meta = backend
+            .put_object("greet.txt", data, Some(hash))
+            .await
+            .unwrap();
         assert_eq!(meta.size, data.len() as u64);
         assert_eq!(meta.blake3_hash, Some(hash));
 
@@ -1092,7 +1112,10 @@ mod tests {
 
         let data = vec![42u8; 350]; // 4 parts: 100, 100, 100, 50
         let hash = Hash::of(&data);
-        let meta = backend.put_object_multipart("large.bin", &data, Some(hash)).await.unwrap();
+        let meta = backend
+            .put_object_multipart("large.bin", &data, Some(hash))
+            .await
+            .unwrap();
         assert_eq!(meta.size, 350);
         assert!(meta.etag.contains("-4\""));
 
@@ -1120,16 +1143,28 @@ mod tests {
         let backend = S3StorageBackend::new(cfg);
 
         // Upload local dir to S3
-        let rep_up = backend.sync_from_local(src_path, "cloud_prefix").await.unwrap();
+        let rep_up = backend
+            .sync_from_local(src_path, "cloud_prefix")
+            .await
+            .unwrap();
         assert_eq!(rep_up.objects_transferred, 2);
 
         // Download from S3 into a fresh local directory
         let temp_dst = tempfile::tempdir().unwrap();
         let dst_path = temp_dst.path();
-        let rep_down = backend.sync_to_local("cloud_prefix", dst_path).await.unwrap();
+        let rep_down = backend
+            .sync_to_local("cloud_prefix", dst_path)
+            .await
+            .unwrap();
         assert_eq!(rep_down.objects_transferred, 2);
 
-        assert_eq!(std::fs::read(dst_path.join("file1.txt")).unwrap(), b"file1 content");
-        assert_eq!(std::fs::read(dst_path.join("sub/file2.txt")).unwrap(), b"sub file2 content");
+        assert_eq!(
+            std::fs::read(dst_path.join("file1.txt")).unwrap(),
+            b"file1 content"
+        );
+        assert_eq!(
+            std::fs::read(dst_path.join("sub/file2.txt")).unwrap(),
+            b"sub file2 content"
+        );
     }
 }

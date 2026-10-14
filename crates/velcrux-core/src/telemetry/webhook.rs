@@ -65,7 +65,9 @@ impl std::str::FromStr for WebhookEventType {
             | "cluster_node_changed"
             | "cluster_node_state_changed"
             | "cluster" => Ok(Self::ClusterNodeStateChanged),
-            "geo.conflict_resolved" | "conflict_resolved" | "conflict" => Ok(Self::ConflictResolved),
+            "geo.conflict_resolved" | "conflict_resolved" | "conflict" => {
+                Ok(Self::ConflictResolved)
+            }
             "geo.tombstone_pruned" | "tombstone_pruned" | "tombstone" => Ok(Self::TombstonePruned),
             "audit.action" | "audit_action" | "audit" => Ok(Self::AuditAction),
             other => Err(format!("unknown webhook event type: '{}'", other)),
@@ -254,10 +256,7 @@ impl WebhookSubscription {
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
     /// Delivered successfully.
-    Delivered {
-        status_code: u16,
-        latency_ms: u64,
-    },
+    Delivered { status_code: u16, latency_ms: u64 },
     /// Delivery failed but scheduled for retry with exponential backoff.
     Retrying {
         attempt: usize,
@@ -265,10 +264,7 @@ pub enum DeliveryStatus {
         next_backoff_ms: u64,
     },
     /// Delivery failed permanently and routed to Dead-Letter Queue (DLQ).
-    DeadLettered {
-        attempts: usize,
-        reason: String,
-    },
+    DeadLettered { attempts: usize, reason: String },
 }
 
 /// An entry in the Dead-Letter Queue (DLQ) containing failed delivery metadata.
@@ -360,12 +356,8 @@ pub struct WebhookMetrics {
 /// Plug-in delivery sink interface for testing and simulated HTTP endpoints.
 pub trait WebhookDeliverySink: Send + Sync {
     /// Attempt delivery of a signed request.
-    fn deliver(
-        &self,
-        url: &str,
-        signature_header: &str,
-        payload_json: &str,
-    ) -> Result<u16, String>;
+    fn deliver(&self, url: &str, signature_header: &str, payload_json: &str)
+        -> Result<u16, String>;
 }
 
 /// Default mock / simulated delivery sink for testing and local operation.
@@ -650,7 +642,10 @@ mod tests {
 
         // 4. Verify fails if timestamp exceeds tolerance (replay defense)
         let invalid_skew = WebhookSigner::verify(secret, &header, payload, 60, ts + 3600);
-        assert!(!invalid_skew, "timestamp beyond tolerance must fail verification");
+        assert!(
+            !invalid_skew,
+            "timestamp beyond tolerance must fail verification"
+        );
     }
 
     #[test]
@@ -658,7 +653,8 @@ mod tests {
         let sink = Arc::new(MockWebhookSink::new());
         let bus = WebhookEventBus::with_sink("node-us-east", sink.clone());
 
-        let mut sub = WebhookSubscription::new("audit-webhook", "https://audit.corp/events", "secret123");
+        let mut sub =
+            WebhookSubscription::new("audit-webhook", "https://audit.corp/events", "secret123");
         sub.events = vec![WebhookEventType::TransferCompleted];
         bus.register_subscription(sub);
 
@@ -684,7 +680,8 @@ mod tests {
         let sink = Arc::new(MockWebhookSink::new());
         let bus = WebhookEventBus::with_sink("node-eu-west", sink.clone());
 
-        let mut sub = WebhookSubscription::new("failing-webhook", "https://down.endpoint/hook", "secret456");
+        let mut sub =
+            WebhookSubscription::new("failing-webhook", "https://down.endpoint/hook", "secret456");
         sub.max_retries = 2; // initial + 2 retries = 3 attempts total
         bus.register_subscription(sub);
 

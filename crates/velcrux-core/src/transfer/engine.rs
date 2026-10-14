@@ -2015,8 +2015,11 @@ where
         };
         return Err(VelcruxError::Protocol(
             crate::error::ProtocolError::InvalidStateTransition(Box::leak(
-                format!("expected VERIFY_RESULT (0x{:02x}), {detail}", crate::protocol::message::VERIFY_RESULT)
-                    .into_boxed_str(),
+                format!(
+                    "expected VERIFY_RESULT (0x{:02x}), {detail}",
+                    crate::protocol::message::VERIFY_RESULT
+                )
+                .into_boxed_str(),
             )),
         ));
     }
@@ -2076,7 +2079,9 @@ where
         .ok_or_else(|| VelcruxError::Protocol(crate::error::ProtocolError::Empty))?;
     let preamble = decode_data_preamble(&pre)?;
     if preamble.transfer_id != transfer_id {
-        return Err(protocol_violation("download: transfer_id mismatch in preamble"));
+        return Err(protocol_violation(
+            "download: transfer_id mismatch in preamble",
+        ));
     }
 
     let mut whole_hasher = blake3::Hasher::new();
@@ -2144,7 +2149,9 @@ where
     }
     let vr = VerifyResultMsg::decode(&frame.payload)?;
     if vr.transfer_id != transfer_id {
-        return Err(protocol_violation("download: VERIFY_RESULT transfer_id mismatch"));
+        return Err(protocol_violation(
+            "download: VERIFY_RESULT transfer_id mismatch",
+        ));
     }
     if !vr.ok {
         return Err(VelcruxError::Protocol(
@@ -2173,9 +2180,10 @@ where
     }
     let committed = CommittedMsg::decode(&frame.payload)?;
     if committed.transfer_id != transfer_id || committed.files != 1 {
-        return Err(protocol_violation("download: COMMITTED transfer_id/files mismatch"));
+        return Err(protocol_violation(
+            "download: COMMITTED transfer_id/files mismatch",
+        ));
     }
 
     Ok((local_computed, total_streamed))
 }
-

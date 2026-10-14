@@ -64,29 +64,21 @@ impl FromStr for DeleteMode {
 pub enum DeleteSafetyError {
     /// Attempted deletions exceed configured absolute file threshold.
     #[error("Deletion guardrail triggered: {attempted} files scheduled for deletion exceeds safety threshold of {limit} files (pass --force-delete to override)")]
-    MaxFilesExceeded {
-        attempted: usize,
-        limit: usize,
-    },
+    MaxFilesExceeded { attempted: usize, limit: usize },
 
     /// Attempted deletions exceed configured percentage threshold.
     #[error("Deletion guardrail triggered: {attempted_pct:.1}% of destination files scheduled for deletion exceeds safety threshold of {limit_pct:.1}% (pass --force-delete to override)")]
-    MaxPercentageExceeded {
-        attempted_pct: f64,
-        limit_pct: f64,
-    },
+    MaxPercentageExceeded { attempted_pct: f64, limit_pct: f64 },
 
     /// Security violation: deletion path attempts to escape the destination root boundary.
-    #[error("Security violation: deletion path '{path}' attempts to escape destination root boundary")]
-    PathEscapeAttempt {
-        path: String,
-    },
+    #[error(
+        "Security violation: deletion path '{path}' attempts to escape destination root boundary"
+    )]
+    PathEscapeAttempt { path: String },
 
     /// Attempted deletion of a forbidden or protected path (e.g. root or system metadata).
     #[error("Security violation: deletion of protected path '{path}' is forbidden")]
-    ProtectedPath {
-        path: String,
-    },
+    ProtectedPath { path: String },
 
     /// Destination directory path is empty or invalid.
     #[error("Invalid destination path: destination directory path is empty or root")]
@@ -334,10 +326,7 @@ pub fn matches_glob(pattern: &str, path: &str) -> bool {
     }
 
     // Recursive component-based wildcard matching
-    glob_recursive_match(
-        p_norm.as_bytes(),
-        t_norm.as_bytes(),
-    )
+    glob_recursive_match(p_norm.as_bytes(), t_norm.as_bytes())
 }
 
 fn glob_recursive_match(pattern: &[u8], text: &[u8]) -> bool {
@@ -426,9 +415,8 @@ impl TransferPlan {
         files_excluded: usize,
         dry_run: bool,
     ) -> Self {
-        let total_files = plan.summary.files_unchanged
-            + plan.summary.files_modified
-            + plan.summary.files_added;
+        let total_files =
+            plan.summary.files_unchanged + plan.summary.files_modified + plan.summary.files_added;
 
         let total_source_bytes = plan
             .actions
@@ -475,22 +463,55 @@ impl TransferPlan {
         }
         out.push_str("========================================================================================\n");
         out.push_str(&format!("Source Directory     : {}\n", self.source_path));
-        out.push_str(&format!("Destination Directory: {}\n", self.destination_path));
+        out.push_str(&format!(
+            "Destination Directory: {}\n",
+            self.destination_path
+        ));
         out.push_str(&format!("Deletion Policy      : {}\n", mode_desc));
         out.push_str("----------------------------------------------------------------------------------------\n");
-        out.push_str(&format!("Files total:           {:>14}\n", format_count(self.total_files)));
-        out.push_str(&format!("Files unchanged:       {:>14}\n", format_count(self.files_unchanged)));
-        out.push_str(&format!("Files modified:        {:>14}\n", format_count(self.files_modified)));
-        out.push_str(&format!("Files added:           {:>14}\n", format_count(self.files_added)));
-        out.push_str(&format!("Files deleted:         {:>14}\n", format_count(self.files_deleted)));
+        out.push_str(&format!(
+            "Files total:           {:>14}\n",
+            format_count(self.total_files)
+        ));
+        out.push_str(&format!(
+            "Files unchanged:       {:>14}\n",
+            format_count(self.files_unchanged)
+        ));
+        out.push_str(&format!(
+            "Files modified:        {:>14}\n",
+            format_count(self.files_modified)
+        ));
+        out.push_str(&format!(
+            "Files added:           {:>14}\n",
+            format_count(self.files_added)
+        ));
+        out.push_str(&format!(
+            "Files deleted:         {:>14}\n",
+            format_count(self.files_deleted)
+        ));
         if self.files_excluded > 0 {
-            out.push_str(&format!("Files excluded:        {:>14}\n", format_count(self.files_excluded)));
+            out.push_str(&format!(
+                "Files excluded:        {:>14}\n",
+                format_count(self.files_excluded)
+            ));
         }
         out.push_str("----------------------------------------------------------------------------------------\n");
-        out.push_str(&format!("Total source data:     {:>14}\n", format_bytes(self.total_source_bytes)));
-        out.push_str(&format!("Data already present:  {:>14}\n", format_bytes(self.bytes_reusable)));
-        out.push_str(&format!("Data to transfer:      {:>14}\n", format_bytes(self.bytes_to_transfer)));
-        out.push_str(&format!("Estimated reduction:   {:>13.1}%\n", self.estimated_reduction_pct));
+        out.push_str(&format!(
+            "Total source data:     {:>14}\n",
+            format_bytes(self.total_source_bytes)
+        ));
+        out.push_str(&format!(
+            "Data already present:  {:>14}\n",
+            format_bytes(self.bytes_reusable)
+        ));
+        out.push_str(&format!(
+            "Data to transfer:      {:>14}\n",
+            format_bytes(self.bytes_to_transfer)
+        ));
+        out.push_str(&format!(
+            "Estimated reduction:   {:>13.1}%\n",
+            self.estimated_reduction_pct
+        ));
         out.push_str("========================================================================================\n");
 
         if self.dry_run {

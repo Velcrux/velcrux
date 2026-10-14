@@ -7,8 +7,8 @@ use tempfile::tempdir;
 
 use velcrux_core::error::VelcruxError;
 use velcrux_core::storage::{
-    ChunkStore, ClusteredChunkStore, ClusterNode, ClusterNodeState,
-    ConsistentHashRing, LocalChunkStore, QuorumPolicy,
+    ChunkStore, ClusterNode, ClusterNodeState, ClusteredChunkStore, ConsistentHashRing,
+    LocalChunkStore, QuorumPolicy,
 };
 use velcrux_core::util::Hash;
 
@@ -41,7 +41,11 @@ async fn test_cluster_hash_ring_distribution() {
         let pref = ring.get_preference_list(&h, 3);
         assert_eq!(pref.len(), 3);
         let distinct: HashSet<_> = pref.iter().collect();
-        assert_eq!(distinct.len(), 3, "preference list must have distinct nodes");
+        assert_eq!(
+            distinct.len(),
+            3,
+            "preference list must have distinct nodes"
+        );
 
         for n in pref {
             *node_hits.entry(n).or_insert(0) += 1;
@@ -51,7 +55,10 @@ async fn test_cluster_hash_ring_distribution() {
     // Every node should be assigned chunks
     assert_eq!(node_hits.len(), 4);
     for (_node, count) in &node_hits {
-        assert!(*count > 20, "each node should receive a fair share of tokens");
+        assert!(
+            *count > 20,
+            "each node should receive a fair share of tokens"
+        );
     }
 }
 
@@ -75,9 +82,15 @@ async fn test_cluster_strict_consistency_and_quorum_failure() {
     let s2 = Arc::new(LocalChunkStore::new(dir2.path()).await.unwrap());
     let s3 = Arc::new(LocalChunkStore::new(dir3.path()).await.unwrap());
 
-    cluster.register_node(ClusterNode::new("node-a", socket(9101)), s1.clone()).unwrap();
-    cluster.register_node(ClusterNode::new("node-b", socket(9102)), s2.clone()).unwrap();
-    cluster.register_node(ClusterNode::new("node-c", socket(9103)), s3.clone()).unwrap();
+    cluster
+        .register_node(ClusterNode::new("node-a", socket(9101)), s1.clone())
+        .unwrap();
+    cluster
+        .register_node(ClusterNode::new("node-b", socket(9102)), s2.clone())
+        .unwrap();
+    cluster
+        .register_node(ClusterNode::new("node-c", socket(9103)), s3.clone())
+        .unwrap();
 
     let data = b"strict-consistency-quorum-payload";
     let hash = Hash::of(data);
@@ -129,9 +142,15 @@ async fn test_cluster_rebalance_and_report() {
     let s2 = Arc::new(LocalChunkStore::new(dir2.path()).await.unwrap());
     let s3 = Arc::new(LocalChunkStore::new(dir3.path()).await.unwrap());
 
-    cluster.register_node(ClusterNode::new("n1", socket(9201)), s1.clone()).unwrap();
-    cluster.register_node(ClusterNode::new("n2", socket(9202)), s2.clone()).unwrap();
-    cluster.register_node(ClusterNode::new("n3", socket(9203)), s3.clone()).unwrap();
+    cluster
+        .register_node(ClusterNode::new("n1", socket(9201)), s1.clone())
+        .unwrap();
+    cluster
+        .register_node(ClusterNode::new("n2", socket(9202)), s2.clone())
+        .unwrap();
+    cluster
+        .register_node(ClusterNode::new("n3", socket(9203)), s3.clone())
+        .unwrap();
 
     for i in 0..10 {
         let chunk = format!("cluster-rebalance-test-chunk-{}", i);

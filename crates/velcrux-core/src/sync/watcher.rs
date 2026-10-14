@@ -481,11 +481,7 @@ impl DebounceQueue {
     }
 
     /// Drain events whose debounce quiet window has expired into a ChangeBatch.
-    pub fn drain_ready(
-        &mut self,
-        debounce_window: Duration,
-        now: Instant,
-    ) -> Option<ChangeBatch> {
+    pub fn drain_ready(&mut self, debounce_window: Duration, now: Instant) -> Option<ChangeBatch> {
         if self.pending.is_empty() {
             self.first_event_at = None;
             return None;

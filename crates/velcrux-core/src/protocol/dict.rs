@@ -27,9 +27,8 @@ pub const MIN_TRAINING_SAMPLES: usize = 5;
 
 /// Common binary and compressed file extensions that should be skipped during sample gathering.
 pub const DEFAULT_SKIPPED_EXTENSIONS: &[&str] = &[
-    "gz", "zip", "zst", "tar", "tgz", "bz2", "xz", "7z", "rar",
-    "png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi", "mkv",
-    "mp3", "flac", "wav", "pdf", "iso", "bin",
+    "gz", "zip", "zst", "tar", "tgz", "bz2", "xz", "7z", "rar", "png", "jpg", "jpeg", "gif",
+    "webp", "mp4", "mov", "avi", "mkv", "mp3", "flac", "wav", "pdf", "iso", "bin",
 ];
 
 /// Metadata header describing a stored pre-trained Zstandard dictionary.
@@ -147,9 +146,7 @@ pub fn decompress_with_dict_bounded(
 
     if dict_bytes.is_empty() {
         return crate::protocol::compression::decompress_payload_bounded(
-            compressed,
-            max_bytes,
-            max_ratio,
+            compressed, max_bytes, max_ratio,
         );
     }
 
@@ -274,8 +271,9 @@ impl DictionaryTrainer {
         }
 
         let dict_size = target_dict_size.clamp(1024, DEFAULT_MAX_DICT_SIZE);
-        let trained_bytes = zstd::dict::from_samples(&valid_samples, dict_size)
-            .map_err(|e| VelcruxError::Internal(format!("zstd dictionary training failed: {}", e)))?;
+        let trained_bytes = zstd::dict::from_samples(&valid_samples, dict_size).map_err(|e| {
+            VelcruxError::Internal(format!("zstd dictionary training failed: {}", e))
+        })?;
 
         let checksum_bytes = blake3::hash(&trained_bytes);
         let checksum = checksum_bytes.to_hex()[..16].to_string();
@@ -507,7 +505,8 @@ impl DictionaryCatalog {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        let dict = self.get_by_id(dict_id)?
+        let dict = self
+            .get_by_id(dict_id)?
             .ok_or_else(|| VelcruxError::Config(format!("dict ID {dict_id} not found")))?;
         fs::write(dest, &dict.dict_bytes)?;
         Ok(())
@@ -536,15 +535,13 @@ impl DictionaryCatalog {
             dict_id = 1;
         }
 
-        let dict_name = name
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                source
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("imported-dict")
-                    .to_string()
-            });
+        let dict_name = name.map(|s| s.to_string()).unwrap_or_else(|| {
+            source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("imported-dict")
+                .to_string()
+        });
 
         let metadata = DictionaryMetadata {
             dict_id,
@@ -569,8 +566,9 @@ impl DictionaryCatalog {
     fn save_catalog_index(&self) -> Result<(), VelcruxError> {
         let map = self.metadata_map.read().unwrap();
         let list: Vec<&DictionaryMetadata> = map.values().collect();
-        let json_bytes = serde_json::to_vec_pretty(&list)
-            .map_err(|e| VelcruxError::Internal(format!("failed to serialize catalog index: {}", e)))?;
+        let json_bytes = serde_json::to_vec_pretty(&list).map_err(|e| {
+            VelcruxError::Internal(format!("failed to serialize catalog index: {}", e))
+        })?;
 
         let tmp_file = self.catalog_file.with_extension("tmp");
         {
