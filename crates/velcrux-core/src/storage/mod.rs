@@ -21,16 +21,22 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub mod azure;
 pub mod chunk_store;
 pub mod cluster;
 pub mod dedup_defense;
 pub mod direct_io;
 pub mod gc;
+pub mod gcs;
 pub mod memory;
 pub mod s3;
 pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
+pub use azure::{
+    AzureBlobConfig, AzureBlobMeta, AzureBlobStorageBackend, AzureBlobSyncReport, AzureError,
+    AzureSharedKeySigner,
+};
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use cluster::{
     ClusterNode, ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing,
@@ -47,6 +53,7 @@ pub use direct_io::{
 pub use gc::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, ChunkStoreGcReport, StagingGcReport,
 };
+pub use gcs::{GcsConfig, GcsError, GcsObjectMeta, GcsStorageBackend, GcsSyncReport};
 pub use memory::{MemoryFile, MemoryStorageBackend};
 pub use s3::{S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer};
 pub use scrub::{

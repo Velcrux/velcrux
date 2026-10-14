@@ -448,6 +448,16 @@ enum Cmd {
         #[command(subcommand)]
         sub: S3SubCmd,
     },
+    /// Google Cloud Storage (GCS) gateway backend (Option BK).
+    Gcs {
+        #[command(subcommand)]
+        sub: GcsSubCmd,
+    },
+    /// Azure Blob Storage gateway backend (Option BK).
+    Azure {
+        #[command(subcommand)]
+        sub: AzureSubCmd,
+    },
     /// Inspect local network interfaces and bonded multi-path transport status (Option AX).
     Multipath {
         /// Optional target server URL to evaluate subflow path reachability (e.g. velcrux://host:7443/).
@@ -709,6 +719,218 @@ enum S3SubCmd {
         /// S3 region override.
         #[arg(long)]
         region: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum GcsSubCmd {
+    /// List objects in a GCS bucket or prefix (gs://bucket/prefix).
+    Ls {
+        /// GCS URL (e.g. gs://bucket/ or gs://bucket/prefix).
+        gcs_url: String,
+        /// Optional delimiter (e.g. "/").
+        #[arg(long)]
+        delimiter: Option<String>,
+        /// GCS endpoint override (e.g. http://127.0.0.1:4443).
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Inspect metadata for a single GCS object (gs://bucket/name).
+    Stat {
+        /// GCS URL (e.g. gs://bucket/name).
+        gcs_url: String,
+        /// GCS endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Upload a local file to GCS.
+    Put {
+        /// Local file to upload.
+        local: PathBuf,
+        /// Target GCS URL (e.g. gs://bucket/name).
+        gcs_url: String,
+        /// GCS endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+        /// Resumable chunk size in bytes (default: 8 MiB).
+        #[arg(long)]
+        chunk_size: Option<usize>,
+    },
+    /// Download an object from GCS to a local file.
+    Get {
+        /// Source GCS URL (e.g. gs://bucket/name).
+        gcs_url: String,
+        /// Local destination file path.
+        local: PathBuf,
+        /// GCS endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+        /// Optional byte range start (inclusive).
+        #[arg(long)]
+        range_start: Option<u64>,
+        /// Optional byte range end (inclusive).
+        #[arg(long)]
+        range_end: Option<u64>,
+    },
+    /// Delete an object from GCS.
+    Delete {
+        /// GCS URL to delete (e.g. gs://bucket/name).
+        gcs_url: String,
+        /// GCS endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Synchronize between local filesystem and GCS bucket prefix.
+    Sync {
+        /// Source path or GCS URL (e.g. ./data or gs://bucket/prefix).
+        source: String,
+        /// Destination path or GCS URL (e.g. gs://bucket/prefix or ./data).
+        destination: String,
+        /// GCS endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// OAuth2 bearer token override.
+        #[arg(long)]
+        token: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AzureSubCmd {
+    /// List blobs in an Azure container or prefix (az://container/prefix).
+    Ls {
+        /// Azure URL (e.g. az://container/ or az://container/prefix).
+        azure_url: String,
+        /// Optional delimiter (e.g. "/").
+        #[arg(long)]
+        delimiter: Option<String>,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
+    },
+    /// Inspect metadata for a single Azure blob (az://container/blob_name).
+    Stat {
+        /// Azure URL (e.g. az://container/blob_name).
+        azure_url: String,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
+    },
+    /// Upload a local file to Azure Blob Storage.
+    Put {
+        /// Local file to upload.
+        local: PathBuf,
+        /// Target Azure URL (e.g. az://container/blob_name).
+        azure_url: String,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
+        /// Block size in bytes (default: 8 MiB).
+        #[arg(long)]
+        block_size: Option<usize>,
+    },
+    /// Download a blob from Azure Blob Storage to a local file.
+    Get {
+        /// Source Azure URL (e.g. az://container/blob_name).
+        azure_url: String,
+        /// Local destination file path.
+        local: PathBuf,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
+        /// Optional byte range start (inclusive).
+        #[arg(long)]
+        range_start: Option<u64>,
+        /// Optional byte range end (inclusive).
+        #[arg(long)]
+        range_end: Option<u64>,
+    },
+    /// Delete a blob from Azure Blob Storage.
+    Delete {
+        /// Azure URL to delete (e.g. az://container/blob_name).
+        azure_url: String,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
+    },
+    /// Synchronize between local filesystem and Azure container prefix.
+    Sync {
+        /// Source path or Azure URL (e.g. ./data or az://container/prefix).
+        source: String,
+        /// Destination path or Azure URL (e.g. az://container/prefix or ./data).
+        destination: String,
+        /// Azure Blob endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Azure Storage account name override.
+        #[arg(long)]
+        account_name: Option<String>,
+        /// Azure Storage account SharedKey override.
+        #[arg(long)]
+        account_key: Option<String>,
+        /// Azure SAS token override.
+        #[arg(long)]
+        sas_token: Option<String>,
     },
 }
 
@@ -1444,6 +1666,14 @@ async fn main() -> anyhow::Result<()> {
             run_s3(&cli, sub).await?;
             return Ok(());
         }
+        Cmd::Gcs { sub } => {
+            run_gcs(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Azure { sub } => {
+            run_azure(&cli, sub).await?;
+            return Ok(());
+        }
         Cmd::Multipath { target } => {
             run_multipath_status(&cli, target.as_deref()).await?;
             return Ok(());
@@ -1526,6 +1756,47 @@ async fn main() -> anyhow::Result<()> {
             session.bye().await.ok();
         }
         Cmd::Upload { local, url } => {
+            if url.starts_with("s3://") {
+                return run_s3(
+                    &cli,
+                    &S3SubCmd::Put {
+                        local: local.clone(),
+                        s3_url: url.clone(),
+                        endpoint: None,
+                        region: None,
+                        multipart_size: None,
+                    },
+                )
+                .await;
+            }
+            if url.starts_with("gs://") {
+                return run_gcs(
+                    &cli,
+                    &GcsSubCmd::Put {
+                        local: local.clone(),
+                        gcs_url: url.clone(),
+                        endpoint: None,
+                        token: None,
+                        chunk_size: None,
+                    },
+                )
+                .await;
+            }
+            if url.starts_with("az://") || url.starts_with("azure://") {
+                return run_azure(
+                    &cli,
+                    &AzureSubCmd::Put {
+                        local: local.clone(),
+                        azure_url: url.clone(),
+                        endpoint: None,
+                        account_name: None,
+                        account_key: None,
+                        sas_token: None,
+                        block_size: None,
+                    },
+                )
+                .await;
+            }
             let (addr, path) = parse_url_with_path(url)?;
             let sni = get_sni(&cli, url);
             let transport = build_transport_target(&cli, Some(addr))?;
@@ -1541,6 +1812,50 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Cmd::Download { url, local } => {
+            if url.starts_with("s3://") {
+                return run_s3(
+                    &cli,
+                    &S3SubCmd::Get {
+                        s3_url: url.clone(),
+                        local: local.clone(),
+                        endpoint: None,
+                        region: None,
+                        range_start: None,
+                        range_end: None,
+                    },
+                )
+                .await;
+            }
+            if url.starts_with("gs://") {
+                return run_gcs(
+                    &cli,
+                    &GcsSubCmd::Get {
+                        gcs_url: url.clone(),
+                        local: local.clone(),
+                        endpoint: None,
+                        token: None,
+                        range_start: None,
+                        range_end: None,
+                    },
+                )
+                .await;
+            }
+            if url.starts_with("az://") || url.starts_with("azure://") {
+                return run_azure(
+                    &cli,
+                    &AzureSubCmd::Get {
+                        azure_url: url.clone(),
+                        local: local.clone(),
+                        endpoint: None,
+                        account_name: None,
+                        account_key: None,
+                        sas_token: None,
+                        range_start: None,
+                        range_end: None,
+                    },
+                )
+                .await;
+            }
             let (addr, path) = parse_url_with_path(url)?;
             let sni = get_sni(&cli, url);
             let transport = build_transport_target(&cli, Some(addr))?;
@@ -3635,6 +3950,38 @@ async fn run_sync(
         .await;
     }
 
+    if destination.starts_with("gs://") || source.starts_with("gs://") {
+        return run_gcs(
+            cli,
+            &GcsSubCmd::Sync {
+                source: source.to_string(),
+                destination: destination.to_string(),
+                endpoint: None,
+                token: None,
+            },
+        )
+        .await;
+    }
+
+    if destination.starts_with("az://")
+        || source.starts_with("az://")
+        || destination.starts_with("azure://")
+        || source.starts_with("azure://")
+    {
+        return run_azure(
+            cli,
+            &AzureSubCmd::Sync {
+                source: source.to_string(),
+                destination: destination.to_string(),
+                endpoint: None,
+                account_name: None,
+                account_key: None,
+                sas_token: None,
+            },
+        )
+        .await;
+    }
+
     if src_is_remote && dst_is_remote {
         anyhow::bail!("cross-server sync between two remote URLs is not supported");
     }
@@ -4272,6 +4619,643 @@ async fn run_s3(cli: &Cli, sub: &S3SubCmd) -> anyhow::Result<()> {
             } else {
                 anyhow::bail!(
                     "s3 sync requires one local path and one s3:// URL (got '{}' and '{}')",
+                    source,
+                    destination
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_gcs(cli: &Cli, sub: &GcsSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        GcsSubCmd::Ls {
+            gcs_url,
+            delimiter,
+            endpoint,
+            token,
+        } => {
+            let (bucket, prefix) = velcrux_core::storage::GcsConfig::parse_gs_url(gcs_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(tok) = token {
+                cfg.token = Some(tok.clone());
+            }
+            let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+            let objects = backend
+                .list_objects(&prefix, delimiter.as_deref())
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&objects)?);
+            } else {
+                println!(
+                    "{:<40} {:>12}  {:<64}",
+                    "OBJECT NAME", "SIZE", "ETAG / HASH"
+                );
+                println!("{:-<40} {:-<12}  {:-<64}", "", "", "");
+                for obj in &objects {
+                    let hash_str = obj
+                        .blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| obj.etag.clone());
+                    println!("{:<40} {:>12}  {:<64}", obj.name, obj.size, hash_str);
+                }
+            }
+        }
+        GcsSubCmd::Stat {
+            gcs_url,
+            endpoint,
+            token,
+        } => {
+            let (bucket, name) = velcrux_core::storage::GcsConfig::parse_gs_url(gcs_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(tok) = token {
+                cfg.token = Some(tok.clone());
+            }
+            let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+            let meta = backend
+                .head_object(&name)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+                .ok_or_else(|| anyhow::anyhow!("object gs://{}/{} not found", bucket, name))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!("GCS Object Metadata: gs://{}/{}", bucket, name);
+                println!("  Size:          {} bytes", meta.size);
+                println!("  ETag:          {}", meta.etag);
+                println!("  Generation:    {}", meta.generation);
+                println!(
+                    "  BLAKE3:        {}",
+                    meta.blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!("  Last Updated:  {} (unix sec)", meta.updated_sec);
+            }
+        }
+        GcsSubCmd::Put {
+            local,
+            gcs_url,
+            endpoint,
+            token,
+            chunk_size,
+        } => {
+            let (bucket, name) = velcrux_core::storage::GcsConfig::parse_gs_url(gcs_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(tok) = token {
+                cfg.token = Some(tok.clone());
+            }
+            if let Some(cs) = chunk_size {
+                cfg.chunk_size_bytes = *cs;
+            }
+            let data = std::fs::read(local)
+                .with_context(|| format!("reading local file {}", local.display()))?;
+            let hash = velcrux_core::Hash::of(&data);
+            let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+            let meta = backend
+                .put_object_resumable(&name, &data, Some(hash))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!(
+                    "Successfully uploaded {} ({} bytes) to gs://{}/{} [etag: {}, generation: {}]",
+                    local.display(),
+                    meta.size,
+                    bucket,
+                    name,
+                    meta.etag,
+                    meta.generation
+                );
+            }
+        }
+        GcsSubCmd::Get {
+            gcs_url,
+            local,
+            endpoint,
+            token,
+            range_start,
+            range_end,
+        } => {
+            let (bucket, name) = velcrux_core::storage::GcsConfig::parse_gs_url(gcs_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(tok) = token {
+                cfg.token = Some(tok.clone());
+            }
+            let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+            let data = match (range_start, range_end) {
+                (Some(s), Some(e)) => backend
+                    .get_object_range(&name, *s, *e)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+                _ => backend
+                    .get_object(&name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+            };
+
+            if let Some(parent) = local.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(local, &data)
+                .with_context(|| format!("writing local destination {}", local.display()))?;
+
+            if is_json {
+                let report = serde_json::json!({
+                    "gcs_url": gcs_url,
+                    "local": local.display().to_string(),
+                    "bytes": data.len(),
+                    "range": match (range_start, range_end) {
+                        (Some(s), Some(e)) => format!("{}-{}", s, e),
+                        _ => "full".to_string(),
+                    }
+                });
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Successfully downloaded gs://{}/{} ({} bytes) to {}",
+                    bucket,
+                    name,
+                    data.len(),
+                    local.display()
+                );
+            }
+        }
+        GcsSubCmd::Delete {
+            gcs_url,
+            endpoint,
+            token,
+        } => {
+            let (bucket, name) = velcrux_core::storage::GcsConfig::parse_gs_url(gcs_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(tok) = token {
+                cfg.token = Some(tok.clone());
+            }
+            let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+            backend
+                .delete_object(&name)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                let report = serde_json::json!({
+                    "deleted": gcs_url,
+                    "bucket": bucket,
+                    "name": name,
+                    "status": "success",
+                });
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Successfully deleted gs://{}/{}", bucket, name);
+            }
+        }
+        GcsSubCmd::Sync {
+            source,
+            destination,
+            endpoint,
+            token,
+        } => {
+            let src_is_gcs = source.starts_with("gs://");
+            let dst_is_gcs = destination.starts_with("gs://");
+
+            if src_is_gcs && !dst_is_gcs {
+                let (bucket, prefix) = velcrux_core::storage::GcsConfig::parse_gs_url(source)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                    .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(tok) = token {
+                    cfg.token = Some(tok.clone());
+                }
+                let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+                let report = backend
+                    .sync_to_local(&prefix, Path::new(destination))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("GCS Download Sync Complete: {} -> {}", source, destination);
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Downloaded:  {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else if dst_is_gcs && !src_is_gcs {
+                let (bucket, prefix) = velcrux_core::storage::GcsConfig::parse_gs_url(destination)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::GcsConfig::from_env(&bucket)
+                    .unwrap_or_else(|_| velcrux_core::storage::GcsConfig::new(&bucket));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(tok) = token {
+                    cfg.token = Some(tok.clone());
+                }
+                let backend = velcrux_core::storage::GcsStorageBackend::new(cfg);
+                let report = backend
+                    .sync_from_local(Path::new(source), &prefix)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("GCS Upload Sync Complete: {} -> {}", source, destination);
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Uploaded:    {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else {
+                anyhow::bail!(
+                    "gcs sync requires one local path and one gs:// URL (got '{}' and '{}')",
+                    source,
+                    destination
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_azure(cli: &Cli, sub: &AzureSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        AzureSubCmd::Ls {
+            azure_url,
+            delimiter,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+        } => {
+            let (container, prefix) =
+                velcrux_core::storage::AzureBlobConfig::parse_azure_url(azure_url)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(acc) = account_name {
+                cfg.account_name = acc.clone();
+            }
+            if let Some(key) = account_key {
+                cfg.account_key = Some(key.clone());
+            }
+            if let Some(sas) = sas_token {
+                cfg.sas_token = Some(sas.clone());
+            }
+            let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+            let blobs = backend
+                .list_blobs(&prefix, delimiter.as_deref())
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&blobs)?);
+            } else {
+                println!("{:<40} {:>12}  {:<64}", "BLOB NAME", "SIZE", "ETAG / HASH");
+                println!("{:-<40} {:-<12}  {:-<64}", "", "", "");
+                for b in &blobs {
+                    let hash_str = b
+                        .blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| b.etag.clone());
+                    println!("{:<40} {:>12}  {:<64}", b.name, b.size, hash_str);
+                }
+            }
+        }
+        AzureSubCmd::Stat {
+            azure_url,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+        } => {
+            let (container, blob_name) =
+                velcrux_core::storage::AzureBlobConfig::parse_azure_url(azure_url)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(acc) = account_name {
+                cfg.account_name = acc.clone();
+            }
+            if let Some(key) = account_key {
+                cfg.account_key = Some(key.clone());
+            }
+            if let Some(sas) = sas_token {
+                cfg.sas_token = Some(sas.clone());
+            }
+            let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+            let meta = backend
+                .get_blob_properties(&blob_name)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("blob az://{}/{} not found", container, blob_name)
+                })?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!("Azure Blob Properties: az://{}/{}", container, blob_name);
+                println!("  Size:          {} bytes", meta.size);
+                println!("  ETag:          {}", meta.etag);
+                println!(
+                    "  BLAKE3:        {}",
+                    meta.blake3_hash
+                        .map(|h| h.to_hex())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!("  Last Modified: {} (unix sec)", meta.last_modified_sec);
+            }
+        }
+        AzureSubCmd::Put {
+            local,
+            azure_url,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+            block_size,
+        } => {
+            let (container, blob_name) =
+                velcrux_core::storage::AzureBlobConfig::parse_azure_url(azure_url)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(acc) = account_name {
+                cfg.account_name = acc.clone();
+            }
+            if let Some(key) = account_key {
+                cfg.account_key = Some(key.clone());
+            }
+            if let Some(sas) = sas_token {
+                cfg.sas_token = Some(sas.clone());
+            }
+            if let Some(bs) = block_size {
+                cfg.block_size_bytes = *bs;
+            }
+            let data = std::fs::read(local)
+                .with_context(|| format!("reading local file {}", local.display()))?;
+            let hash = velcrux_core::Hash::of(&data);
+            let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+            let meta = backend
+                .put_blob_blocks(&blob_name, &data, Some(hash))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&meta)?);
+            } else {
+                println!(
+                    "Successfully uploaded {} ({} bytes) to az://{}/{} [etag: {}]",
+                    local.display(),
+                    meta.size,
+                    container,
+                    blob_name,
+                    meta.etag
+                );
+            }
+        }
+        AzureSubCmd::Get {
+            azure_url,
+            local,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+            range_start,
+            range_end,
+        } => {
+            let (container, blob_name) =
+                velcrux_core::storage::AzureBlobConfig::parse_azure_url(azure_url)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(acc) = account_name {
+                cfg.account_name = acc.clone();
+            }
+            if let Some(key) = account_key {
+                cfg.account_key = Some(key.clone());
+            }
+            if let Some(sas) = sas_token {
+                cfg.sas_token = Some(sas.clone());
+            }
+            let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+            let data = match (range_start, range_end) {
+                (Some(s), Some(e)) => backend
+                    .get_blob_range(&blob_name, *s, *e)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+                _ => backend
+                    .get_blob(&blob_name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?,
+            };
+
+            if let Some(parent) = local.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(local, &data)
+                .with_context(|| format!("writing local destination {}", local.display()))?;
+
+            if is_json {
+                let report = serde_json::json!({
+                    "azure_url": azure_url,
+                    "local": local.display().to_string(),
+                    "bytes": data.len(),
+                    "range": match (range_start, range_end) {
+                        (Some(s), Some(e)) => format!("{}-{}", s, e),
+                        _ => "full".to_string(),
+                    }
+                });
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Successfully downloaded az://{}/{} ({} bytes) to {}",
+                    container,
+                    blob_name,
+                    data.len(),
+                    local.display()
+                );
+            }
+        }
+        AzureSubCmd::Delete {
+            azure_url,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+        } => {
+            let (container, blob_name) =
+                velcrux_core::storage::AzureBlobConfig::parse_azure_url(azure_url)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(acc) = account_name {
+                cfg.account_name = acc.clone();
+            }
+            if let Some(key) = account_key {
+                cfg.account_key = Some(key.clone());
+            }
+            if let Some(sas) = sas_token {
+                cfg.sas_token = Some(sas.clone());
+            }
+            let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+            backend
+                .delete_blob(&blob_name)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                let report = serde_json::json!({
+                    "deleted": azure_url,
+                    "container": container,
+                    "blob_name": blob_name,
+                    "status": "success",
+                });
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Successfully deleted az://{}/{}", container, blob_name);
+            }
+        }
+        AzureSubCmd::Sync {
+            source,
+            destination,
+            endpoint,
+            account_name,
+            account_key,
+            sas_token,
+        } => {
+            let src_is_az = source.starts_with("az://") || source.starts_with("azure://");
+            let dst_is_az = destination.starts_with("az://") || destination.starts_with("azure://");
+
+            if src_is_az && !dst_is_az {
+                let (container, prefix) =
+                    velcrux_core::storage::AzureBlobConfig::parse_azure_url(source)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                    .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(acc) = account_name {
+                    cfg.account_name = acc.clone();
+                }
+                if let Some(key) = account_key {
+                    cfg.account_key = Some(key.clone());
+                }
+                if let Some(sas) = sas_token {
+                    cfg.sas_token = Some(sas.clone());
+                }
+                let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+                let report = backend
+                    .sync_to_local(&prefix, Path::new(destination))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!(
+                        "Azure Download Sync Complete: {} -> {}",
+                        source, destination
+                    );
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Downloaded:  {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else if dst_is_az && !src_is_az {
+                let (container, prefix) =
+                    velcrux_core::storage::AzureBlobConfig::parse_azure_url(destination)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                let mut cfg = velcrux_core::storage::AzureBlobConfig::from_env(&container)
+                    .unwrap_or_else(|_| velcrux_core::storage::AzureBlobConfig::new(&container));
+                if let Some(ep) = endpoint {
+                    cfg.endpoint = ep.clone();
+                }
+                if let Some(acc) = account_name {
+                    cfg.account_name = acc.clone();
+                }
+                if let Some(key) = account_key {
+                    cfg.account_key = Some(key.clone());
+                }
+                if let Some(sas) = sas_token {
+                    cfg.sas_token = Some(sas.clone());
+                }
+                let backend = velcrux_core::storage::AzureBlobStorageBackend::new(cfg);
+                let report = backend
+                    .sync_from_local(Path::new(source), &prefix)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+
+                if is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("Azure Upload Sync Complete: {} -> {}", source, destination);
+                    println!("  Total Objects:       {}", report.total_objects);
+                    println!("  Objects Uploaded:    {}", report.objects_transferred);
+                    println!("  Objects Unchanged:   {}", report.objects_unchanged);
+                    println!("  Bytes Transferred:   {}", report.bytes_transferred);
+                    println!("  Bytes Reused:        {}", report.bytes_reused);
+                }
+            } else {
+                anyhow::bail!(
+                    "azure sync requires one local path and one az:// or azure:// URL (got '{}' and '{}')",
                     source,
                     destination
                 );

@@ -78,11 +78,13 @@ pub use scheduler::{
 };
 pub use storage::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, AlignedSectorBuffer,
-    BackgroundScrubDaemon, ChunkAclEntry, ChunkIntegrityStatus, ChunkPoisonReport,
-    ChunkQuarantineManager, ChunkStore, ChunkStoreGcReport, ClusterNode, ClusterNodeState,
-    ClusterReport, ClusteredChunkStore, ConsistentHashRing, DataScrubber, DedupAuditReport,
-    DedupNamespacePolicy, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
-    FileMeta, LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend,
+    AzureBlobConfig, AzureBlobMeta, AzureBlobStorageBackend, AzureBlobSyncReport, AzureError,
+    AzureSharedKeySigner, BackgroundScrubDaemon, ChunkAclEntry, ChunkIntegrityStatus,
+    ChunkPoisonReport, ChunkQuarantineManager, ChunkStore, ChunkStoreGcReport, ClusterNode,
+    ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing, DataScrubber,
+    DedupAuditReport, DedupNamespacePolicy, DirectFileReader, DirectFileWriter, DirectIoConfig,
+    DirectIoMode, FileMeta, GcsConfig, GcsError, GcsObjectMeta, GcsStorageBackend, GcsSyncReport,
+    LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend,
     NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk, QuorumPolicy,
     ReplicationReport, S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport,
     ScrubFinding, ScrubMode, ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff, Staging,

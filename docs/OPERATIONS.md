@@ -2292,6 +2292,166 @@ velcrux --json dedup quarantine list --chunk-store /var/lib/velcrux/chunks
 velcrux dedup quarantine purge --chunk-store /var/lib/velcrux/chunks
 ```
 
+---
+
+## 45. Multi-Cloud Object Storage Gateways: Google Cloud Storage (GCS) and Azure Blob Storage (Option BK)
+
+### 1. Overview & Architecture
+
+Velcrux provides native, pure-Rust multi-cloud object storage gateways for **Google Cloud Storage (GCS)** and **Microsoft Azure Blob Storage (Azure Blob)** without external cloud SDKs or C libraries:
+- **Zero-SDK Pure-Rust Implementation**: Built with `#![forbid(unsafe_code)]` compliance using workspace cryptography (`ring` and `sha2`).
+- **URL Interoperability**: Transparent handling of `gs://<bucket>/<key>` and `az://<container>/<blob>` / `azure://<container>/<blob>`.
+- **Chunked Resumable Uploads**: GCS Resumable Upload sessions and Azure Block Blob (`Put Block` + `Put Block List`) multi-chunk streaming pipelines.
+- **Cryptographic BLAKE3 Metadata Preservation**: Stored in `x-goog-meta-blake3` and `x-ms-meta-blake3` alongside POSIX modes and timestamps.
+- **Streaming Byte-Range Access**: Supports HTTP byte ranges for random reads, chunk extractions, and delta syncing.
+- **Bi-directional Synchronization**: Bidirectional diffing, hash validation, and idempotent transfers between local filesystems and cloud containers.
+
+---
+
+### 2. Authentication & Environment Configuration
+
+#### Google Cloud Storage (GCS)
+| Variable | Description | Default |
+|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Service Account JSON credentials | None |
+| `STORAGE_EMULATOR_HOST` / `GCS_ENDPOINT` | Custom GCS endpoint or local emulator | `https://storage.googleapis.com` |
+| `GCS_ACCESS_TOKEN` / `GCS_TOKEN` | OAuth2 Bearer token override | None |
+
+#### Azure Blob Storage
+| Variable | Description | Default |
+|---|---|---|
+| `AZURE_STORAGE_ACCOUNT` | Azure Storage Account name | `devstoreaccount1` |
+| `AZURE_STORAGE_KEY` / `AZURE_STORAGE_ACCESS_KEY` | Account SharedKey (base64-encoded) | None |
+| `AZURE_STORAGE_SAS_TOKEN` | Shared Access Signature query string (e.g. `?sp=r&...`) | None |
+| `AZURE_STORAGE_ENDPOINT` | Custom endpoint (e.g. Azurite emulator) | `https://<account>.blob.core.windows.net` |
+
+---
+
+### 3. Google Cloud Storage CLI Reference (`velcrux gcs`)
+
+#### 1. Upload Object (`velcrux gcs put`)
+```bash
+# Upload a local file to GCS with automatic resumable chunking
+velcrux gcs put ./backups/database.tar.gz gs://prod-backups/database.tar.gz
+
+# Configure custom chunk size (e.g. 16 MiB)
+velcrux gcs put ./archive.iso gs://prod-backups/archive.iso --chunk-size 16777216
+
+# Upload via generic velcrux upload command
+velcrux upload ./archive.iso gs://prod-backups/archive.iso
+```
+
+#### 2. Inspect Object Metadata (`velcrux gcs stat`)
+```bash
+# Human-readable inspection
+velcrux gcs stat gs://prod-backups/database.tar.gz
+
+# Machine-readable JSON output
+velcrux --json gcs stat gs://prod-backups/database.tar.gz
+```
+
+#### 3. List Objects (`velcrux gcs ls`)
+```bash
+# List all objects matching prefix
+velcrux gcs ls gs://prod-backups/2026/
+
+# Hierarchical directory listing with delimiter
+velcrux gcs ls gs://prod-backups/ --delimiter /
+```
+
+#### 4. Download Object or Byte Range (`velcrux gcs get`)
+```bash
+# Download complete object
+velcrux gcs get gs://prod-backups/database.tar.gz ./restored.tar.gz
+
+# Download specific byte range (first 64 KiB)
+velcrux gcs get gs://prod-backups/database.tar.gz ./header.bin --range-start 0 --range-end 65535
+
+# Download via generic velcrux download command
+velcrux download gs://prod-backups/database.tar.gz ./restored.tar.gz
+```
+
+#### 5. Delete Object (`velcrux gcs delete`)
+```bash
+velcrux gcs delete gs://prod-backups/database.tar.gz
+```
+
+#### 6. Bi-directional Synchronization (`velcrux gcs sync`)
+```bash
+# Upload local directory to GCS bucket prefix
+velcrux gcs sync ./local_data gs://prod-backups/datasets/
+
+# Download GCS bucket prefix to local directory
+velcrux gcs sync gs://prod-backups/datasets/ ./restored_data
+
+# Automatic routing via top-level sync command
+velcrux sync ./local_data gs://prod-backups/datasets/
+```
+
+---
+
+### 4. Azure Blob Storage CLI Reference (`velcrux azure`)
+
+#### 1. Upload Blob (`velcrux azure put`)
+```bash
+# Upload a local file to Azure Block Blob
+velcrux azure put ./backups/database.tar.gz az://prod-backups/database.tar.gz
+
+# Configure block size for multi-block streaming
+velcrux azure put ./dataset.raw az://prod-backups/dataset.raw --block-size 8388608
+
+# Upload via generic velcrux upload command
+velcrux upload ./dataset.raw az://prod-backups/dataset.raw
+```
+
+#### 2. Inspect Blob Properties (`velcrux azure stat`)
+```bash
+# Human-readable properties
+velcrux azure stat az://prod-backups/database.tar.gz
+
+# Machine-readable JSON output
+velcrux --json azure stat az://prod-backups/database.tar.gz
+```
+
+#### 3. List Blobs (`velcrux azure ls`)
+```bash
+# List all blobs in container or prefix
+velcrux azure ls az://prod-backups/logs/
+
+# Hierarchical delimiter navigation
+velcrux azure ls az://prod-backups/ --delimiter /
+```
+
+#### 4. Download Blob or Byte Range (`velcrux azure get`)
+```bash
+# Download complete blob
+velcrux azure get az://prod-backups/database.tar.gz ./restored.tar.gz
+
+# Download byte range (bytes 1024-4096)
+velcrux azure get az://prod-backups/database.tar.gz ./chunk.dat --range-start 1024 --range-end 4096
+
+# Download via generic velcrux download command
+velcrux download az://prod-backups/database.tar.gz ./restored.tar.gz
+```
+
+#### 5. Delete Blob (`velcrux azure delete`)
+```bash
+velcrux azure delete az://prod-backups/database.tar.gz
+```
+
+#### 6. Bi-directional Synchronization (`velcrux azure sync`)
+```bash
+# Upload local directory to Azure container prefix
+velcrux azure sync ./local_data az://prod-backups/datasets/
+
+# Download Azure container prefix to local directory
+velcrux azure sync az://prod-backups/datasets/ ./restored_data
+
+# Automatic routing via top-level sync command
+velcrux sync ./local_data az://prod-backups/datasets/
+```
+
+
 
 
 
