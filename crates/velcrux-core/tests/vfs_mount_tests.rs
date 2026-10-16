@@ -299,8 +299,8 @@ async fn test_vfs_mount_manager_process_coordination() {
 
     let engine1 = manager.mount(cfg1).await.unwrap();
     let engine2 = manager.mount(cfg2).await.unwrap();
-    assert_eq!(engine1.config().read_only, true);
-    assert_eq!(engine2.config().read_only, false);
+    assert!(engine1.config().read_only);
+    assert!(!engine2.config().read_only);
 
     // List registered
     let list = manager.list_registered();
