@@ -2451,6 +2451,103 @@ velcrux azure sync az://prod-backups/datasets/ ./restored_data
 velcrux sync ./local_data az://prod-backups/datasets/
 ```
 
+---
+
+## 46. Interactive Virtual Filesystem Mount Engine (Option BL)
+
+Option BL implements a pure-Rust, `#![forbid(unsafe_code)]` virtual filesystem mount engine (`VirtualMountEngine`). It allows interactive browsing, directory traversal, and byte-range streaming from remote datasets, content-addressed chunk stores, point-in-time snapshots (`snapshot://<tag>`), or cloud object storage backends (`s3://`, `gs://`, `az://`) directly within the local filesystem directory tree.
+
+### 1. Key Architectural Principles
+
+1. **Zero External Kernel/C Dependencies**: Operates 100% in pure safe Rust without linking against `libfuse`, `macfuse`, or requiring OS kernel extensions. Deterministic and fully functional across macOS, Linux, and Windows containers without elevated `sudo` privileges.
+2. **Canonical VFS Contract**: Supports standard virtual filesystem operations:
+   - `lookup`: Inode resolution by component name.
+   - `getattr`: POSIX file metadata (`ino`, `size`, `blocks`, `atime`, `mtime`, `ctime`, `perm`, `file_hash`).
+   - `readdir`: Directory enumeration with `.` and `..` support.
+   - `read_at`: Sub-range byte retrieval backed by the page cache.
+   - `write_at`: Sub-range byte modification, dynamic resizing, and cryptographic BLAKE3 recalculation (on read-write mounts).
+   - `create_file` & `remove_entry`: Dynamic file allocation and unlinking.
+   - `create_symlink` & `readlink`: Symbolic link handling.
+   - `statfs`: Virtual filesystem capacity geometry.
+3. **High-Performance Bounded Page Cache**:
+   - 64 KiB virtual page caching with monotonic LRU eviction.
+   - Configurable memory capacity limits (`--cache-size-mb`) preventing out-of-memory errors on large datasets.
+   - Configurable TTL invalidation (`--cache-ttl`) and sequential chunk prefetching (`--prefetch`).
+4. **Persistent Mount Session Coordination**:
+   - `MountManager` tracks active mount sessions in persistent registry storage (`velcrux_mount_registry.json`).
+   - CLI subcommands (`velcrux mount list`, `velcrux mount status`, `velcrux unmount`) work across independent shell sessions.
+
+### 2. Multi-Source Mounting Syntax
+
+| Source Type | Source Specifier Example | Description |
+|---|---|---|
+| **Local Directory** | `./dataset` or `/var/data` | Physical directory hierarchy imported into virtual VFS |
+| **Point-in-Time Snapshot** | `snapshot://prod-release-v1.0` | Read-only point-in-time snapshot catalog |
+| **AWS S3 Object Store** | `s3://data-bucket/prefix/` | S3 cloud prefix mounted as virtual directory |
+| **Google Cloud Storage** | `gs://ml-models/weights/` | GCS cloud prefix mounted as virtual directory |
+| **Azure Blob Storage** | `az://training-data/runs/` | Azure Blob container prefix mounted as virtual directory |
+
+### 3. CLI Command & Flag Reference
+
+#### 1. Mount a Dataset (`velcrux mount attach`)
+```bash
+# Mount a local directory read-only with default 256 MiB page cache
+velcrux mount attach ./raw_data /mnt/virtual_dataset
+
+# Mount a point-in-time snapshot with custom cache size and prefetching
+velcrux mount attach snapshot://daily-backup-20261016 /mnt/snapshots/daily \
+  --cache-size-mb 512 \
+  --prefetch 4
+
+# Mount an S3 cloud prefix in read-write mode
+velcrux mount attach s3://ml-datasets/imagenet/ /mnt/imagenet --rw
+
+# Mount a GCS bucket in daemon background mode
+velcrux mount attach gs://corp-archives/2026/ /mnt/archives -d
+
+# Machine-readable JSON output
+velcrux --json mount attach ./data /mnt/vfs
+```
+
+#### 2. List Active Virtual Mounts (`velcrux mount list`)
+```bash
+# Display human-readable table of active mount sessions
+velcrux mount list
+
+# Output format:
+# SESSION ID                           PID  MODE  MOUNTPOINT                        SOURCE
+# ------------------------------------ ----  ----  --------------------------------  --------------------------------
+# vfs_01K...                           8412  RO    /mnt/virtual_dataset              ./raw_data
+# vfs_01K...                           8412  RW    /mnt/imagenet                     s3://ml-datasets/imagenet/
+
+# Machine-readable JSON output
+velcrux --json mount list
+```
+
+#### 3. Inspect Mount Status & Cache Telemetry (`velcrux mount status`)
+```bash
+# Inspect all mounts
+velcrux mount status
+
+# Inspect specific mountpoint
+velcrux mount status --mountpoint /mnt/virtual_dataset
+
+# Machine-readable JSON metrics
+velcrux --json mount status --mountpoint /mnt/virtual_dataset
+```
+
+#### 4. Unmount a Virtual Mountpoint (`velcrux mount detach` or `velcrux unmount`)
+```bash
+# Detach via mount subcommand
+velcrux mount detach /mnt/virtual_dataset
+
+# Detach via top-level unmount shortcut
+velcrux unmount /mnt/virtual_dataset
+
+# Machine-readable JSON output
+velcrux --json unmount /mnt/virtual_dataset
+```
+
 
 
 

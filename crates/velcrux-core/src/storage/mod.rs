@@ -33,6 +33,7 @@ pub mod s3;
 pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
+pub mod vfs;
 pub use azure::{
     AzureBlobConfig, AzureBlobMeta, AzureBlobStorageBackend, AzureBlobSyncReport, AzureError,
     AzureSharedKeySigner,
@@ -65,6 +66,10 @@ pub use snapshot::{
     SnapshotSummary, SNAPSHOT_CHUNK_SIZE,
 };
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
+pub use vfs::{
+    MountConfig, MountManager, MountSessionInfo, VfsAttr, VfsCacheStats, VfsDirEntry, VfsError,
+    VfsFileType, VfsStatFs, VirtualMountEngine, VFS_ROOT_INODE,
+};
 
 use crate::error::{ProtocolError, VelcruxError};
 use crate::protocol::limits::{MAX_PATH_COMPONENT, MAX_PATH_TOTAL};

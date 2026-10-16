@@ -458,6 +458,16 @@ enum Cmd {
         #[command(subcommand)]
         sub: AzureSubCmd,
     },
+    /// Interactive Virtual Filesystem mount engine (Option BL).
+    Mount {
+        #[command(subcommand)]
+        sub: MountSubCmd,
+    },
+    /// Unmount an active virtual filesystem mountpoint (Option BL).
+    Unmount {
+        /// Target mountpoint directory path to unmount.
+        mountpoint: PathBuf,
+    },
     /// Inspect local network interfaces and bonded multi-path transport status (Option AX).
     Multipath {
         /// Optional target server URL to evaluate subflow path reachability (e.g. velcrux://host:7443/).
@@ -931,6 +941,51 @@ enum AzureSubCmd {
         /// Azure SAS token override.
         #[arg(long)]
         sas_token: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum MountSubCmd {
+    /// Mount a remote, snapshot, cloud, or local source to an interactive virtual directory.
+    Attach {
+        /// Source specification (e.g. ./data, snapshot://tag, s3://bucket/prefix, gs://bucket/prefix, az://container/prefix).
+        source: String,
+        /// Target mountpoint directory path.
+        mountpoint: PathBuf,
+        /// Mount the virtual filesystem strictly read-only (default: true).
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        read_only: bool,
+        /// Mount the virtual filesystem in read-write mode.
+        #[arg(long = "rw")]
+        read_write: bool,
+        /// Page cache capacity limit in megabytes (default: 256 MiB).
+        #[arg(long)]
+        cache_size_mb: Option<usize>,
+        /// Page cache TTL in seconds (default: 60s).
+        #[arg(long)]
+        cache_ttl_sec: Option<u64>,
+        /// Number of sequential chunks to prefetch ahead (default: 2).
+        #[arg(long)]
+        prefetch: Option<usize>,
+        /// Allow other system users access to mountpoint.
+        #[arg(long)]
+        allow_other: bool,
+        /// Run mount coordinator in daemon background mode.
+        #[arg(short = 'd', long)]
+        daemon: bool,
+    },
+    /// List all currently active and registered virtual filesystem mounts.
+    List,
+    /// Inspect status and cache telemetry for an active virtual filesystem mount.
+    Status {
+        /// Optional mountpoint path to inspect.
+        #[arg(long, short = 'm')]
+        mountpoint: Option<PathBuf>,
+    },
+    /// Unmount an active virtual filesystem mountpoint.
+    Detach {
+        /// Target mountpoint directory path to unmount.
+        mountpoint: PathBuf,
     },
 }
 
@@ -1672,6 +1727,14 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Azure { sub } => {
             run_azure(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Mount { sub } => {
+            run_mount(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Unmount { mountpoint } => {
+            run_unmount(&cli, mountpoint).await?;
             return Ok(());
         }
         Cmd::Multipath { target } => {
@@ -5261,6 +5324,218 @@ async fn run_azure(cli: &Cli, sub: &AzureSubCmd) -> anyhow::Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+async fn run_mount(cli: &Cli, sub: &MountSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let manager = velcrux_core::storage::MountManager::new();
+
+    match sub {
+        MountSubCmd::Attach {
+            source,
+            mountpoint,
+            read_only,
+            read_write,
+            cache_size_mb,
+            cache_ttl_sec,
+            prefetch,
+            allow_other,
+            daemon,
+        } => {
+            let is_ro = if *read_write { false } else { *read_only };
+            let cache_capacity_bytes = cache_size_mb
+                .map(|m| m * 1024 * 1024)
+                .unwrap_or(velcrux_core::storage::vfs::DEFAULT_CACHE_CAPACITY_BYTES);
+            let cache_ttl =
+                cache_ttl_sec.unwrap_or(velcrux_core::storage::vfs::DEFAULT_CACHE_TTL_SECS);
+            let prefetch_chunks =
+                prefetch.unwrap_or(velcrux_core::storage::vfs::DEFAULT_PREFETCH_CHUNKS);
+
+            let config = velcrux_core::storage::MountConfig {
+                source: source.clone(),
+                mountpoint: mountpoint.clone(),
+                read_only: is_ro,
+                cache_capacity_bytes,
+                cache_ttl_sec: cache_ttl,
+                prefetch_chunks,
+                allow_other: *allow_other,
+                debug: false,
+            };
+
+            let _engine = manager
+                .mount(config)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let abs_mountpoint = if mountpoint.is_absolute() {
+                mountpoint.clone()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(mountpoint)
+            };
+
+            if is_json {
+                let info = serde_json::json!({
+                    "status": "mounted",
+                    "source": source,
+                    "mountpoint": abs_mountpoint.display().to_string(),
+                    "read_only": is_ro,
+                    "cache_capacity_mb": cache_capacity_bytes / (1024 * 1024),
+                    "cache_ttl_sec": cache_ttl,
+                    "prefetch_chunks": prefetch_chunks,
+                    "daemon": daemon,
+                    "pid": std::process::id(),
+                });
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("Velcrux Virtual Filesystem (VFS) Mounted Successfully:");
+                println!("  Source:          {}", source);
+                println!("  Mountpoint:      {}", abs_mountpoint.display());
+                println!(
+                    "  Access Mode:     {}",
+                    if is_ro {
+                        "Read-Only (RO)"
+                    } else {
+                        "Read-Write (RW)"
+                    }
+                );
+                println!(
+                    "  Page Cache:      {} MiB (TTL: {}s, Prefetch: {} chunks)",
+                    cache_capacity_bytes / (1024 * 1024),
+                    cache_ttl,
+                    prefetch_chunks
+                );
+                if *daemon {
+                    println!(
+                        "  Mode:            Daemon Background (PID: {})",
+                        std::process::id()
+                    );
+                } else {
+                    println!(
+                        "  Mode:            Interactive Registered Session (PID: {})",
+                        std::process::id()
+                    );
+                }
+            }
+        }
+        MountSubCmd::List => {
+            let sessions = manager.list_registered();
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&sessions)?);
+            } else if sessions.is_empty() {
+                println!("No active Velcrux virtual filesystem mounts found.");
+            } else {
+                println!(
+                    "{:<36} {:>6}  {:<10}  {:<32}  {:<32}",
+                    "SESSION ID", "PID", "MODE", "MOUNTPOINT", "SOURCE"
+                );
+                println!(
+                    "{:-<36} {:-<6}  {:-<10}  {:-<32}  {:-<32}",
+                    "", "", "", "", ""
+                );
+                for s in &sessions {
+                    let mode = if s.read_only { "RO" } else { "RW" };
+                    println!(
+                        "{:<36} {:>6}  {:<10}  {:<32}  {:<32}",
+                        s.session_id, s.pid, mode, s.mountpoint, s.source
+                    );
+                }
+            }
+        }
+        MountSubCmd::Status { mountpoint } => {
+            let sessions = manager.list_registered();
+            let filtered: Vec<_> = if let Some(mp) = mountpoint {
+                let abs_mp = if mp.is_absolute() {
+                    mp.clone()
+                } else {
+                    std::env::current_dir().unwrap_or_default().join(mp)
+                };
+                let mp_str = abs_mp.display().to_string();
+                sessions
+                    .into_iter()
+                    .filter(|s| {
+                        s.mountpoint == mp_str || s.mountpoint.ends_with(&mp.display().to_string())
+                    })
+                    .collect()
+            } else {
+                sessions
+            };
+
+            if is_json {
+                println!("{}", serde_json::to_string_pretty(&filtered)?);
+            } else if filtered.is_empty() {
+                if let Some(mp) = mountpoint {
+                    println!("No active virtual mount found at '{}'.", mp.display());
+                } else {
+                    println!("No active virtual filesystem mounts found.");
+                }
+            } else {
+                for s in &filtered {
+                    println!("Virtual Mount Session: {}", s.session_id);
+                    println!("  Mountpoint:      {}", s.mountpoint);
+                    println!("  Source:          {}", s.source);
+                    println!("  PID:             {}", s.pid);
+                    println!(
+                        "  Access:          {}",
+                        if s.read_only {
+                            "Read-Only"
+                        } else {
+                            "Read-Write"
+                        }
+                    );
+                    println!(
+                        "  Cache Cap:       {} MiB",
+                        s.cache_capacity_bytes / (1024 * 1024)
+                    );
+                    println!("  Mounted At:      {} (Unix sec)", s.mounted_at_sec);
+                    println!();
+                }
+            }
+        }
+        MountSubCmd::Detach { mountpoint } => {
+            let unmounted = manager
+                .unmount(mountpoint)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            if is_json {
+                let out = serde_json::json!({
+                    "mountpoint": mountpoint.display().to_string(),
+                    "unmounted": unmounted,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if unmounted {
+                println!("Successfully unmounted '{}'.", mountpoint.display());
+            } else {
+                println!(
+                    "No active mount found at '{}' to unmount.",
+                    mountpoint.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_unmount(cli: &Cli, mountpoint: &std::path::Path) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let manager = velcrux_core::storage::MountManager::new();
+    let unmounted = manager
+        .unmount(mountpoint)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if is_json {
+        let out = serde_json::json!({
+            "mountpoint": mountpoint.display().to_string(),
+            "unmounted": unmounted,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else if unmounted {
+        println!("Successfully unmounted '{}'.", mountpoint.display());
+    } else {
+        println!(
+            "No active mount found at '{}' to unmount.",
+            mountpoint.display()
+        );
     }
     Ok(())
 }

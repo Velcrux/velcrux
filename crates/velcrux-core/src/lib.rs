@@ -84,11 +84,13 @@ pub use storage::{
     ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing, DataScrubber,
     DedupAuditReport, DedupNamespacePolicy, DirectFileReader, DirectFileWriter, DirectIoConfig,
     DirectIoMode, FileMeta, GcsConfig, GcsError, GcsObjectMeta, GcsStorageBackend, GcsSyncReport,
-    LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend,
-    NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk, QuorumPolicy,
-    ReplicationReport, S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport,
-    ScrubFinding, ScrubMode, ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff, Staging,
-    StagingGcReport, StorageBackend, VPath, VPathError, SNAPSHOT_CHUNK_SIZE,
+    LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, MountConfig,
+    MountManager, MountSessionInfo, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
+    QuorumPolicy, ReplicationReport, S3Config, S3Error, S3ObjectMeta, S3StorageBackend,
+    S3SyncReport, ScrubFinding, ScrubMode, ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff,
+    Staging, StagingGcReport, StorageBackend, VPath, VPathError, VfsAttr, VfsCacheStats,
+    VfsDirEntry, VfsError, VfsFileType, VfsStatFs, VirtualMountEngine, SNAPSHOT_CHUNK_SIZE,
+    VFS_ROOT_INODE,
 };
 pub use sync::{
     compute_file_hash, execute_dedup_sync, execute_delta_sync, execute_directory_sync,
