@@ -16,9 +16,14 @@ pub mod rle;
 pub mod geo;
 pub mod lock;
 pub mod plan;
+pub mod transaction;
 pub mod watcher;
 
 pub use lock::{DistributedLockManager, LeaseLock, LockError, LockMode, LockReport};
+pub use transaction::{
+    DirectoryTransaction, TransactionAction, TransactionError, TransactionItem, TransactionJournal,
+    TransactionManager, TransactionReport, TransactionState, TransactionSummary,
+};
 
 pub use batch::{
     BatchContainerReader, BatchContainerWriter, BatchEntryMeta, BatchedSyncPlan, SmallFileBatch,
@@ -31,11 +36,12 @@ pub use cost::{
 };
 pub use directory::{
     compute_file_hash, diff_local_dir_with_manifest, diff_manifest_readers,
-    diff_manifest_spill_files, execute_directory_sync, plan_directory_diff, plan_directory_sync,
-    recv_directory_manifest, recv_streaming_manifest_to_spill, resume_interrupted_commit,
-    scan_dir_entries, send_directory_manifest, send_streaming_manifest_from_spill,
-    DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction,
-    FileActionType, ScannedEntry,
+    diff_manifest_spill_files, execute_atomic_directory_sync, execute_directory_sync,
+    plan_directory_diff, plan_directory_sync, recv_directory_manifest,
+    recv_streaming_manifest_to_spill, resume_interrupted_commit, scan_dir_entries,
+    send_directory_manifest, send_streaming_manifest_from_spill, DirectoryDiffSummary,
+    DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType,
+    ScannedEntry,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use geo::{

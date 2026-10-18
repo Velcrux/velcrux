@@ -154,6 +154,8 @@ pub struct DirectorySyncOptions {
     pub delete_guardrails: DeleteGuardrails,
     /// Optional pattern filter for include/exclude rules.
     pub filter: Option<PathFilter>,
+    /// Whole-directory transactional commit and rollback journaling (Option BM).
+    pub atomic: bool,
 }
 
 impl Default for DirectorySyncOptions {
@@ -171,6 +173,7 @@ impl Default for DirectorySyncOptions {
             batch_max_bytes: crate::sync::batch::DEFAULT_BATCH_MAX_BYTES,
             delete_guardrails: DeleteGuardrails::default(),
             filter: None,
+            atomic: false,
         }
     }
 }
@@ -229,6 +232,12 @@ impl DirectorySyncOptions {
         self.batch_max_bytes = max_bytes;
         self
     }
+
+    /// Configure atomic whole-directory transactional mode.
+    pub fn with_atomic(mut self, atomic: bool) -> Self {
+        self.atomic = atomic;
+        self
+    }
 }
 
 /// Outcome of executing a directory synchronization.
@@ -254,6 +263,8 @@ pub struct DirectorySyncResult {
     pub batch_containers: usize,
     /// Total network roundtrips saved by batch containers.
     pub roundtrips_saved: usize,
+    /// Unique transaction ID if executed with whole-directory transactional atomicity.
+    pub transaction_id: Option<String>,
 }
 
 /// Scanned directory entry with size, whole-file BLAKE3 hash, link metadata, mode, mtime, and xattrs.
@@ -1503,6 +1514,7 @@ pub fn execute_directory_sync(
             small_files_batched: batched_plan.small_files_count,
             batch_containers: batched_plan.batch_containers_count,
             roundtrips_saved: batched_plan.roundtrips_saved,
+            transaction_id: None,
         });
     }
 
@@ -1548,11 +1560,25 @@ pub fn execute_directory_sync(
         std::fs::create_dir_all(dst_dir)?;
     }
 
-    // Staging root lives on the same filesystem root under .velcrux-staging
-    let staging_root = dst_dir
-        .join(".velcrux-staging")
-        .join(transfer_id.to_string());
-    std::fs::create_dir_all(&staging_root)?;
+    let directory_tx = if options.atomic {
+        Some(
+            crate::sync::transaction::DirectoryTransaction::begin(dst_dir)
+                .map_err(|e| SyncError::Reconstruction(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+
+    // Staging root lives on the same filesystem root under .velcrux-staging (or shadow directory if atomic)
+    let staging_root = if let Some(ref tx) = directory_tx {
+        tx.shadow_root().to_path_buf()
+    } else {
+        let root = dst_dir
+            .join(".velcrux-staging")
+            .join(transfer_id.to_string());
+        std::fs::create_dir_all(&root)?;
+        root
+    };
 
     let mut staged_files = Vec::new();
     let mut total_wire_bytes = 0u64;
@@ -1815,7 +1841,6 @@ pub fn execute_directory_sync(
     // --- COMMIT PHASE ---
     // All files are verified in staging. Now atomic renames into dst_dir with commit journal.
     let now_ms = current_time_ms();
-    let mut files_committed = 0usize;
 
     if let Some(store) = state_store {
         let transfer_record = crate::state::TransferRecord {
@@ -1838,94 +1863,161 @@ pub fn execute_directory_sync(
         let _ = store.upsert_transfer(&transfer_record);
     }
 
-    for (file_id, rel_path, staged_file) in &staged_files {
-        let final_dst = dst_dir.join(rel_path);
-        if let Some(p) = final_dst.parent() {
-            std::fs::create_dir_all(p)?;
-        }
+    let mut files_committed = 0usize;
+    let mut tx_id_res = None;
 
-        if let Some(store) = state_store {
-            let journal_entry = CommitJournalEntry {
-                transfer_id,
-                file_id: *file_id,
-                remote_path: rel_path.clone(),
-                status: CommitStatus::Pending,
-                updated_ms: now_ms,
-            };
-            store
-                .write_journal(&journal_entry)
+    if let Some(mut tx) = directory_tx {
+        // Register all staged files with expected hashes from plan
+        for (file_id, rel_path, staged_file) in &staged_files {
+            let expected_hash = plan.actions.get(*file_id as usize).and_then(|a| a.src_hash);
+            tx.register_staged(rel_path, staged_file.clone(), expected_hash)
                 .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
         }
 
-        // If target file or symlink exists at final destination, remove before rename
-        if final_dst.symlink_metadata().is_ok() {
-            let _ = std::fs::remove_file(&final_dst);
+        // Register any planned deletions if deletion mode is enabled
+        if options.delete_mode == DeleteMode::DeleteAfter
+            || options.delete_mode == DeleteMode::DeleteExcluded
+        {
+            for action in &plan.actions {
+                if action.action == FileActionType::Delete {
+                    tx.stage_deletion(&action.rel_path)
+                        .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+                }
+            }
         }
 
-        // Atomic rename
-        std::fs::rename(staged_file, &final_dst)?;
+        // Phase 1 Prepare: verify checksums and backup original files
+        tx.prepare()
+            .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
 
-        // If staged xattr sidecar exists, rename it into final location
-        let staged_sidecar = crate::storage::xattr_sidecar_path(staged_file);
-        if staged_sidecar.symlink_metadata().is_ok() {
-            let final_sidecar = crate::storage::xattr_sidecar_path(&final_dst);
-            if final_sidecar.symlink_metadata().is_ok() {
-                let _ = std::fs::remove_file(&final_sidecar);
+        // Phase 2 Commit: atomically move all files in place with auto-rollback on failure
+        let report = tx
+            .commit()
+            .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+        files_committed = report.files_committed;
+        tx_id_res = Some(report.tx_id);
+
+        for action in &plan.actions {
+            if action.action == FileActionType::Delete
+                && dst_dir.join(&action.rel_path).symlink_metadata().is_err()
+            {
+                files_deleted += 1;
             }
-            let _ = std::fs::rename(&staged_sidecar, &final_sidecar);
         }
 
         // Apply mode permissions and mtime if regular file
-        let src_file = src_dir.join(rel_path);
-        if let Ok(src_meta) = std::fs::symlink_metadata(&src_file) {
-            if !src_meta.file_type().is_symlink() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &final_dst,
-                        std::fs::Permissions::from_mode(src_meta.permissions().mode()),
-                    );
+        for (_, rel_path, _) in &staged_files {
+            let final_dst = dst_dir.join(rel_path);
+            let src_file = src_dir.join(rel_path);
+            if let Ok(src_meta) = std::fs::symlink_metadata(&src_file) {
+                if !src_meta.file_type().is_symlink() {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(
+                            &final_dst,
+                            std::fs::Permissions::from_mode(src_meta.permissions().mode()),
+                        );
+                    }
+                    if let Ok(modified_time) = src_meta.modified() {
+                        if let Ok(f) = std::fs::File::open(&final_dst) {
+                            let times = std::fs::FileTimes::new().set_modified(modified_time);
+                            let _ = f.set_times(times);
+                        }
+                    }
                 }
-                if let Ok(modified_time) = src_meta.modified() {
-                    if let Ok(f) = std::fs::File::open(&final_dst) {
-                        let times = std::fs::FileTimes::new().set_modified(modified_time);
-                        let _ = f.set_times(times);
+            }
+        }
+    } else {
+        for (file_id, rel_path, staged_file) in &staged_files {
+            let final_dst = dst_dir.join(rel_path);
+            if let Some(p) = final_dst.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+
+            if let Some(store) = state_store {
+                let journal_entry = CommitJournalEntry {
+                    transfer_id,
+                    file_id: *file_id,
+                    remote_path: rel_path.clone(),
+                    status: CommitStatus::Pending,
+                    updated_ms: now_ms,
+                };
+                store
+                    .write_journal(&journal_entry)
+                    .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+            }
+
+            // If target file or symlink exists at final destination, remove before rename
+            if final_dst.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&final_dst);
+            }
+
+            // Atomic rename
+            std::fs::rename(staged_file, &final_dst)?;
+
+            // If staged xattr sidecar exists, rename it into final location
+            let staged_sidecar = crate::storage::xattr_sidecar_path(staged_file);
+            if staged_sidecar.symlink_metadata().is_ok() {
+                let final_sidecar = crate::storage::xattr_sidecar_path(&final_dst);
+                if final_sidecar.symlink_metadata().is_ok() {
+                    let _ = std::fs::remove_file(&final_sidecar);
+                }
+                let _ = std::fs::rename(&staged_sidecar, &final_sidecar);
+            }
+
+            // Apply mode permissions and mtime if regular file
+            let src_file = src_dir.join(rel_path);
+            if let Ok(src_meta) = std::fs::symlink_metadata(&src_file) {
+                if !src_meta.file_type().is_symlink() {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(
+                            &final_dst,
+                            std::fs::Permissions::from_mode(src_meta.permissions().mode()),
+                        );
+                    }
+                    if let Ok(modified_time) = src_meta.modified() {
+                        if let Ok(f) = std::fs::File::open(&final_dst) {
+                            let times = std::fs::FileTimes::new().set_modified(modified_time);
+                            let _ = f.set_times(times);
+                        }
+                    }
+                }
+            }
+
+            if let Some(store) = state_store {
+                store
+                    .mark_journal_committed(transfer_id, *file_id)
+                    .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
+            }
+
+            files_committed += 1;
+        }
+
+        // --- POST-COMMIT DELETIONS PHASE ---
+        if options.delete_mode == DeleteMode::DeleteAfter
+            || options.delete_mode == DeleteMode::DeleteExcluded
+        {
+            for action in &plan.actions {
+                if action.action == FileActionType::Delete {
+                    let target = dst_dir.join(&action.rel_path);
+                    if target.symlink_metadata().is_ok() {
+                        let _ = std::fs::remove_file(&target);
+                        let sidecar = crate::storage::xattr_sidecar_path(&target);
+                        if sidecar.symlink_metadata().is_ok() {
+                            let _ = std::fs::remove_file(&sidecar);
+                        }
+                        files_deleted += 1;
                     }
                 }
             }
         }
 
-        if let Some(store) = state_store {
-            store
-                .mark_journal_committed(transfer_id, *file_id)
-                .map_err(|e| SyncError::Reconstruction(e.to_string()))?;
-        }
-
-        files_committed += 1;
+        // Clean up staging directory
+        let _ = std::fs::remove_dir_all(&staging_root);
     }
-
-    // --- POST-COMMIT DELETIONS PHASE ---
-    if options.delete_mode == DeleteMode::DeleteAfter
-        || options.delete_mode == DeleteMode::DeleteExcluded
-    {
-        for action in &plan.actions {
-            if action.action == FileActionType::Delete {
-                let target = dst_dir.join(&action.rel_path);
-                if target.symlink_metadata().is_ok() {
-                    let _ = std::fs::remove_file(&target);
-                    let sidecar = crate::storage::xattr_sidecar_path(&target);
-                    if sidecar.symlink_metadata().is_ok() {
-                        let _ = std::fs::remove_file(&sidecar);
-                    }
-                    files_deleted += 1;
-                }
-            }
-        }
-    }
-
-    // Clean up staging directory
-    let _ = std::fs::remove_dir_all(&staging_root);
 
     Ok(DirectorySyncResult {
         plan,
@@ -1938,7 +2030,21 @@ pub fn execute_directory_sync(
         small_files_batched: batched_plan.small_files_count,
         batch_containers: batched_plan.batch_containers_count,
         roundtrips_saved: batched_plan.roundtrips_saved,
+        transaction_id: tx_id_res,
     })
+}
+
+/// Convenience function to execute an atomic whole-directory transactional synchronization.
+pub fn execute_atomic_directory_sync(
+    src_dir: &Path,
+    dst_dir: &Path,
+    options: &DirectorySyncOptions,
+    state_store: Option<&dyn StateStore>,
+    chunk_store: Option<&LocalChunkStore>,
+) -> Result<DirectorySyncResult, SyncError> {
+    let mut opts = options.clone();
+    opts.atomic = true;
+    execute_directory_sync(src_dir, dst_dir, &opts, state_store, chunk_store)
 }
 
 /// Resume an interrupted commit by inspecting pending rows in the state store journal

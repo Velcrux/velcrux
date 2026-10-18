@@ -388,6 +388,14 @@ enum Cmd {
         /// Maximum sync batches to run before stopping (default: 0 = continuous).
         #[arg(long, default_value = "0")]
         max_batches: usize,
+        /// Whole-directory transactional commit and rollback journaling (Option BM).
+        #[arg(long)]
+        atomic: bool,
+    },
+    /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
+    Tx {
+        #[command(subcommand)]
+        sub: TxSubCmd,
     },
     /// Continuously watch a directory tree and synchronize changes in real time (Option AZ).
     Watch {
@@ -1060,6 +1068,50 @@ enum GeoSubCmd {
         /// Prune tombstones older than this many seconds (default: 604800 / 7 days).
         #[arg(long, default_value = "604800")]
         tombstone_ttl_secs: u64,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TxSubCmd {
+    /// List historical and pending directory transactions.
+    List {
+        /// Target directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect details of a specific directory transaction journal.
+    Show {
+        /// Transaction ID.
+        tx_id: String,
+        /// Target directory.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Roll back a prepared, committing, or committed transaction to restore pristine baseline.
+    Rollback {
+        /// Transaction ID.
+        tx_id: String,
+        /// Target directory.
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scan target directory and recover any interrupted or crashed transactions.
+    Recover {
+        /// Target directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -2036,6 +2088,7 @@ async fn main() -> anyhow::Result<()> {
             debounce_ms,
             poll_interval_ms,
             max_batches,
+            atomic,
         } => {
             if *watch {
                 run_watch(
@@ -2074,8 +2127,12 @@ async fn main() -> anyhow::Result<()> {
                 effective_batch,
                 *small_file_threshold,
                 *batch_max_bytes,
+                *atomic,
             )
             .await?;
+        }
+        Cmd::Tx { sub } => {
+            run_tx(&cli, sub).await?;
         }
         Cmd::Watch {
             source,
@@ -3942,6 +3999,7 @@ async fn run_plan(
         } else {
             Some(filter)
         },
+        atomic: false,
     };
 
     let store = if dedup {
@@ -3996,6 +4054,7 @@ async fn run_sync(
     batch_small_files: bool,
     small_file_threshold: Option<u64>,
     batch_max_bytes: Option<u64>,
+    atomic: bool,
 ) -> anyhow::Result<()> {
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
@@ -4138,6 +4197,7 @@ async fn run_sync(
         } else {
             Some(filter)
         },
+        atomic,
     };
 
     let store = if dedup {
@@ -4201,6 +4261,10 @@ async fn run_sync(
                 "roundtrips_saved".to_string(),
                 serde_json::json!(result.roundtrips_saved),
             );
+            if let Some(ref tx_id) = result.transaction_id {
+                obj.insert("transaction_id".to_string(), serde_json::json!(tx_id));
+                obj.insert("atomic".to_string(), serde_json::json!(true));
+            }
         }
         println!("{json_val}");
     } else {
@@ -4238,6 +4302,107 @@ async fn run_sync(
                 format_bytes(result.local_bytes_reused),
                 format_bytes(result.store_bytes_reused)
             );
+            if let Some(ref tx_id) = result.transaction_id {
+                println!("Atomic Transaction: Committed ({})", tx_id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_tx(cli: &Cli, sub: &TxSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::sync::TransactionManager;
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        TxSubCmd::List { path, json } => {
+            let list = TransactionManager::list_transactions(path)
+                .map_err(|e| anyhow::anyhow!("failed to list transactions: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else if list.is_empty() {
+                println!("No directory transactions found in '{}'.", path.display());
+            } else {
+                println!(
+                    "{:<28} {:<12} {:<8} {}",
+                    "TRANSACTION ID", "STATE", "FILES", "TARGET"
+                );
+                println!("{:-<28} {:-<12} {:-<8} {:-<30}", "", "", "", "");
+                for item in list {
+                    println!(
+                        "{:<28} {:<12} {:<8} {}",
+                        item.tx_id,
+                        item.state.to_string(),
+                        item.file_count,
+                        item.target_dir
+                    );
+                }
+            }
+        }
+        TxSubCmd::Show { tx_id, path, json } => {
+            let journal = TransactionManager::get_journal(path, tx_id)
+                .map_err(|e| anyhow::anyhow!("failed to get transaction journal: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&journal)?);
+            } else {
+                println!("Transaction ID: {}", journal.tx_id);
+                println!("Target:         {}", journal.target_dir.display());
+                println!("State:          {}", journal.state);
+                println!("Created:        {}", journal.created_at_sec);
+                println!("Files:          {}", journal.items.len());
+                println!();
+                println!("{:<8} {:<10} {:<30}", "ACTION", "SIZE", "RELATIVE PATH");
+                println!("{:-<8} {:-<10} {:-<30}", "", "", "");
+                for item in journal.items {
+                    println!(
+                        "{:<8} {:<10} {}",
+                        item.action.to_string(),
+                        format_bytes(item.size),
+                        item.rel_path
+                    );
+                }
+            }
+        }
+        TxSubCmd::Rollback { tx_id, path, json } => {
+            let report = TransactionManager::rollback_transaction(path, tx_id)
+                .map_err(|e| anyhow::anyhow!("failed to rollback transaction: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Successfully rolled back transaction '{}': {} files restored/removed in {}ms.",
+                    report.tx_id, report.files_rolled_back, report.duration_ms
+                );
+            }
+        }
+        TxSubCmd::Recover { path, json } => {
+            let reports = TransactionManager::recover_pending_transactions(path)
+                .map_err(|e| anyhow::anyhow!("failed to recover transactions: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&reports)?);
+            } else if reports.is_empty() {
+                println!(
+                    "No pending or crashed transactions to recover in '{}'.",
+                    path.display()
+                );
+            } else {
+                println!(
+                    "Recovered {} pending/crashed transaction(s):",
+                    reports.len()
+                );
+                for r in reports {
+                    println!(
+                        "  - {}: state={:?}, rolled_back={} in {}ms",
+                        r.tx_id, r.state, r.files_rolled_back, r.duration_ms
+                    );
+                }
+            }
         }
     }
 
@@ -5931,6 +6096,7 @@ async fn run_watch(
                     true,  // batch_small_files
                     None,  // small_file_threshold
                     None,  // batch_max_bytes
+                    false, // atomic
                 )
                 .await
                 .map_err(|e| velcrux_core::error::VelcruxError::Internal(e.to_string()))?;

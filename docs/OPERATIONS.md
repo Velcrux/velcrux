@@ -2548,7 +2548,95 @@ velcrux unmount /mnt/virtual_dataset
 velcrux --json unmount /mnt/virtual_dataset
 ```
 
+---
 
+## 47. Whole-Directory Transactional Commit & Rollback Journaling (Option BM)
 
+Per `REQUIREMENTS.md` §58–§61 ("Atomic Multi-File Commits & Crash Resilient Journaling") and `ARCHITECTURE.md` §9 & §12, Velcrux provides true **directory-level atomicity** (all-or-nothing multi-file transfers) with write-ahead commit journaling and rollback recovery:
+- **100% or 0% Guarantee**: 100% of files in a directory transfer/sync operation are committed simultaneously to destination, or 0% are committed (clean rollback with zero partial directory corruption).
+- **Shadow Directory Staging (`.velcrux-shadow/<tx_id>/`)**: Incoming files stage in an isolated shadow directory without mutating live destination files.
+- **Two-Phase Commit (2PC)**:
+  1. **Prepare Phase**: Cryptographic BLAKE3 verification, file size checking, and original file backup into `.velcrux-backup/<tx_id>/`.
+  2. **Commit Phase**: Write-ahead journal intent logging (`.velcrux-journal/<tx_id>.json`), atomic file swap into target directory.
+  3. **Rollback Phase**: Automatic on failure or operator-triggered via `velcrux tx rollback <tx_id>`.
+- **Startup Crash Recovery (`velcrux tx recover`)**: Scans write-ahead journals on startup to resolve any interrupted or crashed transactions.
 
+### 1. Atomic Directory Synchronization (`--atomic`)
 
+Synchronize a directory hierarchy with full all-or-nothing transactional semantics:
+
+```bash
+# Perform all-or-nothing atomic directory sync
+velcrux sync ./deploy_bundle /var/www/app --atomic
+
+# Atomic sync with safe deletions (deleted files backed up in journal)
+velcrux sync ./release_v2 /var/www/app --atomic --delete-after
+
+# Machine-readable JSON output
+velcrux sync ./release_v2 /var/www/app --atomic --log-format json
+```
+
+### 2. Transaction Management CLI Reference (`velcrux tx`)
+
+#### 1. Enumerate Historical & Pending Transactions (`velcrux tx list`)
+```bash
+# List all transactions recorded in target directory
+velcrux tx list /var/www/app
+
+# Machine-readable JSON output
+velcrux tx list /var/www/app --json
+```
+
+Output format:
+```text
+TRANSACTION ID               STATE        FILES    TARGET
+---------------------------- ------------ -------- ------------------------------
+tx_1729241800_1              Committed    42       /var/www/app
+tx_1729235400_1              RolledBack   18       /var/www/app
+```
+
+#### 2. Inspect Transaction Journal (`velcrux tx show`)
+```bash
+# Inspect transaction metadata and file actions
+velcrux tx show tx_1729241800_1 --path /var/www/app
+
+# Output formatted as JSON
+velcrux tx show tx_1729241800_1 --path /var/www/app --json
+```
+
+Output format:
+```text
+Transaction ID: tx_1729241800_1
+Target:         /var/www/app
+State:          Committed
+Created:        1729241800
+Files:          3
+
+ACTION   SIZE       RELATIVE PATH
+-------- ---------- ------------------------------
+Create   12.40 KB   assets/app.js
+Update   4.20 KB    index.html
+Delete   0 B        legacy.tmp
+```
+
+#### 3. Roll Back a Transaction (`velcrux tx rollback`)
+Restore the target directory to its exact baseline before the transaction took place. Original files are restored from backup and newly created files are purged:
+
+```bash
+# Roll back transaction to restore previous baseline
+velcrux tx rollback tx_1729241800_1 --path /var/www/app
+
+# Machine-readable JSON output
+velcrux tx rollback tx_1729241800_1 --path /var/www/app --json
+```
+
+#### 4. Crash Recovery (`velcrux tx recover`)
+Scan a directory after a system crash, power failure, or process termination to cleanly recover any incomplete or interrupted transactions:
+
+```bash
+# Recover pending transactions in directory
+velcrux tx recover /var/www/app
+
+# Output formatted as JSON
+velcrux tx recover /var/www/app --json
+```
