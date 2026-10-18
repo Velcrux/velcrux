@@ -953,9 +953,10 @@ mod tests {
         let schedule = BandwidthSchedule::from_str(schedule_str).unwrap();
         let limiter = ScheduledBandwidthLimiter::new(schedule);
 
-        // At 10:00: throttled to 10240 B/s
+        // At 10:00: throttled to 10240 B/s.
+        // Consume more than the 64 KiB minimum burst window to guarantee throttling delay.
         let ts_peak = 1791972000;
-        let delay_peak = limiter.consume_at(20480, ts_peak);
+        let delay_peak = limiter.consume_at(100_000, ts_peak);
         assert!(delay_peak > Duration::ZERO);
 
         // At 20:00: unlimited -> zero delay
