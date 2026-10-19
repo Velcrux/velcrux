@@ -180,6 +180,12 @@ pub struct SecurityCfg {
     pub max_auth_attempts: Option<u32>,
     #[serde(default)]
     pub grants: Option<String>,
+    #[serde(default)]
+    pub deletion_policy: Option<String>,
+    #[serde(default)]
+    pub deletion_rate_limit: Option<u32>,
+    #[serde(default)]
+    pub deletion_rate_window_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -220,6 +226,8 @@ pub struct GrantCfg {
     pub path: String,
     #[serde(default)]
     pub permissions: Vec<String>,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -796,6 +804,11 @@ impl ServerConfig {
         // 1. Load grants from inline [[grant]] table
         for g in &self.grants {
             let mut perms = PermSet::default();
+            if let Some(ref r) = g.role {
+                let role: velcrux_core::auth::Role =
+                    std::str::FromStr::from_str(r).map_err(|e| anyhow::anyhow!("{e}"))?;
+                perms = perms.union(role.permissions());
+            }
             for p in &g.permissions {
                 let bit = match p.as_str() {
                     "upload" => PermSet::UPLOAD,
@@ -805,6 +818,7 @@ impl ServerConfig {
                     "sync" => PermSet::SYNC,
                     "resume" => PermSet::RESUME,
                     "admin" => PermSet::ADMIN,
+                    "sync_delete" | "sync-delete" => PermSet::SYNC_DELETE,
                     other => {
                         anyhow::bail!("unknown permission: {other}");
                     }

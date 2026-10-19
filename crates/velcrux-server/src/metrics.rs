@@ -109,6 +109,10 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         0.0
     };
 
+    let deletions_attempted = stats.deletions_attempted.load(Ordering::Relaxed);
+    let deletions_executed = stats.deletions_executed.load(Ordering::Relaxed);
+    let deletions_blocked = stats.deletions_blocked.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -211,6 +215,11 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_authz_denials_total{{op=\"all\"}} {authz_denials}\n\
          velcrux_authz_denials_total{{op=\"read\"}} {authz_read}\n\
          velcrux_authz_denials_total{{op=\"write\"}} {authz_write}\n\n\
+         # HELP velcrux_deletions_total Total remote file deletion attempts and outcomes\n\
+         # TYPE velcrux_deletions_total counter\n\
+         velcrux_deletions_total{{outcome=\"attempted\"}} {deletions_attempted}\n\
+         velcrux_deletions_total{{outcome=\"executed\"}} {deletions_executed}\n\
+         velcrux_deletions_total{{outcome=\"blocked\"}} {deletions_blocked}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

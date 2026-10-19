@@ -92,7 +92,21 @@ Identity → [Grant]
 Grant { path_prefix: VPath, permissions: PermSet }
 ```
 
-Permissions: `upload`, `download`, `list`, `delete`, `sync`, `resume`, `admin`.
+Permissions: `upload`, `download`, `list`, `delete`, `sync`, `resume`, `admin`, `sync_delete`.
+
+Predefined Roles:
+- `admin`: Full administrative control (`admin`, `upload`, `download`, `list`, `sync`, `resume`, `delete`, `sync_delete`).
+- `operator`: Standard operations (`upload`, `download`, `list`, `sync`, `resume`, `delete`).
+- `sync_writer`: Ingestion and replication write (`upload`, `download`, `list`, `sync`, `resume` — no deletions).
+- `sync_replica`: Synchronization replica with pruning authorization (`upload`, `download`, `list`, `sync`, `resume`, `sync_delete`).
+- `read_only`: Reader access (`download`, `list`).
+
+Server Deletion Governance (`CLAUDE.md` §4 Open Question #1; ADR-030):
+Servers configure `security.deletion_policy`:
+- `admin-only` (default): Only identities holding `admin` permission may delete remote files or perform `sync --delete`.
+- `explicit-grant`: Non-admin clients holding explicit `sync_delete` (or `role = "sync_replica"`) may perform sync deletions.
+- `disabled`: All remote deletions are globally rejected (immutable storage mode).
+- `rate-limited`: Remote deletions are permitted subject to sliding-window quotas.
 
 Every operation resolves to `(Identity, Op, raw_path)` and is checked *before* any
 filesystem call. Denied requests never touch the disk — otherwise timing and error
@@ -100,15 +114,15 @@ differences leak the existence of files outside the caller's scope.
 
 ```toml
 [[grant]]
-identity    = "svc-replica"
-path        = "/data/customerA"
-permissions = ["upload", "download", "list", "sync", "resume"]
-# note: no "delete" — see CLAUDE.md §4 open question 1
+identity = "svc-replica"
+path     = "/data/customerA"
+role     = "sync_replica"
+# or permissions = ["upload", "download", "list", "sync", "resume", "sync_delete"]
 
 [[grant]]
-identity    = "ops-admin"
-path        = "/"
-permissions = ["admin"]
+identity = "ops-admin"
+path     = "/"
+role     = "admin"
 ```
 
 The longest matching prefix wins. No grant means deny. `admin` does not imply

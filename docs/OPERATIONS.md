@@ -2640,3 +2640,79 @@ velcrux tx recover /var/www/app
 # Output formatted as JSON
 velcrux tx recover /var/www/app --json
 ```
+
+## 48. Strict RBAC & Policy-Gated Remote Deletion Enforcement (Option BN)
+
+Per `CLAUDE.md` §4 Open Question #1 and `SECURITY.md` §4, Velcrux enforces strict server-side role-based access control (RBAC) and explicit policy gating on remote file deletions and directory pruning (`sync --delete`).
+
+### 1. The Threat Model & Default Safety Invariant
+
+Remote deletion is the most catastrophic failure mode in synchronization infrastructure. An unprivileged or compromised replication client with standard write permissions could issue bulk delete commands and permanently wipe remote datasets.
+
+Velcrux resolves Open Question #1 with a fail-closed, multi-tier defense architecture:
+1. **`sync` never deletes implicitly**: Only explicit `--delete` or `--delete-after` flags emit deletion commands.
+2. **`PermSet::SYNC_DELETE` is distinct from `PermSet::DELETE`**: Standard file write or delete permissions do not authorize bulk synchronization deletions.
+3. **`DeletionPolicy::AdminOnly` is the Server Default**: Non-admin clients are strictly forbidden from performing remote deletions regardless of their grant paths.
+
+### 2. Deletion Governance Policies (`security.deletion_policy`)
+
+Configure the governance policy in `velcruxd.toml`:
+
+```toml
+[security]
+# Options: "admin-only" (default), "explicit-grant", "disabled", "rate-limited"
+deletion_policy = "admin-only"
+
+# Optional sliding-window rate limit configuration (for rate-limited policy)
+deletion_rate_limit = 60           # Max deletions permitted per window
+deletion_rate_window_secs = 60     # Sliding window size in seconds
+```
+
+- **`admin-only` (Default)**: Only identities carrying the `admin` permission may delete remote files or run `sync --delete`. Any non-admin deletion request is rejected with `ErrorCode::PermissionDenied`.
+- **`explicit-grant`**: Remote deletions are permitted if the caller possesses explicit `delete` (for single files) or `sync_delete` / `role = "sync_replica"` (for directory sync deletions) on the target path.
+- **`disabled`**: Remote deletions are globally rejected for all identities including administrators. Ideal for WORM (Write Once, Read Many) compliance and immutable backup repositories.
+- **`rate-limited`**: Remote deletions are allowed (subject to permissions) but strictly rate-limited per identity. Exceeding the rate limit returns `ErrorCode::QuotaExceeded` and blocks further deletions until the window rolls over.
+
+### 3. Predefined RBAC Roles
+
+Role templates simplify operator grant management:
+
+| Role | Permissions | Use Case |
+|---|---|---|
+| `admin` | `admin`, `upload`, `download`, `list`, `sync`, `resume`, `delete`, `sync_delete` | Storage administrators and root management |
+| `operator` | `upload`, `download`, `list`, `sync`, `resume`, `delete` | Operations engineers performing targeted file maintenance |
+| `sync_writer` | `upload`, `download`, `list`, `sync`, `resume` | Automated ingestion pipelines and backup writers (cannot delete) |
+| `sync_replica` | `upload`, `download`, `list`, `sync`, `resume`, `sync_delete` | Active replication replicas authorized to prune extraneous files |
+| `read_only` | `download`, `list` | Readers and consumers |
+
+Configuration example:
+```toml
+[[grant]]
+identity = "replica-prod-01"
+path = "/data"
+role = "sync_replica"
+
+[[grant]]
+identity = "ingest-pipeline"
+path = "/incoming"
+role = "sync_writer"
+```
+
+### 4. Operational Telemetry & Prometheus Metrics
+
+Velcrux exports real-time deletion outcomes under the `velcrux_deletions_total` counter:
+
+```text
+# HELP velcrux_deletions_total Total remote file deletion attempts and outcomes
+# TYPE velcrux_deletions_total counter
+velcrux_deletions_total{outcome="attempted"} 142
+velcrux_deletions_total{outcome="executed"} 140
+velcrux_deletions_total{outcome="blocked"} 2
+```
+
+Audit logs log every deletion attempt with identity, path, sync flag, and policy evaluation:
+```text
+2026-10-19T12:00:00Z WARN velcruxd: deletion blocked: admin role required under AdminOnly policy identity="ingest-pipeline" path="incoming/old.dat" is_sync=true
+2026-10-19T12:00:05Z INFO velcruxd: remote deletion executed successfully identity="replica-prod-01" path="data/stale.bin" is_sync=true
+```
+

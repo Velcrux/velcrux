@@ -360,6 +360,27 @@ where
     let reloadable_authorizer = Arc::new(ReloadableAuthorizer::new(initial_authorizer));
     let authorizer: Arc<dyn Authorizer> = Arc::clone(&reloadable_authorizer) as Arc<dyn Authorizer>;
 
+    let deletion_policy = if let Some(ref pol_str) = cfg.security.deletion_policy {
+        let mut pol: velcrux_core::auth::DeletionPolicy = std::str::FromStr::from_str(pol_str)
+            .map_err(|e| anyhow::anyhow!("invalid deletion policy: {e}"))?;
+        if let velcrux_core::auth::DeletionPolicy::RateLimited {
+            ref mut max_deletions,
+            ref mut window_secs,
+        } = pol
+        {
+            if let Some(limit) = cfg.security.deletion_rate_limit {
+                *max_deletions = limit;
+            }
+            if let Some(win) = cfg.security.deletion_rate_window_secs {
+                *window_secs = win;
+            }
+        }
+        pol
+    } else {
+        velcrux_core::auth::DeletionPolicy::AdminOnly
+    };
+    let deletion_limiter = velcrux_core::auth::DeletionLimiter::new();
+
     let next_id = Arc::new(AtomicU64::new(1));
     let (drain_tx, drain_rx) = tokio::sync::watch::channel(false);
 
@@ -489,7 +510,9 @@ where
                 .with_kill_signal(Some(kill_rx))
                 .with_auth_notifier(Some(auth_notifier))
                 .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3))
-                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"));
+                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"))
+                .with_deletion_policy(deletion_policy.clone())
+                .with_deletion_limiter(deletion_limiter.clone());
 
                 let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
                 let stats_clean = Arc::clone(&stats);
@@ -586,7 +609,9 @@ where
                 .with_kill_signal(Some(kill_rx))
                 .with_auth_notifier(Some(auth_notifier))
                 .with_max_auth_attempts(cfg.security.max_auth_attempts.unwrap_or(3))
-                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"));
+                .with_compression(cfg.transfer.compression.as_deref() == Some("zstd"))
+                .with_deletion_policy(deletion_policy.clone())
+                .with_deletion_limiter(deletion_limiter.clone());
 
                 let reg_clean: Arc<SessionRegistry> = Arc::clone(&registry);
                 let stats_clean = Arc::clone(&stats);

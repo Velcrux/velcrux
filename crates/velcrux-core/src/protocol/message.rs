@@ -703,6 +703,8 @@ pub enum TransferOp {
     Hardlink = 7,
     /// Extended attributes set.
     SetXattr = 8,
+    /// Directory sync deletion (Option BN).
+    SyncDelete = 9,
 }
 
 impl TransferOp {
@@ -717,6 +719,7 @@ impl TransferOp {
             6 => Ok(Self::Symlink),
             7 => Ok(Self::Hardlink),
             8 => Ok(Self::SetXattr),
+            9 => Ok(Self::SyncDelete),
             _ => Err(ProtocolError::Malformed("TRANSFER_CREATE: unknown op")),
         }
     }
@@ -2212,6 +2215,8 @@ mod tests {
         assert_eq!(TransferOp::from_wire(5).unwrap(), TransferOp::Delete);
         assert_eq!(TransferOp::from_wire(6).unwrap(), TransferOp::Symlink);
         assert_eq!(TransferOp::from_wire(7).unwrap(), TransferOp::Hardlink);
+        assert_eq!(TransferOp::from_wire(8).unwrap(), TransferOp::SetXattr);
+        assert_eq!(TransferOp::from_wire(9).unwrap(), TransferOp::SyncDelete);
         assert!(TransferOp::from_wire(0).is_err());
         assert!(TransferOp::from_wire(99).is_err());
     }

@@ -157,6 +157,12 @@ pub struct ServerStats {
     pub quic_loss_ratio_ppm: AtomicU64,
     /// Current estimated QUIC bytes in flight.
     pub quic_bytes_in_flight: AtomicU64,
+    /// Total file deletion operations attempted (Option BN).
+    pub deletions_attempted: AtomicU64,
+    /// Total file deletion operations executed successfully (Option BN).
+    pub deletions_executed: AtomicU64,
+    /// Total file deletion operations blocked by authorization or policy (Option BN).
+    pub deletions_blocked: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -207,6 +213,9 @@ impl Default for ServerStats {
             last_rtt_us: AtomicU64::new(0),
             quic_loss_ratio_ppm: AtomicU64::new(0),
             quic_bytes_in_flight: AtomicU64::new(0),
+            deletions_attempted: AtomicU64::new(0),
+            deletions_executed: AtomicU64::new(0),
+            deletions_blocked: AtomicU64::new(0),
         }
     }
 }
@@ -273,6 +282,10 @@ pub struct ServerConn {
     checkpoint_policy: Option<CheckpointPolicy>,
     /// Optional connection migration coordinator (Option AP).
     migration_coordinator: Option<Arc<MigrationCoordinator>>,
+    /// Deletion governance policy (Option BN).
+    deletion_policy: crate::auth::DeletionPolicy,
+    /// Shared deletion rate limiter (Option BN).
+    deletion_limiter: crate::auth::DeletionLimiter,
 }
 
 async fn next_frame(
@@ -392,6 +405,8 @@ impl ServerConn {
             idempotency_ledger: None,
             checkpoint_policy: None,
             migration_coordinator: None,
+            deletion_policy: crate::auth::DeletionPolicy::AdminOnly,
+            deletion_limiter: crate::auth::DeletionLimiter::new(),
         }
     }
 
@@ -485,6 +500,18 @@ impl ServerConn {
         migration_coordinator: Option<Arc<MigrationCoordinator>>,
     ) -> Self {
         self.migration_coordinator = migration_coordinator;
+        self
+    }
+
+    /// Configure the server-side deletion governance policy (Option BN).
+    pub fn with_deletion_policy(mut self, policy: crate::auth::DeletionPolicy) -> Self {
+        self.deletion_policy = policy;
+        self
+    }
+
+    /// Attach a shared deletion rate limiter (Option BN).
+    pub fn with_deletion_limiter(mut self, limiter: crate::auth::DeletionLimiter) -> Self {
+        self.deletion_limiter = limiter;
         self
     }
 
@@ -893,6 +920,8 @@ impl ServerConn {
                                 &self.limits_provider,
                                 &self.idempotency_ledger,
                                 &self.checkpoint_policy,
+                                &self.deletion_policy,
+                                &self.deletion_limiter,
                                 identity,
                                 send.as_mut(),
                                 recv.as_mut(),
@@ -1080,6 +1109,8 @@ async fn handle_transfer_create(
     limits_provider: &Option<Arc<dyn LimitsProvider>>,
     idempotency_ledger: &Option<Arc<IdempotencyLedger>>,
     _checkpoint_policy: &Option<CheckpointPolicy>,
+    deletion_policy: &crate::auth::DeletionPolicy,
+    deletion_limiter: &crate::auth::DeletionLimiter,
     identity: &Identity,
     send: &mut dyn crate::transport::BiSendStream,
     recv: &mut dyn crate::transport::BiRecvStream,
@@ -1096,7 +1127,91 @@ async fn handle_transfer_create(
 
     let create = TransferCreate::decode(payload)?;
 
-    if create.op == TransferOp::Delete {
+    if create.op == TransferOp::Delete || create.op == TransferOp::SyncDelete {
+        stats
+            .deletions_attempted
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let is_sync = create.op == TransferOp::SyncDelete;
+        let is_admin = authorizer
+            .granted_permissions(identity)
+            .has(crate::auth::PermSet::ADMIN);
+
+        // 1. Evaluate server-wide deletion governance policy (CLAUDE.md §4 Open Question #1).
+        match deletion_policy {
+            crate::auth::DeletionPolicy::AdminOnly => {
+                if !is_admin {
+                    stats
+                        .authz_denials
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .deletions_blocked
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(
+                        identity = %identity.name,
+                        path = %create.dst_path,
+                        is_sync,
+                        "deletion blocked: admin role required under AdminOnly policy"
+                    );
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::PermissionDenied,
+                        "remote deletion requires admin role under active policy",
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+            }
+            crate::auth::DeletionPolicy::Disabled => {
+                stats
+                    .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .deletions_blocked
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::warn!(
+                    identity = %identity.name,
+                    path = %create.dst_path,
+                    is_sync,
+                    "deletion blocked: remote deletion is disabled on server"
+                );
+                let err = crate::protocol::message::ErrorMsg::new(
+                    crate::protocol::error::ErrorCode::PermissionDenied,
+                    "remote deletion is disabled on this server",
+                );
+                write_frame(send, &Message::Error(err), 0).await?;
+                return Ok(());
+            }
+            crate::auth::DeletionPolicy::RateLimited {
+                max_deletions,
+                window_secs,
+            } => {
+                if !deletion_limiter.check_and_record(&identity.name, *max_deletions, *window_secs)
+                {
+                    stats
+                        .resource_limit_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    stats
+                        .deletions_blocked
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!(
+                        identity = %identity.name,
+                        path = %create.dst_path,
+                        is_sync,
+                        "deletion blocked: rate limit exceeded"
+                    );
+                    let err = crate::protocol::message::ErrorMsg::new(
+                        crate::protocol::error::ErrorCode::QuotaExceeded,
+                        "remote deletion rate limit exceeded",
+                    );
+                    write_frame(send, &Message::Error(err), 0).await?;
+                    return Ok(());
+                }
+            }
+            crate::auth::DeletionPolicy::ExplicitGrant => {
+                // Permitted if caller has explicit grant for the operation
+            }
+        }
+
+        // 2. Evaluate idempotency if key present
         if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
             match ledger.evaluate_transfer_create(
                 crate::state::Role::Server,
@@ -1121,11 +1236,21 @@ async fn handle_transfer_create(
                 _ => {}
             }
         }
-        let dst = match authorizer.check(identity, Op::Delete, &create.dst_path) {
+
+        // 3. Authorize path and permission bit
+        let req_op = if is_sync {
+            crate::auth::Op::SyncDelete
+        } else {
+            crate::auth::Op::Delete
+        };
+        let dst = match authorizer.check(identity, req_op, &create.dst_path) {
             Ok(p) => p,
             Err(_) => {
                 stats
                     .authz_denials
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                stats
+                    .deletions_blocked
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let err = crate::protocol::message::ErrorMsg::new(
                     crate::protocol::error::ErrorCode::FileNotFound,
@@ -1135,8 +1260,19 @@ async fn handle_transfer_create(
                 return Ok(());
             }
         };
+
+        // 4. Execute deletion
         let transfer_id = TransferId::generate();
         let _ = backend.remove(&dst).await;
+        stats
+            .deletions_executed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(
+            identity = %identity.name,
+            path = %dst.as_str(),
+            is_sync,
+            "remote deletion executed successfully"
+        );
         if let (Some(ledger), false) = (idempotency_ledger, create.idempotency_key.is_empty()) {
             ledger.mark_committed(crate::state::Role::Server, &create.idempotency_key, 1);
         }

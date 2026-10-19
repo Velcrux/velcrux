@@ -3269,12 +3269,20 @@ async fn download_file_stream(
     Ok((created.transfer_id, computed, plan.bytes_to_transfer))
 }
 
-async fn delete_remote_file(session: &mut ClientSession, remote_path: &str) -> anyhow::Result<()> {
+async fn delete_remote_file(
+    session: &mut ClientSession,
+    remote_path: &str,
+    is_sync: bool,
+) -> anyhow::Result<()> {
     use velcrux_core::protocol::message::{Committed, Message, TransferCreate, TransferOp};
     use velcrux_core::session::encode_message;
 
     let create = TransferCreate {
-        op: TransferOp::Delete,
+        op: if is_sync {
+            TransferOp::SyncDelete
+        } else {
+            TransferOp::Delete
+        },
         src_path: "".into(),
         dst_path: remote_path.trim_start_matches('/').to_string(),
         idempotency_key: velcrux_core::util::TransferId::generate().to_string(),
@@ -3622,7 +3630,7 @@ async fn run_remote_upload_sync(
                     } else {
                         format!("{}/{}", vpath.trim_end_matches('/'), item.rel_path)
                     };
-                    delete_remote_file(&mut session, &remote_file).await?;
+                    delete_remote_file(&mut session, &remote_file, true).await?;
                     files_deleted += 1;
                 }
             }

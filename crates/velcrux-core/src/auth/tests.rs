@@ -1,6 +1,7 @@
 // Unit tests for `FileAuthorizer` and the auth module.
 use crate::auth::{
-    Authenticator, Authorizer, FileAuthorizer, Grant, MtlsAuthenticator, Op, PermSet,
+    Authenticator, Authorizer, DeletionLimiter, DeletionPolicy, FileAuthorizer, Grant,
+    MtlsAuthenticator, Op, PermSet, Role,
 };
 use crate::error::VelcruxError;
 use crate::transport::identity::Identity;
@@ -309,4 +310,163 @@ fn mtls_authenticator_passes_through() {
     let id = identity("test-user");
     let verified = auth.authenticate(&id).unwrap();
     assert_eq!(verified.name, "test-user");
+}
+
+// --- 15. RBAC roles and permissions ---
+
+#[test]
+fn role_permissions_structure() {
+    let admin = Role::Admin.permissions();
+    assert!(admin.has(PermSet::ADMIN));
+    assert!(admin.has(PermSet::UPLOAD));
+    assert!(admin.has(PermSet::DOWNLOAD));
+    assert!(admin.has(PermSet::DELETE));
+    assert!(admin.has(PermSet::SYNC_DELETE));
+
+    let operator = Role::Operator.permissions();
+    assert!(!operator.has(PermSet::ADMIN));
+    assert!(operator.has(PermSet::DELETE));
+    assert!(!operator.has(PermSet::SYNC_DELETE));
+
+    let writer = Role::SyncWriter.permissions();
+    assert!(!writer.has(PermSet::ADMIN));
+    assert!(!writer.has(PermSet::DELETE));
+    assert!(!writer.has(PermSet::SYNC_DELETE));
+    assert!(writer.has(PermSet::SYNC));
+
+    let replica = Role::SyncReplica.permissions();
+    assert!(!replica.has(PermSet::ADMIN));
+    assert!(!replica.has(PermSet::DELETE));
+    assert!(replica.has(PermSet::SYNC_DELETE));
+    assert!(replica.has(PermSet::SYNC));
+
+    let readonly = Role::ReadOnly.permissions();
+    assert!(!readonly.has(PermSet::UPLOAD));
+    assert!(readonly.has(PermSet::DOWNLOAD));
+    assert!(readonly.has(PermSet::LIST));
+}
+
+#[test]
+fn role_parsing_from_str() {
+    assert_eq!("admin".parse::<Role>().unwrap(), Role::Admin);
+    assert_eq!("operator".parse::<Role>().unwrap(), Role::Operator);
+    assert_eq!("sync_writer".parse::<Role>().unwrap(), Role::SyncWriter);
+    assert_eq!("sync-writer".parse::<Role>().unwrap(), Role::SyncWriter);
+    assert_eq!("sync_replica".parse::<Role>().unwrap(), Role::SyncReplica);
+    assert_eq!("sync-replica".parse::<Role>().unwrap(), Role::SyncReplica);
+    assert_eq!("read_only".parse::<Role>().unwrap(), Role::ReadOnly);
+    assert_eq!("readonly".parse::<Role>().unwrap(), Role::ReadOnly);
+    assert!("invalid_role".parse::<Role>().is_err());
+}
+
+// --- 16. DeletionPolicy parsing and Limiter ---
+
+#[test]
+fn deletion_policy_parsing() {
+    assert_eq!(
+        "admin-only".parse::<DeletionPolicy>().unwrap(),
+        DeletionPolicy::AdminOnly
+    );
+    assert_eq!(
+        "explicit-grant".parse::<DeletionPolicy>().unwrap(),
+        DeletionPolicy::ExplicitGrant
+    );
+    assert_eq!(
+        "disabled".parse::<DeletionPolicy>().unwrap(),
+        DeletionPolicy::Disabled
+    );
+    assert!(matches!(
+        "rate-limited".parse::<DeletionPolicy>().unwrap(),
+        DeletionPolicy::RateLimited { .. }
+    ));
+    assert!("unknown_policy".parse::<DeletionPolicy>().is_err());
+}
+
+#[test]
+fn deletion_limiter_enforces_sliding_window() {
+    let limiter = DeletionLimiter::new();
+    let id = "backup-agent";
+
+    // Allow 3 deletions in a 60-second window
+    assert!(limiter.check_and_record(id, 3, 60));
+    assert!(limiter.check_and_record(id, 3, 60));
+    assert!(limiter.check_and_record(id, 3, 60));
+    // 4th deletion is blocked
+    assert!(!limiter.check_and_record(id, 3, 60));
+
+    // Another identity is not blocked
+    assert!(limiter.check_and_record("admin", 3, 60));
+
+    // Resetting clears the history
+    limiter.reset();
+    assert!(limiter.check_and_record(id, 3, 60));
+}
+
+// --- 17. SyncDelete authorization checks ---
+
+#[test]
+fn sync_delete_requires_sync_delete_permission() {
+    let id_replica = identity("replica");
+    let id_writer = identity("writer");
+
+    let authz = FileAuthorizer::from_grants(vec![
+        Grant {
+            identity: "replica".to_string(),
+            path_prefix: "data".to_string(),
+            permissions: PermSet::SYNC | PermSet::SYNC_DELETE,
+        },
+        Grant {
+            identity: "writer".to_string(),
+            path_prefix: "data".to_string(),
+            permissions: PermSet::SYNC | PermSet::DELETE, // only standard delete, not sync_delete!
+        },
+    ]);
+
+    // Replica can perform Op::SyncDelete
+    assert!(authz
+        .check(&id_replica, Op::SyncDelete, "data/file.txt")
+        .is_ok());
+    // Replica cannot perform single-file Op::Delete
+    assert!(authz
+        .check(&id_replica, Op::Delete, "data/file.txt")
+        .is_err());
+
+    // Writer cannot perform Op::SyncDelete
+    assert!(authz
+        .check(&id_writer, Op::SyncDelete, "data/file.txt")
+        .is_err());
+    // Writer can perform single-file Op::Delete
+    assert!(authz.check(&id_writer, Op::Delete, "data/file.txt").is_ok());
+}
+
+// --- 18. TOML loading with role and sync_delete ---
+
+#[test]
+fn toml_grant_with_role_and_sync_delete() {
+    let toml_str = r#"
+[[grant]]
+identity = "replica"
+path = "data"
+role = "sync_replica"
+
+[[grant]]
+identity = "custom"
+path = "backup"
+permissions = ["sync", "sync_delete"]
+"#;
+    let tmp = std::env::temp_dir().join(format!("velcrux-auth-role-{}.toml", std::process::id()));
+    std::fs::write(&tmp, toml_str).unwrap();
+    let authz = FileAuthorizer::load(&tmp).unwrap();
+    let _ = std::fs::remove_file(&tmp);
+
+    let id_rep = identity("replica");
+    let perms_rep = authz.granted_permissions(&id_rep);
+    assert!(perms_rep.has(PermSet::SYNC));
+    assert!(perms_rep.has(PermSet::SYNC_DELETE));
+    assert!(!perms_rep.has(PermSet::ADMIN));
+
+    let id_custom = identity("custom");
+    let perms_custom = authz.granted_permissions(&id_custom);
+    assert!(perms_custom.has(PermSet::SYNC));
+    assert!(perms_custom.has(PermSet::SYNC_DELETE));
 }

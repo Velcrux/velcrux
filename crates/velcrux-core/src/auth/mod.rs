@@ -31,6 +31,7 @@ impl PermSet {
     pub const SYNC: PermSet = PermSet(1 << 4);
     pub const RESUME: PermSet = PermSet(1 << 5);
     pub const ADMIN: PermSet = PermSet(1 << 6);
+    pub const SYNC_DELETE: PermSet = PermSet(1 << 7);
 
     /// All non-admin permissions.
     pub const ALL_TRANSFER: PermSet =
@@ -64,6 +65,66 @@ impl std::ops::BitOr for PermSet {
     }
 }
 
+/// Predefined RBAC roles (`CLAUDE.md` §4 Open Question #1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// Full administrative authority (all permissions including admin, delete, and sync_delete).
+    Admin,
+    /// Standard operator with full transfer capabilities and single-file delete, but no bulk sync deletion.
+    Operator,
+    /// Automated sync writer capable of uploading, downloading, listing, and syncing (no deletion privileges).
+    SyncWriter,
+    /// Automated replication agent explicitly authorized to prune extraneous remote files during sync.
+    SyncReplica,
+    /// Read-only access for downloading and listing.
+    ReadOnly,
+}
+
+impl Role {
+    /// Get the permissions associated with this role.
+    pub fn permissions(self) -> PermSet {
+        match self {
+            Role::Admin => {
+                PermSet::ADMIN | PermSet::ALL_TRANSFER | PermSet::DELETE | PermSet::SYNC_DELETE
+            }
+            Role::Operator => PermSet::ALL_TRANSFER | PermSet::DELETE,
+            Role::SyncWriter => {
+                PermSet::UPLOAD
+                    | PermSet::DOWNLOAD
+                    | PermSet::LIST
+                    | PermSet::SYNC
+                    | PermSet::RESUME
+            }
+            Role::SyncReplica => {
+                PermSet::UPLOAD
+                    | PermSet::DOWNLOAD
+                    | PermSet::LIST
+                    | PermSet::SYNC
+                    | PermSet::RESUME
+                    | PermSet::SYNC_DELETE
+            }
+            Role::ReadOnly => PermSet::DOWNLOAD | PermSet::LIST,
+        }
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = VelcruxError;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_lowercase().replace('-', "_").as_str() {
+            "admin" => Ok(Role::Admin),
+            "operator" => Ok(Role::Operator),
+            "sync_writer" => Ok(Role::SyncWriter),
+            "sync_replica" => Ok(Role::SyncReplica),
+            "read_only" | "readonly" => Ok(Role::ReadOnly),
+            other => Err(VelcruxError::Config(format!(
+                "unknown role {other:?}, expected: admin, operator, sync_writer, sync_replica, read_only"
+            ))),
+        }
+    }
+}
+
 /// Operation being authorized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
@@ -74,6 +135,7 @@ pub enum Op {
     Sync,
     Resume,
     Admin,
+    SyncDelete,
 }
 
 impl Op {
@@ -87,7 +149,104 @@ impl Op {
             Op::Sync => PermSet::SYNC,
             Op::Resume => PermSet::RESUME,
             Op::Admin => PermSet::ADMIN,
+            Op::SyncDelete => PermSet::SYNC_DELETE,
         }
+    }
+}
+
+/// Server-side deletion policy governing remote deletions and `sync --delete` (`CLAUDE.md` §4 Open Question #1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeletionPolicy {
+    /// Only identities possessing `PermSet::ADMIN` are allowed to delete remote files or execute `sync --delete`.
+    /// This is the safe default, strictly answering Open Question #1 in the negative for unprivileged clients.
+    AdminOnly,
+    /// Deletions are permitted if the identity holds an explicit grant with `PermSet::DELETE` (for single files)
+    /// or `PermSet::SYNC_DELETE` / `PermSet::ADMIN` (for directory sync deletions).
+    ExplicitGrant,
+    /// Remote deletions are globally forbidden across the entire server, regardless of grants or admin role.
+    Disabled,
+    /// Deletions are allowed (subject to permissions) but rate-limited to avoid catastrophic accidental bulk wipes.
+    RateLimited {
+        /// Maximum number of deletions permitted within the time window.
+        max_deletions: u32,
+        /// Sliding window duration in seconds.
+        window_secs: u64,
+    },
+}
+
+impl Default for DeletionPolicy {
+    fn default() -> Self {
+        DeletionPolicy::AdminOnly
+    }
+}
+
+impl std::str::FromStr for DeletionPolicy {
+    type Err = VelcruxError;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_lowercase().replace('_', "-").as_str() {
+            "admin-only" | "admin" => Ok(DeletionPolicy::AdminOnly),
+            "explicit-grant" | "explicit" => Ok(DeletionPolicy::ExplicitGrant),
+            "disabled" | "deny" | "none" => Ok(DeletionPolicy::Disabled),
+            "rate-limited" => Ok(DeletionPolicy::RateLimited {
+                max_deletions: 60,
+                window_secs: 60,
+            }),
+            other => Err(VelcruxError::Config(format!(
+                "unknown deletion policy {other:?}, expected: admin-only, explicit-grant, disabled, rate-limited"
+            ))),
+        }
+    }
+}
+
+/// Thread-safe sliding-window deletion rate limiter.
+#[derive(Debug, Clone)]
+pub struct DeletionLimiter {
+    history: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
+    >,
+}
+
+impl Default for DeletionLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DeletionLimiter {
+    pub fn new() -> Self {
+        Self {
+            history: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Check if identity is within rate limits and record the deletion if allowed.
+    pub fn check_and_record(&self, identity: &str, max_deletions: u32, window_secs: u64) -> bool {
+        let mut guard = match self.history.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let now = std::time::Instant::now();
+        let window = std::time::Duration::from_secs(window_secs);
+
+        let timestamps = guard.entry(identity.to_string()).or_default();
+        timestamps.retain(|&t| now.duration_since(t) <= window);
+
+        if timestamps.len() as u32 >= max_deletions {
+            false
+        } else {
+            timestamps.push(now);
+            true
+        }
+    }
+
+    /// Reset history (useful in tests).
+    pub fn reset(&self) {
+        let mut guard = match self.history.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clear();
     }
 }
 
@@ -203,6 +362,8 @@ struct GrantToml {
     path: String,
     #[serde(default)]
     permissions: Vec<String>,
+    #[serde(default)]
+    role: Option<String>,
 }
 
 /// Parse a single grant from its TOML form, failing closed on any
@@ -217,6 +378,10 @@ struct GrantToml {
 /// normalizes to `""`, which matches the whole root.
 fn grant_from_toml(g: GrantToml) -> Result<Grant> {
     let mut perms = PermSet::default();
+    if let Some(ref r) = g.role {
+        let role: Role = std::str::FromStr::from_str(r)?;
+        perms = perms.union(role.permissions());
+    }
     for p in &g.permissions {
         let bit = match p.as_str() {
             "upload" => PermSet::UPLOAD,
@@ -226,6 +391,7 @@ fn grant_from_toml(g: GrantToml) -> Result<Grant> {
             "sync" => PermSet::SYNC,
             "resume" => PermSet::RESUME,
             "admin" => PermSet::ADMIN,
+            "sync_delete" | "sync-delete" => PermSet::SYNC_DELETE,
             other => {
                 return Err(VelcruxError::Config(format!(
                     "unknown permission {other:?} for identity {:?}",
@@ -302,7 +468,13 @@ impl Authorizer for FileAuthorizer {
 
         // 4. The matched grant must carry the permission this op requires.
         //    `admin` does NOT imply `delete` — each bit is explicit.
-        if !grant.permissions.has(op.required_perm()) {
+        let allowed = if op == Op::SyncDelete {
+            grant.permissions.has(PermSet::SYNC_DELETE)
+                || (grant.permissions.has(PermSet::ADMIN) && grant.permissions.has(PermSet::DELETE))
+        } else {
+            grant.permissions.has(op.required_perm())
+        };
+        if !allowed {
             return Err(VelcruxError::Protocol(ProtocolError::PermissionDenied));
         }
 
