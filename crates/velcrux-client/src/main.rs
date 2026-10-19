@@ -391,6 +391,18 @@ enum Cmd {
         /// Whole-directory transactional commit and rollback journaling (Option BM).
         #[arg(long)]
         atomic: bool,
+        /// Automatically sign manifest upon sync completion with the provided Ed25519 private key (Option BO).
+        #[arg(long = "sign-key", env = "VELCRUX_SYNC_SIGN_KEY")]
+        sign_key: Option<PathBuf>,
+        /// Issuer identity string when signing manifest during sync (Option BO).
+        #[arg(long = "sign-issuer", default_value = "velcrux-sync")]
+        sign_issuer: String,
+        /// Verify target against detached attestation signature after sync (Option BO).
+        #[arg(long = "verify-sig")]
+        verify_sig: Option<PathBuf>,
+        /// Path to trusted signers file for post-sync attestation verification (Option BO).
+        #[arg(long = "trusted-signers", env = "VELCRUX_TRUSTED_SIGNERS")]
+        trusted_signers: Option<PathBuf>,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -536,6 +548,84 @@ enum Cmd {
     Dedup {
         #[command(subcommand)]
         sub: DedupSubCmd,
+    },
+    /// Cryptographic detached manifest signing and end-to-end attestation (Option BO, SECURITY.md §7).
+    Attest {
+        #[command(subcommand)]
+        sub: AttestSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AttestSubCmd {
+    /// Generate a detached signed attestation envelope for a file or directory manifest.
+    Sign {
+        /// Target file or directory to manifest and sign.
+        path: PathBuf,
+        /// Path to the Ed25519 private key (PEM or PKCS#8).
+        #[arg(long, short = 'k', env = "VELCRUX_SIGN_KEY")]
+        key: PathBuf,
+        /// Optional destination path for the detached signature file (defaults to <path>/.velcrux-manifest.sig or <path>.sig).
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+        /// Identity or URI of the attestation issuer (e.g. spiffe://velcrux.internal/ci-signer).
+        #[arg(long, default_value = "velcrux-signer")]
+        issuer: String,
+        /// Optional signature expiration in seconds from now.
+        #[arg(long)]
+        expires_in: Option<u64>,
+        /// Optional key-value metadata tags to embed in the attestation (format: key=val).
+        #[arg(long = "metadata", short = 'm')]
+        metadata: Vec<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cryptographically verify a detached attestation signature against a target file or directory tree.
+    Verify {
+        /// Target file or directory to verify on disk.
+        path: PathBuf,
+        /// Path to the detached attestation signature file (.velcrux-manifest.sig).
+        #[arg(long, short = 's')]
+        sig: Option<PathBuf>,
+        /// Path to an authorized_signers or authorized_keys file of trusted Ed25519 public keys.
+        #[arg(long, env = "VELCRUX_TRUSTED_KEYS")]
+        trusted_keys: Option<PathBuf>,
+        /// Explicit trusted public key hex string.
+        #[arg(long)]
+        trusted_key: Option<String>,
+        /// Require that the attestation issuer matches this expected identity string.
+        #[arg(long)]
+        require_issuer: Option<String>,
+        /// Allow expired attestations to pass validation.
+        #[arg(long)]
+        allow_expired: bool,
+        /// Output formatted as JSON report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a fresh Ed25519 attestation signing keypair.
+    Keygen {
+        /// Path where the private key (PKCS#8 PEM) will be saved.
+        #[arg(long, short = 'o', default_value = "attestation.key")]
+        out: PathBuf,
+        /// Optional path where the public key will be saved (in OpenSSH format).
+        #[arg(long, short = 'p')]
+        pub_out: Option<PathBuf>,
+        /// Optional identity comment for OpenSSH public key format.
+        #[arg(long, default_value = "signer@velcrux.internal")]
+        comment: String,
+        /// Force overwrite if destination files already exist.
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
+    /// Inspect and display the claims within a detached attestation envelope without scanning disk.
+    Inspect {
+        /// Path to the detached attestation signature file (.velcrux-manifest.sig).
+        sig: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1858,6 +1948,10 @@ async fn main() -> anyhow::Result<()> {
             run_dedup(&cli, sub).await?;
             return Ok(());
         }
+        Cmd::Attest { sub } => {
+            run_attest(&cli, sub).await?;
+            return Ok(());
+        }
 
         Cmd::Ping { url } => {
             let addr = parse_url(url)?;
@@ -2089,6 +2183,10 @@ async fn main() -> anyhow::Result<()> {
             poll_interval_ms,
             max_batches,
             atomic,
+            sign_key,
+            sign_issuer,
+            verify_sig,
+            trusted_signers,
         } => {
             if *watch {
                 run_watch(
@@ -2128,6 +2226,10 @@ async fn main() -> anyhow::Result<()> {
                 *small_file_threshold,
                 *batch_max_bytes,
                 *atomic,
+                sign_key.as_deref(),
+                sign_issuer,
+                verify_sig.as_deref(),
+                trusted_signers.as_deref(),
             )
             .await?;
         }
@@ -4063,6 +4165,10 @@ async fn run_sync(
     small_file_threshold: Option<u64>,
     batch_max_bytes: Option<u64>,
     atomic: bool,
+    sign_key: Option<&Path>,
+    sign_issuer: &str,
+    verify_sig: Option<&Path>,
+    trusted_signers: Option<&Path>,
 ) -> anyhow::Result<()> {
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
@@ -4316,6 +4422,67 @@ async fn run_sync(
         }
     }
 
+    if !dry_run {
+        if let Some(key_path) = sign_key {
+            use velcrux_core::auth::{
+                generate_target_attestation, AttestationKey, DEFAULT_SIG_EXT,
+            };
+            let att_key = AttestationKey::load_from_file(key_path).with_context(|| {
+                format!("failed to load signing key from {}", key_path.display())
+            })?;
+            let (envelope, _begin) = generate_target_attestation(
+                &dst_path,
+                &att_key,
+                sign_issuer,
+                None,
+                Default::default(),
+            )
+            .map_err(|e| anyhow::anyhow!("failed to sign destination manifest: {e}"))?;
+            let sig_file = dst_path.join(DEFAULT_SIG_EXT);
+            envelope
+                .save_to_file(&sig_file)
+                .with_context(|| format!("failed to save attestation to {}", sig_file.display()))?;
+            if !is_json {
+                println!("Signed Attestation: Created ({})", sig_file.display());
+            }
+        }
+
+        if let Some(sig_path) = verify_sig {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            use velcrux_core::auth::{
+                verify_target_attestation, AttestationEnvelope, AttestationVerifier,
+            };
+            let envelope = AttestationEnvelope::load_from_file(sig_path).with_context(|| {
+                format!("failed to load attestation from {}", sig_path.display())
+            })?;
+            let mut verifier = AttestationVerifier::new();
+            if let Some(ts_path) = trusted_signers {
+                verifier.load_trusted_keys_file(ts_path).with_context(|| {
+                    format!("failed to load trusted signers from {}", ts_path.display())
+                })?;
+                verifier = verifier.with_require_trusted(true);
+            }
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let report = verify_target_attestation(&dst_path, &envelope, &verifier, None, now)
+                .map_err(|e| anyhow::anyhow!("post-sync attestation verification failed: {e}"))?;
+            if !report.is_valid {
+                anyhow::bail!(
+                    "post-sync attestation verification failed: {}",
+                    report.status
+                );
+            }
+            if !is_json {
+                println!(
+                    "Verified Attestation: Valid (signer: {})",
+                    report.signer_identity
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -4414,6 +4581,265 @@ async fn run_tx(cli: &Cli, sub: &TxSubCmd) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn run_attest(cli: &Cli, sub: &AttestSubCmd) -> anyhow::Result<()> {
+    use std::fs::File;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use velcrux_core::auth::{
+        generate_target_attestation, verify_target_attestation, AttestationEnvelope,
+        AttestationKey, AttestationVerifier, DEFAULT_SIG_EXT,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        AttestSubCmd::Sign {
+            path,
+            key,
+            out,
+            issuer,
+            expires_in,
+            metadata,
+            json,
+        } => {
+            let att_key = AttestationKey::load_from_file(key)
+                .with_context(|| format!("failed to load signing key from {}", key.display()))?;
+
+            let mut meta_map = std::collections::BTreeMap::new();
+            for m in metadata {
+                if let Some((k, v)) = m.split_once('=') {
+                    meta_map.insert(k.trim().to_string(), v.trim().to_string());
+                } else {
+                    meta_map.insert(m.trim().to_string(), "true".to_string());
+                }
+            }
+
+            let (envelope, begin) =
+                generate_target_attestation(path, &att_key, issuer, *expires_in, meta_map)
+                    .map_err(|e| anyhow::anyhow!("failed to generate target attestation: {e}"))?;
+
+            let sig_path = match out {
+                Some(p) => p.clone(),
+                None => {
+                    if path.is_dir() {
+                        path.join(DEFAULT_SIG_EXT)
+                    } else {
+                        PathBuf::from(format!("{}{}", path.display(), DEFAULT_SIG_EXT))
+                    }
+                }
+            };
+
+            envelope
+                .save_to_file(&sig_path)
+                .with_context(|| format!("failed to write signature to {}", sig_path.display()))?;
+
+            if *json || is_json {
+                let out_obj = serde_json::json!({
+                    "success": true,
+                    "target": path.display().to_string(),
+                    "signature_file": sig_path.display().to_string(),
+                    "issuer": envelope.payload.issuer,
+                    "public_key": velcrux_core::auth::attestation::encode_hex(&envelope.public_key),
+                    "manifest_hash": envelope.payload.manifest_hash.to_string(),
+                    "file_count": begin.file_count,
+                    "total_bytes": begin.total_bytes,
+                    "created_at": envelope.payload.created_at,
+                    "expires_at": envelope.payload.expires_at,
+                });
+                println!("{}", serde_json::to_string_pretty(&out_obj)?);
+            } else {
+                println!("Signed manifest attestation generated successfully.");
+                println!("  Target:         {}", path.display());
+                println!("  Signature File: {}", sig_path.display());
+                println!("  Issuer:         {}", envelope.payload.issuer);
+                println!(
+                    "  Signer Key:     {}",
+                    velcrux_core::auth::attestation::encode_hex(&envelope.public_key)
+                );
+                println!("  Manifest Hash:  {}", envelope.payload.manifest_hash);
+                println!("  Files Count:    {}", begin.file_count);
+                println!("  Total Bytes:    {}", format_bytes(begin.total_bytes));
+                if let Some(exp) = envelope.payload.expires_at {
+                    println!("  Expires At:     {}", exp);
+                }
+            }
+        }
+        AttestSubCmd::Verify {
+            path,
+            sig,
+            trusted_keys,
+            trusted_key,
+            require_issuer,
+            allow_expired,
+            json,
+        } => {
+            let sig_path = match sig {
+                Some(p) => p.clone(),
+                None => {
+                    if path.is_dir() {
+                        path.join(DEFAULT_SIG_EXT)
+                    } else {
+                        PathBuf::from(format!("{}{}", path.display(), DEFAULT_SIG_EXT))
+                    }
+                }
+            };
+
+            let envelope = AttestationEnvelope::load_from_file(&sig_path)
+                .with_context(|| format!("failed to load signature from {}", sig_path.display()))?;
+
+            let mut verifier = AttestationVerifier::new();
+            if let Some(tk_path) = trusted_keys {
+                let count = verifier.load_trusted_keys_file(tk_path).with_context(|| {
+                    format!("failed to load trusted keys from {}", tk_path.display())
+                })?;
+                tracing::debug!("Loaded {count} trusted keys from {}", tk_path.display());
+                verifier = verifier.with_require_trusted(true);
+            }
+            if let Some(raw_hex) = trusted_key {
+                let raw = velcrux_core::auth::attestation::decode_hex(raw_hex)
+                    .map_err(|e| anyhow::anyhow!("invalid hex in --trusted-key: {e}"))?;
+                if raw.len() != 32 {
+                    anyhow::bail!("expected 32-byte hex for --trusted-key");
+                }
+                let mut pk = [0u8; 32];
+                pk.copy_from_slice(&raw);
+                verifier.add_trusted_key(pk, "cli-trusted-key");
+                verifier = verifier.with_require_trusted(true);
+            }
+
+            let now = if *allow_expired {
+                envelope.payload.expires_at.unwrap_or(0).saturating_sub(1)
+            } else {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            };
+
+            let report = verify_target_attestation(
+                path,
+                &envelope,
+                &verifier,
+                require_issuer.as_deref(),
+                now,
+            )
+            .map_err(|e| anyhow::anyhow!("attestation verification process failed: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Attestation Verification Report");
+                println!("--------------------------------------------------");
+                println!("  Status:         {}", report.status);
+                println!(
+                    "  Valid:          {}",
+                    if report.is_valid { "YES" } else { "NO" }
+                );
+                println!("  Target:         {}", report.target_path);
+                println!("  Signer Identity: {}", report.signer_identity);
+                println!("  Signer Key:     {}", report.signer_public_key);
+                println!("  Signed Hash:    {}", report.signed_manifest_hash);
+                println!("  Computed Hash:  {}", report.computed_manifest_hash);
+                println!(
+                    "  File Count:     signed {}, found {}",
+                    report.signed_file_count, report.computed_file_count
+                );
+                println!(
+                    "  Total Bytes:    signed {}, found {}",
+                    format_bytes(report.signed_total_bytes),
+                    format_bytes(report.computed_total_bytes)
+                );
+                if let Some(ref err) = report.error_message {
+                    println!("  Error:          {}", err);
+                }
+            }
+
+            if !report.is_valid {
+                anyhow::bail!("attestation verification failed: {}", report.status);
+            }
+        }
+        AttestSubCmd::Keygen {
+            out,
+            pub_out,
+            comment,
+            force,
+        } => {
+            if out.exists() && !force {
+                anyhow::bail!(
+                    "destination private key {} already exists (use -f to overwrite)",
+                    out.display()
+                );
+            }
+
+            let key = AttestationKey::generate()
+                .map_err(|e| anyhow::anyhow!("failed to generate attestation key: {e}"))?;
+
+            key.save_to_file(out)
+                .with_context(|| format!("failed to write private key to {}", out.display()))?;
+
+            let pub_path = match pub_out {
+                Some(p) => p.clone(),
+                None => PathBuf::from(format!("{}.pub", out.display())),
+            };
+
+            let openssh_str = key.public_key_openssh(comment);
+            let mut pub_file = File::create(&pub_path)
+                .with_context(|| format!("failed to write public key to {}", pub_path.display()))?;
+            pub_file.write_all(openssh_str.as_bytes())?;
+            pub_file.write_all(b"\n")?;
+
+            if is_json {
+                let out_obj = serde_json::json!({
+                    "private_key": out.display().to_string(),
+                    "public_key_file": pub_path.display().to_string(),
+                    "public_key_hex": key.public_key_hex(),
+                    "public_key_openssh": openssh_str,
+                });
+                println!("{}", serde_json::to_string_pretty(&out_obj)?);
+            } else {
+                println!("Generated fresh Ed25519 attestation keypair:");
+                println!("  Private Key:    {}", out.display());
+                println!("  Public Key:     {}", pub_path.display());
+                println!("  Public Key Hex: {}", key.public_key_hex());
+                println!("  OpenSSH Key:    {}", openssh_str);
+            }
+        }
+        AttestSubCmd::Inspect { sig, json } => {
+            let envelope = AttestationEnvelope::load_from_file(sig)
+                .with_context(|| format!("failed to load signature from {}", sig.display()))?;
+
+            if *json || is_json {
+                println!("{}", envelope.to_json()?);
+            } else {
+                println!("Attestation Envelope: {}", sig.display());
+                println!("--------------------------------------------------");
+                println!("  Issuer:         {}", envelope.payload.issuer);
+                println!(
+                    "  Signer Key:     {}",
+                    velcrux_core::auth::attestation::encode_hex(&envelope.public_key)
+                );
+                println!("  Manifest Hash:  {}", envelope.payload.manifest_hash);
+                println!("  Files Count:    {}", envelope.payload.file_count);
+                println!(
+                    "  Total Bytes:    {}",
+                    format_bytes(envelope.payload.total_bytes)
+                );
+                println!("  Created At:     {}", envelope.payload.created_at);
+                if let Some(exp) = envelope.payload.expires_at {
+                    println!("  Expires At:     {}", exp);
+                }
+                if !envelope.payload.metadata.is_empty() {
+                    println!("  Metadata:");
+                    for (k, v) in &envelope.payload.metadata {
+                        println!("    {k} = {v}");
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -6105,6 +6531,10 @@ async fn run_watch(
                     None,  // small_file_threshold
                     None,  // batch_max_bytes
                     false, // atomic
+                    None,  // sign_key
+                    "velcrux-watch",
+                    None,  // verify_sig
+                    None,  // trusted_signers
                 )
                 .await
                 .map_err(|e| velcrux_core::error::VelcruxError::Internal(e.to_string()))?;

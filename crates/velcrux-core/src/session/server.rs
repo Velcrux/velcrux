@@ -163,6 +163,12 @@ pub struct ServerStats {
     pub deletions_executed: AtomicU64,
     /// Total file deletion operations blocked by authorization or policy (Option BN).
     pub deletions_blocked: AtomicU64,
+    /// Total manifest attestations verified successfully (Option BO).
+    pub attestations_verified: AtomicU64,
+    /// Total manifest attestations that failed cryptographic signature or hash verification (Option BO).
+    pub attestations_invalid: AtomicU64,
+    /// Total manifest attestations rejected due to policy, expiry, or untrusted signer (Option BO).
+    pub attestations_rejected: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -216,6 +222,9 @@ impl Default for ServerStats {
             deletions_attempted: AtomicU64::new(0),
             deletions_executed: AtomicU64::new(0),
             deletions_blocked: AtomicU64::new(0),
+            attestations_verified: AtomicU64::new(0),
+            attestations_invalid: AtomicU64::new(0),
+            attestations_rejected: AtomicU64::new(0),
         }
     }
 }

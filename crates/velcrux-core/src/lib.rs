@@ -37,9 +37,12 @@ pub mod transport;
 pub mod util;
 
 pub use auth::{
-    compute_signed_payload, create_pubkey_auth_token, verify_pubkey_auth_token, Authenticator,
-    AuthorizedKeys, Authorizer, CrlStore, FileAuthorizer, Grant, HybridAuthenticator,
-    MtlsAuthenticator, Op, PermSet, PubkeyAuthenticator,
+    compute_signed_payload, create_pubkey_auth_token, generate_target_attestation,
+    verify_pubkey_auth_token, verify_target_attestation, AttestationEnvelope, AttestationError,
+    AttestationKey, AttestationPayload, AttestationReport, AttestationStatus, AttestationVerifier,
+    Authenticator, AuthorizedKeys, Authorizer, CrlStore, FileAuthorizer, Grant,
+    HybridAuthenticator, MtlsAuthenticator, Op, PermSet, PubkeyAuthenticator, VerifiedAttestation,
+    ATTESTATION_DOMAIN_SEPARATOR, ATTESTATION_VERSION_1, DEFAULT_SIG_EXT,
 };
 pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,

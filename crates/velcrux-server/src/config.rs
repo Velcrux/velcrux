@@ -186,6 +186,10 @@ pub struct SecurityCfg {
     pub deletion_rate_limit: Option<u32>,
     #[serde(default)]
     pub deletion_rate_window_secs: Option<u64>,
+    #[serde(default)]
+    pub require_signed_manifests: Option<bool>,
+    #[serde(default)]
+    pub trusted_signers: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

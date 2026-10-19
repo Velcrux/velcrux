@@ -147,6 +147,11 @@ fn scan_dir_recursive(
             || name_str.starts_with(".velcrux-chunks")
             || name_str.ends_with(".velcrux-partial")
             || name_str.ends_with(".velcrux-xattr")
+            || name_str.ends_with(".velcrux-manifest.sig")
+            || name_str == ".velcrux-manifest.sig"
+            || name_str.starts_with(".velcrux-journal")
+            || name_str.starts_with(".velcrux-backup")
+            || name_str.starts_with(".velcrux-shadow")
         {
             continue;
         }

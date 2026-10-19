@@ -242,6 +242,15 @@ to start on a world-readable key file.
 Structured log fields: `ts`, `level`, `component`, `conn_id`, `transfer_id`,
 `file_id`, `identity`, `msg`. Identities are logged; credentials are not.
 
+### 7.1 Cryptographic Detached Manifest Signing & Attestation (Option BO, ADR-031)
+
+For supply chain integrity, release attestation, and offline verification of datasets at rest:
+- **Detached Attestation Envelopes (`AttestationEnvelope`)**: Detached signature files (`.velcrux-manifest.sig` or `<name>.sig`) bind an authoritative Ed25519 signature to the manifest's BLAKE3 root digest, file count, total byte size, issuer identity, timestamps, expiration windows, and arbitrary metadata tags.
+- **Domain Separation**: All signature preimages are prefixed with `VELCRUX-MANIFEST-ATTESTATION-V1\0` (`ATTESTATION_DOMAIN_SEPARATOR`), strictly isolating attestation signatures from SSH public key authentication tokens (`AUTH_SIGNATURE_PREFIX = "velcrux-auth-v1"`).
+- **Secret Redaction**: Private key material loaded into `AttestationKey` is wrapped in `Secret<Vec<u8>>`. Printing or logging `AttestationKey` renders `[redacted]` rather than raw key bytes.
+- **End-to-End Filesystem Verification**: `verify_target_attestation` recomputes the BLAKE3 manifest tree from disk (excluding the signature file itself), verifying that zero unauthorized files have been added, deleted, or modified.
+- **CLI Commands**: `velcrux attest {keygen, sign, verify, inspect}` and `velcrux sync --sign-key <key> --verify-sig <sig>`.
+
 ## 8. Security testing
 
 Required in CI, not optional:

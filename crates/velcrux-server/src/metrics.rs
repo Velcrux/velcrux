@@ -113,6 +113,10 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let deletions_executed = stats.deletions_executed.load(Ordering::Relaxed);
     let deletions_blocked = stats.deletions_blocked.load(Ordering::Relaxed);
 
+    let attestations_verified = stats.attestations_verified.load(Ordering::Relaxed);
+    let attestations_invalid = stats.attestations_invalid.load(Ordering::Relaxed);
+    let attestations_rejected = stats.attestations_rejected.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -220,6 +224,11 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_deletions_total{{outcome=\"attempted\"}} {deletions_attempted}\n\
          velcrux_deletions_total{{outcome=\"executed\"}} {deletions_executed}\n\
          velcrux_deletions_total{{outcome=\"blocked\"}} {deletions_blocked}\n\n\
+         # HELP velcrux_attestations_total Total manifest attestation verification attempts and outcomes\n\
+         # TYPE velcrux_attestations_total counter\n\
+         velcrux_attestations_total{{outcome=\"verified\"}} {attestations_verified}\n\
+         velcrux_attestations_total{{outcome=\"invalid\"}} {attestations_invalid}\n\
+         velcrux_attestations_total{{outcome=\"rejected\"}} {attestations_rejected}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

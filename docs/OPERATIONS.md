@@ -2716,3 +2716,78 @@ Audit logs log every deletion attempt with identity, path, sync flag, and policy
 2026-10-19T12:00:05Z INFO velcruxd: remote deletion executed successfully identity="replica-prod-01" path="data/stale.bin" is_sync=true
 ```
 
+---
+
+## 49. Cryptographic Detached Manifest Signing & End-to-End Attestation (Option BO)
+
+Per `SECURITY.md` §7 and `ADR-031`, Velcrux provides end-to-end provenance attestation and non-repudiation for file sets and directory trees using detached Ed25519 digital signatures (`.velcrux-manifest.sig`).
+
+### 1. Attestation Architecture & Guarantees
+
+- **Detached Envelope (`AttestationEnvelope`)**: Detached signature files contain canonical claims binding an Ed25519 signature to the BLAKE3 root manifest hash, file count, total byte size, issuer identity, timestamps, expiration windows, and arbitrary key-value metadata.
+- **Domain Separation**: All preimages begin with `VELCRUX-MANIFEST-ATTESTATION-V1\0`, preventing cross-protocol signature forgery (such as replaying attestation signatures in SSH authentication).
+- **Secret Redaction**: Private keys in memory or configuration are wrapped in `Secret<Vec<u8>>` and render `[redacted]` in all log/debug contexts.
+- **Offline & In-Flight Verification**: Attestations can be validated offline against stored directories or verified immediately following a `velcrux sync`.
+
+### 2. CLI Administration Reference
+
+#### Key Generation
+```bash
+# Generate fresh Ed25519 attestation keypair
+velcrux attest keygen --out release.key --pub-out release.pub --comment "release-ci@velcrux.internal"
+```
+
+#### Signing Manifests
+```bash
+# Sign a directory tree or file
+velcrux attest sign ./release-build \
+  --key release.key \
+  --out ./release-build/.velcrux-manifest.sig \
+  --issuer "spiffe://velcrux.internal/release-ci" \
+  --expires-in 604800 \
+  -m build=v2.5.0 -m git=a1b2c3d
+
+# Machine-readable JSON output
+velcrux --json attest sign ./release-build --key release.key
+```
+
+#### Verifying Attestations
+```bash
+# Verify directory against detached signature and trusted keyring
+velcrux attest verify ./release-build \
+  --sig ./release-build/.velcrux-manifest.sig \
+  --trusted-keys ./authorized_signers \
+  --require-issuer "spiffe://velcrux.internal/release-ci"
+
+# Machine-readable verification report
+velcrux --json attest verify ./release-build --trusted-keys ./authorized_signers
+```
+
+#### Inspecting Claims
+```bash
+# Inspect envelope metadata without scanning disk
+velcrux attest inspect ./release-build/.velcrux-manifest.sig
+```
+
+#### Sync Integration
+```bash
+# Automatically sign destination manifest on sync completion
+velcrux sync ./src ./dst --sign-key release.key --sign-issuer "sync-daemon"
+
+# Verify destination against signed attestation post-sync
+velcrux sync ./src ./dst --verify-sig ./dst/.velcrux-manifest.sig --trusted-signers ./authorized_signers
+```
+
+### 3. Server Telemetry & Prometheus Metrics
+
+Velcrux exports real-time attestation verification outcomes under `velcrux_attestations_total`:
+
+```text
+# HELP velcrux_attestations_total Total manifest attestation verification attempts and outcomes
+# TYPE velcrux_attestations_total counter
+velcrux_attestations_total{outcome="verified"} 84
+velcrux_attestations_total{outcome="invalid"} 0
+velcrux_attestations_total{outcome="rejected"} 1
+```
+
+

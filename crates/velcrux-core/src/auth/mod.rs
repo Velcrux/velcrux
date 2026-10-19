@@ -11,6 +11,13 @@ use crate::error::{ProtocolError, Result, VelcruxError};
 use crate::storage::{VPath, VPathError};
 use crate::transport::identity::Identity;
 
+pub mod attestation;
+pub use attestation::{
+    generate_target_attestation, verify_target_attestation, AttestationEnvelope, AttestationError,
+    AttestationKey, AttestationPayload, AttestationReport, AttestationStatus, AttestationVerifier,
+    VerifiedAttestation, ATTESTATION_DOMAIN_SEPARATOR, ATTESTATION_VERSION_1, DEFAULT_SIG_EXT,
+};
+
 pub mod pubkey;
 pub use pubkey::{
     compute_signed_payload, create_pubkey_auth_token, verify_pubkey_auth_token, AuthorizedKeys,
