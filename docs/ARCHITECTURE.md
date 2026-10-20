@@ -539,4 +539,6 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-008](adr/ADR-008-versioning.md) | Protocol versioning & capabilities | Accepted | Dual version + capability negotiation floor |
 | [ADR-009](adr/ADR-009-zero-knowledge-chunk-encryption.md) | Zero-Knowledge Chunk Encryption | Accepted | ChaCha20-Poly1305 / AES-GCM envelope AEAD with AAD binding |
 | [ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md) | QUIC Connection Migration & Failover | Accepted | RFC 9000 §9 socket rebind, subnet gating, and rate limiting |
+| [ADR-032](adr/ADR-032-cross-platform-xattr-and-acl-transmutation.md) | Cross-Platform xattr & ACL Transmutation | Accepted | Bidirectional Linux user.* <-> macOS attributes and POSIX <-> NFSv4 ACLs |
+| [ADR-033](adr/ADR-033-content-aware-delta-compression-and-cdc-slicing.md) | Content-Aware Delta Compression Engine | Accepted | Dynamic Zstd dictionary training from baseline reference extents |
 

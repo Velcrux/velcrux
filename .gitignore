@@ -37,6 +37,7 @@ fuzz/corpus/
 !docs/OPERATIONS.md
 !docs/SECURITY.md
 !docs/ARCHITECTURE.md
+!docs/PERFORMANCE.md
 !docs/adr/*.md
 
 

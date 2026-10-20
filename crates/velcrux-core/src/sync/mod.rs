@@ -7,11 +7,18 @@
 pub mod batch;
 pub mod bloom;
 pub mod cost;
+pub mod delta_dict;
 pub mod directory;
 pub mod estimator;
 pub mod inventory;
 pub mod reconstruct;
 pub mod rle;
+
+pub use delta_dict::{
+    ContentDeltaEngine, DeltaCompressionKind, DeltaCompressionReport, DeltaDictPolicy, DeltaSlice,
+    DeltaSliceHeader, DEFAULT_DELTA_COMPRESSION_LEVEL, DEFAULT_DELTA_DICT_THRESHOLD_PCT,
+    DELTA_SLICE_MAGIC, MAX_DELTA_DICT_WINDOW,
+};
 
 pub mod geo;
 pub mod lock;

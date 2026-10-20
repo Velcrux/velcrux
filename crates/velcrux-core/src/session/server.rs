@@ -175,6 +175,14 @@ pub struct ServerStats {
     pub xattr_transmutations_linux_to_macos: AtomicU64,
     /// Total macOS-to-Linux extended attribute transmutations performed (Option BP).
     pub xattr_transmutations_macos_to_linux: AtomicU64,
+    /// Total delta slices processed (Option BQ).
+    pub delta_slices_total: AtomicU64,
+    /// Total delta slices compressed with baseline dictionary (Option BQ).
+    pub delta_slices_dict: AtomicU64,
+    /// Total delta slices compressed with standalone Zstandard (Option BQ).
+    pub delta_slices_vanilla: AtomicU64,
+    /// Total bytes saved by delta dictionary compression (Option BQ).
+    pub delta_dict_bytes_saved: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -234,6 +242,10 @@ impl Default for ServerStats {
             xattr_transmutations_total: AtomicU64::new(0),
             xattr_transmutations_linux_to_macos: AtomicU64::new(0),
             xattr_transmutations_macos_to_linux: AtomicU64::new(0),
+            delta_slices_total: AtomicU64::new(0),
+            delta_slices_dict: AtomicU64::new(0),
+            delta_slices_vanilla: AtomicU64::new(0),
+            delta_dict_bytes_saved: AtomicU64::new(0),
         }
     }
 }

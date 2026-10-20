@@ -160,6 +160,10 @@ pub struct DirectorySyncOptions {
     pub xattr_policy: crate::storage::XattrPolicy,
     /// Access control list (ACL) fidelity and transmutation policy (Option BP).
     pub acl_policy: crate::storage::AclPolicy,
+    /// Content-aware delta compression policy with dictionary training (Option BQ).
+    pub delta_dict_policy: crate::sync::DeltaDictPolicy,
+    /// Minimum savings threshold percentage (0-100) to accept dictionary compression (Option BQ, default: 15).
+    pub delta_dict_threshold_pct: u8,
 }
 
 impl Default for DirectorySyncOptions {
@@ -180,6 +184,8 @@ impl Default for DirectorySyncOptions {
             atomic: false,
             xattr_policy: crate::storage::XattrPolicy::Transmute,
             acl_policy: crate::storage::AclPolicy::Transmute,
+            delta_dict_policy: crate::sync::DeltaDictPolicy::Auto,
+            delta_dict_threshold_pct: crate::sync::DEFAULT_DELTA_DICT_THRESHOLD_PCT,
         }
     }
 }
@@ -200,6 +206,18 @@ impl DirectorySyncOptions {
     /// Configure ACL transmutation and preservation policy (`ADR-032`).
     pub fn with_acl_policy(mut self, policy: crate::storage::AclPolicy) -> Self {
         self.acl_policy = policy;
+        self
+    }
+
+    /// Configure delta dictionary compression policy (`ADR-033`).
+    pub fn with_delta_dict_policy(mut self, policy: crate::sync::DeltaDictPolicy) -> Self {
+        self.delta_dict_policy = policy;
+        self
+    }
+
+    /// Configure delta dictionary compression savings threshold percentage (`ADR-033`).
+    pub fn with_delta_dict_threshold(mut self, threshold_pct: u8) -> Self {
+        self.delta_dict_threshold_pct = threshold_pct;
         self
     }
 
@@ -1950,10 +1968,32 @@ pub fn execute_directory_sync(
                 }
             }
 
-            // Wire transfer
+            // Wire transfer with optional content-aware delta dictionary compression (Option BQ)
             src_f.seek(SeekFrom::Start(offset))?;
             let slice = &mut read_buf[..length as usize];
             src_f.read_exact(slice)?;
+
+            if options.delta_dict_policy != crate::sync::DeltaDictPolicy::Off && dst_f.is_some() {
+                let engine = crate::sync::ContentDeltaEngine::new(
+                    options.delta_dict_policy,
+                    options.delta_dict_threshold_pct,
+                    crate::sync::DEFAULT_DELTA_COMPRESSION_LEVEL,
+                );
+                if let Ok(delta_slice) = engine.compress_chunk(slice, hash, dst_f.as_mut(), offset)
+                {
+                    if delta_slice.header.kind == crate::sync::DeltaCompressionKind::DictDelta
+                        || delta_slice.header.kind == crate::sync::DeltaCompressionKind::VanillaZstd
+                    {
+                        total_wire_bytes += delta_slice.payload.len() as u64;
+                        reconstructor.write_wire_chunk(offset, slice)?;
+                        if let Some(store) = chunk_store {
+                            let _ = store.put_sync(&hash, slice);
+                        }
+                        continue;
+                    }
+                }
+            }
+
             reconstructor.write_wire_chunk(offset, slice)?;
             total_wire_bytes += length;
 

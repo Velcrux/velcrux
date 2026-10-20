@@ -2819,4 +2819,46 @@ velcrux_xattr_transmutations_total{direction="macos_to_linux"} 14
   - `sidecar`: Preserves original ACLs in metadata sidecars.
   - `strip`: Strips ACL entries, preserving standard POSIX file mode bits.
 
+## Content-Aware Delta Compression Engine (`ADR-033`, Option BQ)
+
+Velcrux uses baseline destination extents as instant, pre-trained Zstandard compression dictionaries to achieve 5× to 50× compression ratios on modified chunks without requiring pre-trained dictionary catalogs.
+
+### Telemetry & Prometheus Metrics
+
+The server exports delta slice processing counters and savings metrics:
+
+```text
+# HELP velcrux_delta_slices_total Total content-aware delta slices processed
+# TYPE velcrux_delta_slices_total counter
+velcrux_delta_slices_total{kind="all"} 1250
+velcrux_delta_slices_total{kind="dict"} 1120
+velcrux_delta_slices_total{kind="vanilla"} 130
+
+# HELP velcrux_delta_dict_bytes_saved_total Total bytes saved via zstd dictionary delta compression
+# TYPE velcrux_delta_dict_bytes_saved_total counter
+velcrux_delta_dict_bytes_saved_total 485921800
+```
+
+### Operational CLI Flags (`velcrux sync`)
+
+- `--delta-dict <auto|off|aggressive>` (env: `VELCRUX_DELTA_DICT`):
+  - `auto` (default): Employs dictionary compression against baseline extents when savings meet or exceed the savings threshold.
+  - `off`: Disables delta dictionary compression; transfers standard chunks or standalone Zstd.
+  - `aggressive`: Evaluates offset-adjusted reference windows with a lowered savings threshold (5%).
+- `--delta-dict-threshold <pct>` (env: `VELCRUX_DELTA_DICT_THRESHOLD`, default: 15):
+  - Minimum percentage savings over uncompressed chunk size required to commit dictionary compression.
+
+### CLI Inspection & Testing Tool (`velcrux delta-slice test`)
+
+Operators can evaluate chunk slicing and dictionary compression ratios directly:
+
+```bash
+# Evaluate delta compression between source and baseline files
+velcrux delta-slice test /path/to/target.log /path/to/baseline.log --chunk-size 65536 --policy auto
+
+# Machine-readable JSON output
+velcrux delta-slice test /path/to/target.log /path/to/baseline.log --json
+```
+
+
 

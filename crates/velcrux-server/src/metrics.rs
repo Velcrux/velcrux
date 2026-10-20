@@ -125,6 +125,11 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .xattr_transmutations_macos_to_linux
         .load(Ordering::Relaxed);
 
+    let delta_slices_total = stats.delta_slices_total.load(Ordering::Relaxed);
+    let delta_slices_dict = stats.delta_slices_dict.load(Ordering::Relaxed);
+    let delta_slices_vanilla = stats.delta_slices_vanilla.load(Ordering::Relaxed);
+    let delta_dict_bytes_saved = stats.delta_dict_bytes_saved.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -242,6 +247,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_xattr_transmutations_total{{direction=\"all\"}} {xattr_transmutations_total}\n\
          velcrux_xattr_transmutations_total{{direction=\"linux_to_macos\"}} {xattr_transmutations_lin_mac}\n\
          velcrux_xattr_transmutations_total{{direction=\"macos_to_linux\"}} {xattr_transmutations_mac_lin}\n\n\
+         # HELP velcrux_delta_slices_total Total content-aware delta slices processed\n\
+         # TYPE velcrux_delta_slices_total counter\n\
+         velcrux_delta_slices_total{{kind=\"all\"}} {delta_slices_total}\n\
+         velcrux_delta_slices_total{{kind=\"dict\"}} {delta_slices_dict}\n\
+         velcrux_delta_slices_total{{kind=\"vanilla\"}} {delta_slices_vanilla}\n\n\
+         # HELP velcrux_delta_dict_bytes_saved_total Total bytes saved via zstd dictionary delta compression\n\
+         # TYPE velcrux_delta_dict_bytes_saved_total counter\n\
+         velcrux_delta_dict_bytes_saved_total {delta_dict_bytes_saved}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

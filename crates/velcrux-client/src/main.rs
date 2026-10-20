@@ -417,6 +417,26 @@ enum Cmd {
             env = "VELCRUX_ACL_POLICY"
         )]
         acl_policy: String,
+        /// Delta dictionary compression policy: auto (default), off, aggressive (Option BQ).
+        #[arg(
+            long = "delta-dict",
+            default_value = "auto",
+            env = "VELCRUX_DELTA_DICT"
+        )]
+        delta_dict: String,
+        /// Minimum savings percentage required to adopt delta dictionary compression (Option BQ).
+        #[arg(
+            long = "delta-dict-threshold",
+            default_value = "15",
+            env = "VELCRUX_DELTA_DICT_THRESHOLD"
+        )]
+        delta_dict_threshold: u8,
+    },
+    /// Content-aware delta compression and CDC slicing utilities (Option BQ).
+    #[command(name = "delta-slice")]
+    DeltaSlice {
+        #[command(subcommand)]
+        sub: DeltaSliceSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -638,6 +658,29 @@ enum AttestSubCmd {
         /// Path to the detached attestation signature file (.velcrux-manifest.sig).
         sig: PathBuf,
         /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DeltaSliceSubCmd {
+    /// Evaluate chunk slicing and dictionary compression ratio between a source and baseline file.
+    Test {
+        /// Modified source file.
+        source: PathBuf,
+        /// Baseline reference file used as dictionary.
+        baseline: PathBuf,
+        /// Chunk slicing size in bytes (default: 65536 / 64 KiB).
+        #[arg(long, default_value = "65536")]
+        chunk_size: usize,
+        /// Delta dictionary compression policy: "auto", "off", or "aggressive" (default: "auto").
+        #[arg(long, default_value = "auto")]
+        policy: String,
+        /// Minimum savings percentage threshold (0-100, default: 15).
+        #[arg(long, default_value = "15")]
+        threshold: u8,
+        /// Format output as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -2203,6 +2246,8 @@ async fn main() -> anyhow::Result<()> {
             trusted_signers,
             xattr_policy,
             acl_policy,
+            delta_dict,
+            delta_dict_threshold,
         } => {
             if *watch {
                 run_watch(
@@ -2248,8 +2293,13 @@ async fn main() -> anyhow::Result<()> {
                 trusted_signers.as_deref(),
                 xattr_policy,
                 acl_policy,
+                delta_dict,
+                *delta_dict_threshold,
             )
             .await?;
+        }
+        Cmd::DeltaSlice { sub } => {
+            run_delta_slice(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -4130,6 +4180,8 @@ async fn run_plan(
         atomic: false,
         xattr_policy: velcrux_core::storage::XattrPolicy::Transmute,
         acl_policy: velcrux_core::storage::AclPolicy::Transmute,
+        delta_dict_policy: velcrux_core::sync::DeltaDictPolicy::Auto,
+        delta_dict_threshold_pct: velcrux_core::sync::DEFAULT_DELTA_DICT_THRESHOLD_PCT,
     };
 
     let store = if dedup {
@@ -4191,6 +4243,8 @@ async fn run_sync(
     trusted_signers: Option<&Path>,
     xattr_policy: &str,
     acl_policy: &str,
+    delta_dict: &str,
+    delta_dict_threshold: u8,
 ) -> anyhow::Result<()> {
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
@@ -4336,6 +4390,8 @@ async fn run_sync(
         atomic,
         xattr_policy: std::str::FromStr::from_str(xattr_policy)?,
         acl_policy: std::str::FromStr::from_str(acl_policy)?,
+        delta_dict_policy: std::str::FromStr::from_str(delta_dict)?,
+        delta_dict_threshold_pct: delta_dict_threshold,
     };
 
     let store = if dedup {
@@ -4865,6 +4921,62 @@ async fn run_attest(cli: &Cli, sub: &AttestSubCmd) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+async fn run_delta_slice(cli: &Cli, sub: &DeltaSliceSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        DeltaSliceSubCmd::Test {
+            source,
+            baseline,
+            chunk_size,
+            policy,
+            threshold,
+            json,
+        } => {
+            let src_data = std::fs::read(source).map_err(|e| {
+                anyhow::anyhow!("failed to read source file '{}': {e}", source.display())
+            })?;
+            let base_data = std::fs::read(baseline).map_err(|e| {
+                anyhow::anyhow!("failed to read baseline file '{}': {e}", baseline.display())
+            })?;
+
+            let parsed_policy: velcrux_core::sync::DeltaDictPolicy = policy.parse()?;
+            let engine = velcrux_core::sync::ContentDeltaEngine::new(
+                parsed_policy,
+                *threshold,
+                velcrux_core::sync::DEFAULT_DELTA_COMPRESSION_LEVEL,
+            );
+
+            let report = engine.evaluate_delta(&src_data, &base_data, *chunk_size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Delta Slice Evaluation Report ===");
+                println!("Source File:             {}", source.display());
+                println!("Baseline File:           {}", baseline.display());
+                println!("Chunk Slicing Size:      {} bytes", chunk_size);
+                println!("Delta Policy:            {}", parsed_policy);
+                println!("Savings Threshold:       {}%", threshold);
+                println!("Original Bytes:          {} bytes", report.original_bytes);
+                println!(
+                    "Transferred Bytes:       {} bytes",
+                    report.transferred_bytes
+                );
+                println!("Bytes Saved:             {} bytes", report.bytes_saved);
+                println!("Compression Ratio:       {:.2}x", report.compression_ratio);
+                println!("Exact Matches:           {}", report.exact_matches);
+                println!("Dict Compressed Chunks:  {}", report.dict_compressed_chunks);
+                println!(
+                    "Vanilla Zstd Chunks:     {}",
+                    report.vanilla_compressed_chunks
+                );
+                println!("Raw Literal Chunks:      {}", report.raw_literal_chunks);
+            }
+            Ok(())
+        }
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -6561,6 +6673,8 @@ async fn run_watch(
                     None,  // trusted_signers
                     "transmute",
                     "transmute",
+                    "auto",
+                    15,
                 )
                 .await
                 .map_err(|e| velcrux_core::error::VelcruxError::Internal(e.to_string()))?;
