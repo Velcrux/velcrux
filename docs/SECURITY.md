@@ -128,6 +128,13 @@ role     = "admin"
 The longest matching prefix wins. No grant means deny. `admin` does not imply
 `delete` on paths outside its own grant prefix.
 
+### Extended Attributes & ACL Security Boundaries (`ADR-032`, `CLAUDE.md` §4 #2)
+
+Extended attributes in privileged namespaces (`security.*`, `trusted.*`, `system.*`) can compromise host access controls (e.g. SELinux contexts, Linux file capabilities `security.capability`, system POSIX ACLs).
+- Non-admin clients (`!PermSet::ADMIN`) are strictly forbidden from writing or transmuting attributes in `security.*`, `trusted.*`, or `system.*`. Any such attempt is rejected fail-closed with `ErrorCode::InvalidPath` and increments `authz_denials` telemetry.
+- Safe user attributes (`user.*` on Linux, un-prefixed or reverse-DNS `com.apple.*` on macOS) are allowed for standard clients and transmutated automatically across operating systems.
+- Configurable policies (`--xattr-policy <transmute|strict|sidecar|strip>` and `--acl-policy`) let operators enforce strict boundaries or strip all attributes entirely.
+
 ### Path validation
 
 `raw_path` from the wire is untrusted. The pipeline, in order — and order matters:
@@ -287,7 +294,7 @@ Stated plainly rather than left to be discovered:
 
 - No OCSP stapling; revocation is CRL-file-based and only as fresh as the last
   SIGHUP.
-- No xattr or ACL transfer in the MVP; a `sync` that encounters them warns.
+- Extended attributes and ACLs are fully supported across Linux and macOS via the cross-platform transmutation engine (ADR-032). Privileged namespaces (`security.*`, `trusted.*`, `system.*`) remain strictly gated by `PermSet::ADMIN`.
 - No traffic-analysis resistance.
 - Whole-directory commit is not atomic (see `ARCHITECTURE.md` §9).
 - `RESOLVE_BENEATH` requires Linux ≥ 5.6. The fallback path is sound but has more

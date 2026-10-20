@@ -169,6 +169,12 @@ pub struct ServerStats {
     pub attestations_invalid: AtomicU64,
     /// Total manifest attestations rejected due to policy, expiry, or untrusted signer (Option BO).
     pub attestations_rejected: AtomicU64,
+    /// Total cross-platform extended attribute and ACL transmutations performed (Option BP).
+    pub xattr_transmutations_total: AtomicU64,
+    /// Total Linux-to-macOS extended attribute transmutations performed (Option BP).
+    pub xattr_transmutations_linux_to_macos: AtomicU64,
+    /// Total macOS-to-Linux extended attribute transmutations performed (Option BP).
+    pub xattr_transmutations_macos_to_linux: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -225,6 +231,9 @@ impl Default for ServerStats {
             attestations_verified: AtomicU64::new(0),
             attestations_invalid: AtomicU64::new(0),
             attestations_rejected: AtomicU64::new(0),
+            xattr_transmutations_total: AtomicU64::new(0),
+            xattr_transmutations_linux_to_macos: AtomicU64::new(0),
+            xattr_transmutations_macos_to_linux: AtomicU64::new(0),
         }
     }
 }
@@ -1540,8 +1549,36 @@ async fn handle_transfer_create(
             }
         }
 
+        // Option BP: Transmute attributes and ACLs to match server platform conventions
+        let transmuter = crate::storage::XattrTransmuter::new(
+            crate::storage::PlatformOs::Unknown,
+            crate::storage::PlatformOs::current(),
+        )
+        .with_admin(is_admin);
+
+        let effective_xattrs = transmuter.transmute_entries(&xattrs);
+        let transmutations_count = effective_xattrs.len() as u64;
+        if transmutations_count > 0 {
+            stats
+                .xattr_transmutations_total
+                .fetch_add(transmutations_count, std::sync::atomic::Ordering::Relaxed);
+            match transmuter.direction_label() {
+                "linux_to_macos" => {
+                    stats
+                        .xattr_transmutations_linux_to_macos
+                        .fetch_add(transmutations_count, std::sync::atomic::Ordering::Relaxed);
+                }
+                "macos_to_linux" => {
+                    stats
+                        .xattr_transmutations_macos_to_linux
+                        .fetch_add(transmutations_count, std::sync::atomic::Ordering::Relaxed);
+                }
+                _ => {}
+            }
+        }
+
         let transfer_id = TransferId::generate();
-        if let Err(e) = backend.set_xattrs(&dst, &xattrs).await {
+        if let Err(e) = backend.set_xattrs(&dst, &effective_xattrs).await {
             let err = crate::protocol::message::ErrorMsg::new(
                 crate::protocol::error::ErrorCode::InternalError,
                 format!("failed to set xattrs: {e}"),

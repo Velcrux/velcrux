@@ -2790,4 +2790,33 @@ velcrux_attestations_total{outcome="invalid"} 0
 velcrux_attestations_total{outcome="rejected"} 1
 ```
 
+## Extended Attribute (xattr) & ACL Transmutation (`ADR-032`, Option BP)
+
+Velcrux automatically bridges Linux `user.*` namespace attributes and macOS reverse-DNS / un-prefixed attributes, while translating POSIX 1003.1e draft ACLs to Darwin NFSv4 ACEs.
+
+### Telemetry & Prometheus Metrics
+
+The server exports cross-platform transmutation counters under `velcrux_xattr_transmutations_total`:
+
+```text
+# HELP velcrux_xattr_transmutations_total Total cross-platform extended attribute and ACL transmutations
+# TYPE velcrux_xattr_transmutations_total counter
+velcrux_xattr_transmutations_total{direction="all"} 42
+velcrux_xattr_transmutations_total{direction="linux_to_macos"} 28
+velcrux_xattr_transmutations_total{direction="macos_to_linux"} 14
+```
+
+### Operational CLI Flags (`velcrux sync`)
+
+- `--xattr-policy <transmute|strict|sidecar|strip>`:
+  - `transmute` (default): Translates attribute namespaces bidirectionally (e.g. `user.mime_type` on Linux <-> `mime_type` on macOS).
+  - `strict`: Preserves raw attribute names; warns/rejects on invalid namespaces.
+  - `sidecar`: Stores attributes directly in `.<filename>.velcrux-xattr` metadata sidecars.
+  - `strip`: Discards extended attributes entirely.
+- `--acl-policy <transmute|strict|sidecar|strip>`:
+  - `transmute` (default): Translates between POSIX 1003.1e draft ACLs (`system.posix_acl_access`) and Darwin NFSv4 ACEs (`com.apple.acl.text`).
+  - `strict`: Rejects ACL application if the target format differs.
+  - `sidecar`: Preserves original ACLs in metadata sidecars.
+  - `strip`: Strips ACL entries, preserving standard POSIX file mode bits.
+
 

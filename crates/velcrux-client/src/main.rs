@@ -403,6 +403,20 @@ enum Cmd {
         /// Path to trusted signers file for post-sync attestation verification (Option BO).
         #[arg(long = "trusted-signers", env = "VELCRUX_TRUSTED_SIGNERS")]
         trusted_signers: Option<PathBuf>,
+        /// Extended attribute preservation and transmutation policy: transmute (default), strict, sidecar, strip (Option BP).
+        #[arg(
+            long = "xattr-policy",
+            default_value = "transmute",
+            env = "VELCRUX_XATTR_POLICY"
+        )]
+        xattr_policy: String,
+        /// ACL preservation and transmutation policy: transmute (default), strict, sidecar, strip (Option BP).
+        #[arg(
+            long = "acl-policy",
+            default_value = "transmute",
+            env = "VELCRUX_ACL_POLICY"
+        )]
+        acl_policy: String,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -2187,6 +2201,8 @@ async fn main() -> anyhow::Result<()> {
             sign_issuer,
             verify_sig,
             trusted_signers,
+            xattr_policy,
+            acl_policy,
         } => {
             if *watch {
                 run_watch(
@@ -2230,6 +2246,8 @@ async fn main() -> anyhow::Result<()> {
                 sign_issuer,
                 verify_sig.as_deref(),
                 trusted_signers.as_deref(),
+                xattr_policy,
+                acl_policy,
             )
             .await?;
         }
@@ -4110,6 +4128,8 @@ async fn run_plan(
             Some(filter)
         },
         atomic: false,
+        xattr_policy: velcrux_core::storage::XattrPolicy::Transmute,
+        acl_policy: velcrux_core::storage::AclPolicy::Transmute,
     };
 
     let store = if dedup {
@@ -4169,6 +4189,8 @@ async fn run_sync(
     sign_issuer: &str,
     verify_sig: Option<&Path>,
     trusted_signers: Option<&Path>,
+    xattr_policy: &str,
+    acl_policy: &str,
 ) -> anyhow::Result<()> {
     let src_is_remote = source.starts_with("velcrux://");
     let dst_is_remote = destination.starts_with("velcrux://");
@@ -4312,6 +4334,8 @@ async fn run_sync(
             Some(filter)
         },
         atomic,
+        xattr_policy: std::str::FromStr::from_str(xattr_policy)?,
+        acl_policy: std::str::FromStr::from_str(acl_policy)?,
     };
 
     let store = if dedup {
@@ -6535,6 +6559,8 @@ async fn run_watch(
                     "velcrux-watch",
                     None,  // verify_sig
                     None,  // trusted_signers
+                    "transmute",
+                    "transmute",
                 )
                 .await
                 .map_err(|e| velcrux_core::error::VelcruxError::Internal(e.to_string()))?;

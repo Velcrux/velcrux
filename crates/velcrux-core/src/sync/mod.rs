@@ -37,11 +37,11 @@ pub use cost::{
 pub use directory::{
     compute_file_hash, diff_local_dir_with_manifest, diff_manifest_readers,
     diff_manifest_spill_files, execute_atomic_directory_sync, execute_directory_sync,
-    plan_directory_diff, plan_directory_sync, recv_directory_manifest,
-    recv_streaming_manifest_to_spill, resume_interrupted_commit, scan_dir_entries,
-    send_directory_manifest, send_streaming_manifest_from_spill, DirectoryDiffSummary,
-    DirectoryPlan, DirectorySyncOptions, DirectorySyncResult, FileAction, FileActionType,
-    ScannedEntry,
+    plan_directory_diff, plan_directory_diff_with_options, plan_directory_sync,
+    recv_directory_manifest, recv_streaming_manifest_to_spill, resume_interrupted_commit,
+    scan_dir_entries, send_directory_manifest, send_streaming_manifest_from_spill,
+    xattrs_are_compatible, DirectoryDiffSummary, DirectoryPlan, DirectorySyncOptions,
+    DirectorySyncResult, FileAction, FileActionType, ScannedEntry,
 };
 pub use estimator::{CostEstimator, SyncDecision, SyncPlan};
 pub use geo::{

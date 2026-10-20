@@ -156,6 +156,10 @@ pub struct DirectorySyncOptions {
     pub filter: Option<PathFilter>,
     /// Whole-directory transactional commit and rollback journaling (Option BM).
     pub atomic: bool,
+    /// Extended attribute fidelity and transmutation policy (Option BP).
+    pub xattr_policy: crate::storage::XattrPolicy,
+    /// Access control list (ACL) fidelity and transmutation policy (Option BP).
+    pub acl_policy: crate::storage::AclPolicy,
 }
 
 impl Default for DirectorySyncOptions {
@@ -174,6 +178,8 @@ impl Default for DirectorySyncOptions {
             delete_guardrails: DeleteGuardrails::default(),
             filter: None,
             atomic: false,
+            xattr_policy: crate::storage::XattrPolicy::Transmute,
+            acl_policy: crate::storage::AclPolicy::Transmute,
         }
     }
 }
@@ -182,6 +188,18 @@ impl DirectorySyncOptions {
     /// Configure deletion mode.
     pub fn with_delete_mode(mut self, mode: DeleteMode) -> Self {
         self.delete_mode = mode;
+        self
+    }
+
+    /// Configure extended attribute transmutation and preservation policy (`ADR-032`).
+    pub fn with_xattr_policy(mut self, policy: crate::storage::XattrPolicy) -> Self {
+        self.xattr_policy = policy;
+        self
+    }
+
+    /// Configure ACL transmutation and preservation policy (`ADR-032`).
+    pub fn with_acl_policy(mut self, policy: crate::storage::AclPolicy) -> Self {
+        self.acl_policy = policy;
         self
     }
 
@@ -513,10 +531,108 @@ pub fn compute_file_hash(path: &Path) -> std::io::Result<Hash> {
     Ok(Hash::from_bytes(digest.as_bytes()).expect("blake3 length"))
 }
 
+/// Check if source and destination xattrs are compatible according to the transmutation policy.
+pub fn xattrs_are_compatible(
+    src_xattrs: &[(String, Vec<u8>)],
+    dst_xattrs: &[(String, Vec<u8>)],
+    policy: crate::storage::XattrPolicy,
+    acl_policy: crate::storage::AclPolicy,
+) -> bool {
+    if policy == crate::storage::XattrPolicy::Strip {
+        return true;
+    }
+    if src_xattrs == dst_xattrs {
+        return true;
+    }
+    if policy == crate::storage::XattrPolicy::Transmute {
+        let transmuter_fwd = crate::storage::XattrTransmuter::new(
+            crate::storage::PlatformOs::Unknown,
+            crate::storage::PlatformOs::current(),
+        )
+        .with_xattr_policy(policy)
+        .with_acl_policy(acl_policy)
+        .with_admin(true);
+        if transmuter_fwd.transmute_entries(src_xattrs) == dst_xattrs {
+            return true;
+        }
+
+        let t_lin_mac = crate::storage::XattrTransmuter::new(
+            crate::storage::PlatformOs::Linux,
+            crate::storage::PlatformOs::MacOS,
+        )
+        .with_xattr_policy(policy)
+        .with_acl_policy(acl_policy)
+        .with_admin(true);
+        if t_lin_mac.transmute_entries(src_xattrs) == dst_xattrs {
+            return true;
+        }
+
+        let t_mac_lin = crate::storage::XattrTransmuter::new(
+            crate::storage::PlatformOs::MacOS,
+            crate::storage::PlatformOs::Linux,
+        )
+        .with_xattr_policy(policy)
+        .with_acl_policy(acl_policy)
+        .with_admin(true);
+        if t_mac_lin.transmute_entries(src_xattrs) == dst_xattrs {
+            return true;
+        }
+    }
+    false
+}
+
+/// Helper to stage xattr sidecars respecting policy and OS transmutation.
+fn apply_xattr_sidecar(
+    src_sidecar: &Path,
+    staged_sidecar: &Path,
+    xattr_policy: crate::storage::XattrPolicy,
+    acl_policy: crate::storage::AclPolicy,
+) {
+    if xattr_policy == crate::storage::XattrPolicy::Strip {
+        if staged_sidecar.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(staged_sidecar);
+        }
+        return;
+    }
+    if !src_sidecar.symlink_metadata().is_ok() {
+        return;
+    }
+
+    if xattr_policy == crate::storage::XattrPolicy::Transmute {
+        if let Ok(bytes) = std::fs::read(src_sidecar) {
+            if let Ok(entries) = crate::storage::decode_xattrs_canonical(&bytes) {
+                let transmuter = crate::storage::XattrTransmuter::new(
+                    crate::storage::PlatformOs::Unknown,
+                    crate::storage::PlatformOs::current(),
+                )
+                .with_xattr_policy(xattr_policy)
+                .with_acl_policy(acl_policy)
+                .with_admin(true);
+                let transmuted = transmuter.transmute_entries(&entries);
+                if !transmuted.is_empty() {
+                    let raw = crate::storage::encode_xattrs_canonical(&transmuted);
+                    let _ = std::fs::write(staged_sidecar, raw);
+                    return;
+                }
+            }
+        }
+    }
+    let _ = std::fs::copy(src_sidecar, staged_sidecar);
+}
+
 /// Plan a directory reconciliation diff between source and destination file maps.
 pub fn plan_directory_diff(
     src_files: &BTreeMap<String, ScannedEntry>,
     dst_files: &BTreeMap<String, ScannedEntry>,
+) -> DirectoryPlan {
+    plan_directory_diff_with_options(src_files, dst_files, &DirectorySyncOptions::default())
+}
+
+/// Plan a directory reconciliation diff with explicit sync options (`ADR-032`).
+pub fn plan_directory_diff_with_options(
+    src_files: &BTreeMap<String, ScannedEntry>,
+    dst_files: &BTreeMap<String, ScannedEntry>,
+    options: &DirectorySyncOptions,
 ) -> DirectoryPlan {
     let mut actions = Vec::new();
     let mut files_unchanged = 0usize;
@@ -545,7 +661,12 @@ pub fn plan_directory_diff(
                     && sf.hardlink_target == df.hardlink_target
                     && sf.size == df.size
                     && sf.hash == df.hash
-                    && sf.xattrs == df.xattrs
+                    && xattrs_are_compatible(
+                        &sf.xattrs,
+                        &df.xattrs,
+                        options.xattr_policy,
+                        options.acl_policy,
+                    )
                     && (sf.is_symlink
                         || sf.mode == 0
                         || df.mode == 0
@@ -1233,7 +1354,12 @@ pub fn plan_directory_sync(
                 if sf.is_symlink {
                     let is_same = df.is_symlink
                         && sf.symlink_target == df.symlink_target
-                        && sf.xattrs == df.xattrs;
+                        && xattrs_are_compatible(
+                            &sf.xattrs,
+                            &df.xattrs,
+                            options.xattr_policy,
+                            options.acl_policy,
+                        );
                     if is_same {
                         files_unchanged += 1;
                         data_present += sf.size;
@@ -1282,7 +1408,12 @@ pub fn plan_directory_sync(
 
                 let is_same = sf.size == df.size
                     && sf.hash == df.hash
-                    && sf.xattrs == df.xattrs
+                    && xattrs_are_compatible(
+                        &sf.xattrs,
+                        &df.xattrs,
+                        options.xattr_policy,
+                        options.acl_policy,
+                    )
                     && (sf.mode == 0 || df.mode == 0 || (sf.mode & 0o777) == (df.mode & 0o777));
 
                 if is_same {
@@ -1600,7 +1731,17 @@ pub fn execute_directory_sync(
         let report = crate::sync::batch::BatchContainerReader::unpack(&mut cursor, &staging_root)?;
 
         for action in &batch.actions {
+            let src_file = src_dir.join(&action.rel_path);
             let staged_file = staging_root.join(&action.rel_path);
+            let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
+            let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+            apply_xattr_sidecar(
+                &src_sidecar,
+                &staged_sidecar,
+                options.xattr_policy,
+                options.acl_policy,
+            );
+
             let file_idx = plan
                 .actions
                 .iter()
@@ -1651,10 +1792,13 @@ pub fn execute_directory_sync(
             std::os::windows::fs::symlink_file(&target_path, &staged_file)?;
 
             let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
-            if src_sidecar.symlink_metadata().is_ok() {
-                let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
-                let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
-            }
+            let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+            apply_xattr_sidecar(
+                &src_sidecar,
+                &staged_sidecar,
+                options.xattr_policy,
+                options.acl_policy,
+            );
 
             staged_files.push((file_idx as u64, action.rel_path.clone(), staged_file));
             total_wire_bytes += action.src_size;
@@ -1680,10 +1824,13 @@ pub fn execute_directory_sync(
             std::fs::copy(&src_file, &staged_file)?;
 
             let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
-            if src_sidecar.symlink_metadata().is_ok() {
-                let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
-                let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
-            }
+            let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+            apply_xattr_sidecar(
+                &src_sidecar,
+                &staged_sidecar,
+                options.xattr_policy,
+                options.acl_policy,
+            );
 
             if let Ok(src_meta) = std::fs::metadata(&src_file) {
                 #[cfg(unix)]
@@ -1819,10 +1966,13 @@ pub fn execute_directory_sync(
         reconstructor.verify_and_commit()?;
 
         let src_sidecar = crate::storage::xattr_sidecar_path(&src_file);
-        if src_sidecar.symlink_metadata().is_ok() {
-            let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
-            let _ = std::fs::copy(&src_sidecar, &staged_sidecar);
-        }
+        let staged_sidecar = crate::storage::xattr_sidecar_path(&staged_file);
+        apply_xattr_sidecar(
+            &src_sidecar,
+            &staged_sidecar,
+            options.xattr_policy,
+            options.acl_policy,
+        );
 
         if let Ok(src_meta) = std::fs::metadata(&src_file) {
             #[cfg(unix)]
@@ -1958,8 +2108,11 @@ pub fn execute_directory_sync(
 
             // If staged xattr sidecar exists, rename it into final location
             let staged_sidecar = crate::storage::xattr_sidecar_path(staged_file);
-            if staged_sidecar.symlink_metadata().is_ok() {
-                let final_sidecar = crate::storage::xattr_sidecar_path(&final_dst);
+            let final_sidecar = crate::storage::xattr_sidecar_path(&final_dst);
+            if options.xattr_policy == crate::storage::XattrPolicy::Strip {
+                let _ = std::fs::remove_file(&final_sidecar);
+                let _ = std::fs::remove_file(&staged_sidecar);
+            } else if staged_sidecar.symlink_metadata().is_ok() {
                 if final_sidecar.symlink_metadata().is_ok() {
                     let _ = std::fs::remove_file(&final_sidecar);
                 }

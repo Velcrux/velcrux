@@ -117,6 +117,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let attestations_invalid = stats.attestations_invalid.load(Ordering::Relaxed);
     let attestations_rejected = stats.attestations_rejected.load(Ordering::Relaxed);
 
+    let xattr_transmutations_total = stats.xattr_transmutations_total.load(Ordering::Relaxed);
+    let xattr_transmutations_lin_mac = stats
+        .xattr_transmutations_linux_to_macos
+        .load(Ordering::Relaxed);
+    let xattr_transmutations_mac_lin = stats
+        .xattr_transmutations_macos_to_linux
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -229,6 +237,11 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_attestations_total{{outcome=\"verified\"}} {attestations_verified}\n\
          velcrux_attestations_total{{outcome=\"invalid\"}} {attestations_invalid}\n\
          velcrux_attestations_total{{outcome=\"rejected\"}} {attestations_rejected}\n\n\
+         # HELP velcrux_xattr_transmutations_total Total cross-platform extended attribute and ACL transmutations\n\
+         # TYPE velcrux_xattr_transmutations_total counter\n\
+         velcrux_xattr_transmutations_total{{direction=\"all\"}} {xattr_transmutations_total}\n\
+         velcrux_xattr_transmutations_total{{direction=\"linux_to_macos\"}} {xattr_transmutations_lin_mac}\n\
+         velcrux_xattr_transmutations_total{{direction=\"macos_to_linux\"}} {xattr_transmutations_mac_lin}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

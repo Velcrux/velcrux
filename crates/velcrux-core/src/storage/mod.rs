@@ -34,6 +34,7 @@ pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
 pub mod vfs;
+pub mod xattr;
 pub use azure::{
     AzureBlobConfig, AzureBlobMeta, AzureBlobStorageBackend, AzureBlobSyncReport, AzureError,
     AzureSharedKeySigner,
@@ -69,6 +70,10 @@ pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, File
 pub use vfs::{
     MountConfig, MountManager, MountSessionInfo, VfsAttr, VfsCacheStats, VfsDirEntry, VfsError,
     VfsFileType, VfsStatFs, VirtualMountEngine, VFS_ROOT_INODE,
+};
+pub use xattr::{
+    AceFlags, AcePermissions, AcePrincipal, AceType, AclPolicy, CanonicalAce, CanonicalAcl,
+    PlatformOs, XattrPolicy, XattrTransmuter,
 };
 
 use crate::error::{ProtocolError, VelcruxError};
@@ -695,6 +700,8 @@ pub struct LocalFilesystemBackend {
     preallocate: bool,
     direct_io: DirectIoMode,
     chunk_store: Option<std::sync::Arc<dyn ChunkStore>>,
+    xattr_policy: XattrPolicy,
+    acl_policy: AclPolicy,
 }
 
 impl LocalFilesystemBackend {
@@ -759,7 +766,21 @@ impl LocalFilesystemBackend {
             preallocate,
             direct_io: DirectIoMode::Auto,
             chunk_store: None,
+            xattr_policy: XattrPolicy::Transmute,
+            acl_policy: AclPolicy::Transmute,
         })
+    }
+
+    /// Configure extended attribute preservation and transmutation policy (`ADR-032`).
+    pub fn with_xattr_policy(mut self, policy: XattrPolicy) -> Self {
+        self.xattr_policy = policy;
+        self
+    }
+
+    /// Configure ACL preservation and transmutation policy (`ADR-032`).
+    pub fn with_acl_policy(mut self, policy: AclPolicy) -> Self {
+        self.acl_policy = policy;
+        self
     }
 
     /// Builder helper to set Direct I/O execution mode.
@@ -1025,14 +1046,30 @@ impl StorageBackend for LocalFilesystemBackend {
     ) -> Result<(), VelcruxError> {
         let path = self.resolve(p);
         let sidecar = xattr_sidecar_path(&path);
-        if xattrs.is_empty() {
+        if self.xattr_policy == XattrPolicy::Strip || xattrs.is_empty() {
             let _ = tokio::fs::remove_file(&sidecar).await;
             return Ok(());
         }
+
+        let effective_xattrs = if self.xattr_policy == XattrPolicy::Transmute {
+            let transmuter = XattrTransmuter::new(PlatformOs::Unknown, PlatformOs::current())
+                .with_xattr_policy(self.xattr_policy)
+                .with_acl_policy(self.acl_policy)
+                .with_admin(true);
+            transmuter.transmute_entries(xattrs)
+        } else {
+            xattrs.to_vec()
+        };
+
+        if effective_xattrs.is_empty() {
+            let _ = tokio::fs::remove_file(&sidecar).await;
+            return Ok(());
+        }
+
         if let Some(parent) = sidecar.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let raw = encode_xattrs_canonical(xattrs);
+        let raw = encode_xattrs_canonical(&effective_xattrs);
         let tmp = PathBuf::from(format!("{}.tmp-xattr", sidecar.to_string_lossy()));
         tokio::fs::write(&tmp, &raw).await?;
         tokio::fs::rename(&tmp, &sidecar).await?;
