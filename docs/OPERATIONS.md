@@ -2860,5 +2860,60 @@ velcrux delta-slice test /path/to/target.log /path/to/baseline.log --chunk-size 
 velcrux delta-slice test /path/to/target.log /path/to/baseline.log --json
 ```
 
+## Adaptive Bandwidth Delay Product (BDP) Auto-Tuning Engine (`ADR-034`, Option BR)
+
+Velcrux continuously sizes QUIC flow control windows and pipeline buffering using live path telemetry (smoothed RTT, min RTT, and delivery rate) to sustain 10 Gbps line-rate transfer on high-BDP WAN and satellite paths while preventing bufferbloat.
+
+### Telemetry & Prometheus Metrics
+
+The server exports real-time BDP window sizing and adjustment telemetry:
+
+```text
+# HELP velcrux_bdp_current_window_bytes Current active flow control window in bytes
+# TYPE velcrux_bdp_current_window_bytes gauge
+velcrux_bdp_current_window_bytes 393216000
+
+# HELP velcrux_bdp_estimated_bps Estimated path bandwidth in bits per second
+# TYPE velcrux_bdp_estimated_bps gauge
+velcrux_bdp_estimated_bps 9850000000
+
+# HELP velcrux_bdp_tuning_adjustments_total Total BDP window auto-tuning adjustments
+# TYPE velcrux_bdp_tuning_adjustments_total counter
+velcrux_bdp_tuning_adjustments_total{direction="expand"} 18
+velcrux_bdp_tuning_adjustments_total{direction="decay"} 2
+velcrux_bdp_tuning_adjustments_total{direction="hold"} 45
+```
+
+### Global CLI Flags
+
+- `--bdp-tuning <auto|fixed|aggressive|conservative>` (env: `VELCRUX_BDP_TUNING`, default: `auto`):
+  - `auto`: Dynamically sizes receive and flow control windows using 2.0× BDP multiplier and 1.5× bufferbloat queue ratio.
+  - `fixed`: Static flow control window without dynamic resizing.
+  - `aggressive`: Uses 3.0× BDP multiplier and reduced decay sensitivity for high-loss WAN / satellite links.
+  - `conservative`: Uses 1.4× BDP multiplier and rapid decay on queue buildup to protect shared enterprise LANs.
+- `--max-bdp-window <bytes>` (env: `VELCRUX_MAX_BDP_WINDOW`, default: `536870912` / 512 MiB):
+  - Upper ceiling for flow control window expansion.
+- `--min-bdp-window <bytes>` (env: `VELCRUX_MIN_BDP_WINDOW`, default: `4194304` / 4 MiB):
+  - Lower floor for flow control window decay.
+
+### CLI Management & Simulation Tool (`velcrux bdp`)
+
+Operators can inspect active configuration and simulate path auto-tuning behavior:
+
+```bash
+# Inspect current BDP configuration and window floor/ceiling
+velcrux bdp inspect
+
+# Machine-readable JSON status
+velcrux bdp inspect --json
+
+# Simulate BDP auto-tuning across a transatlantic 10 Gbps 150 ms link
+velcrux bdp simulate --bandwidth 10Gbps --rtt-ms 150 --policy aggressive
+
+# Simulate satellite link with packet loss and bufferbloat decay
+velcrux bdp simulate --bandwidth 100Mbps --rtt-ms 250 --loss-pct 3.0 --policy conservative --json
+```
+
+
 
 

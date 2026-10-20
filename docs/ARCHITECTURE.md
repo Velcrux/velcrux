@@ -541,4 +541,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-010](adr/ADR-010-quic-connection-migration-and-failover.md) | QUIC Connection Migration & Failover | Accepted | RFC 9000 §9 socket rebind, subnet gating, and rate limiting |
 | [ADR-032](adr/ADR-032-cross-platform-xattr-and-acl-transmutation.md) | Cross-Platform xattr & ACL Transmutation | Accepted | Bidirectional Linux user.* <-> macOS attributes and POSIX <-> NFSv4 ACLs |
 | [ADR-033](adr/ADR-033-content-aware-delta-compression-and-cdc-slicing.md) | Content-Aware Delta Compression Engine | Accepted | Dynamic Zstd dictionary training from baseline reference extents |
+| [ADR-034](adr/ADR-034-adaptive-bdp-auto-tuning-and-quic-flow-control.md) | Adaptive BDP Auto-Tuning Engine | Accepted | Real-time QUIC congestion control feedback loop and bufferbloat protection |
 

@@ -183,6 +183,16 @@ pub struct ServerStats {
     pub delta_slices_vanilla: AtomicU64,
     /// Total bytes saved by delta dictionary compression (Option BQ).
     pub delta_dict_bytes_saved: AtomicU64,
+    /// Current active flow control window in bytes (Option BR).
+    pub bdp_current_window_bytes: AtomicU64,
+    /// Current estimated path bandwidth in bits per second (Option BR).
+    pub bdp_estimated_bps: AtomicU64,
+    /// Total BDP window expansion adjustments (Option BR).
+    pub bdp_expansions_total: AtomicU64,
+    /// Total BDP window decay adjustments (Option BR).
+    pub bdp_decays_total: AtomicU64,
+    /// Total BDP window hold adjustments (Option BR).
+    pub bdp_holds_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -246,6 +256,11 @@ impl Default for ServerStats {
             delta_slices_dict: AtomicU64::new(0),
             delta_slices_vanilla: AtomicU64::new(0),
             delta_dict_bytes_saved: AtomicU64::new(0),
+            bdp_current_window_bytes: AtomicU64::new(64 * 1024 * 1024),
+            bdp_estimated_bps: AtomicU64::new(1_000_000_000),
+            bdp_expansions_total: AtomicU64::new(0),
+            bdp_decays_total: AtomicU64::new(0),
+            bdp_holds_total: AtomicU64::new(0),
         }
     }
 }

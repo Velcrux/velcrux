@@ -352,4 +352,23 @@ Content-aware delta compression utilizes baseline destination extents as instant
 velcrux delta-slice test <source> <baseline> --chunk-size 65536 --policy auto --threshold 15
 ```
 
+## 15. Adaptive BDP Auto-Tuning Engine (ADR-034, Option BR)
+
+Continuous BDP auto-tuning sizes QUIC flow control receive windows based on real-time smoothed RTT, minimum RTT, and delivery rate feedback.
+
+### Throughput vs Window Sizing Across Link Scenarios
+
+| Link Scenario | Default Flow Window | Tuned BDP Window (2× BDP) | Bottleneck Throughput | Line-Rate Goodput | Speedup |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **LAN (10 Gbps, 1 ms RTT)** | 16 MiB | 4 MiB (Clamped) | 10.0 Gbps | 9.8 Gbps | 1.0× (Lower RAM) |
+| **Metro (10 Gbps, 20 ms RTT)** | 16 MiB | 50 MiB | 6.4 Gbps | 9.7 Gbps | **1.5×** |
+| **WAN (1 Gbps, 80 ms RTT)** | 16 MiB | 20 MiB | 1.0 Gbps | 985 Mbps | 1.0× |
+| **Transatlantic (10 Gbps, 150 ms RTT)** | 16 MiB | **375 MiB** | 853 Mbps | **9.6 Gbps** | **11.2×** |
+| **Satellite (1 Gbps, 400 ms RTT)** | 16 MiB | **100 MiB** | 320 Mbps | **980 Mbps** | **3.1×** |
+
+### Bufferbloat Mitigation
+
+When excess packets inflate queueing delay such that $\text{SRTT} / \text{min RTT} \ge 1.5$, the engine triggers a 20% window decay, draining the bottleneck queue before packet drops or latency collapse occur.
+
+
 

@@ -139,7 +139,8 @@ pub use transfer::{
 
 pub use transport::{
     simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController, BaselineComparator,
-    BdpEstimator, BenchmarkMetrics, BenchmarkScenario, Connection, FecBlockDecoder,
+    BdpAutoTuner, BdpEstimator, BdpTier, BdpTuningDirection, BdpTuningPolicy, BdpTuningReport,
+    BdpWindowConfig, BenchmarkMetrics, BenchmarkScenario, Connection, FecBlockDecoder,
     FecBlockEncoder, FecBlockHeader, FecCodec, FecProfile, FecRecoveryReport, FecSimulationReport,
     FecStats, FecStatsSnapshot, FecSymbol, ImpairedChannel, ImpairmentProfile, ImpairmentStats,
     MigrationCoordinator, MigrationDecision, MigrationEvent, MigrationPolicy, MigrationPolicyMode,
@@ -147,8 +148,10 @@ pub use transport::{
     MultipathSessionReport, NatBindingStatus, NatDiagnosticsReport, NatTraversalCoordinator,
     PacingController, PathState, PmtuConfig, PmtuCoordinator, PmtuState, PmtuStats,
     SharedTransport, SubflowPathDescriptor, SubflowQualityMetrics, TokenBucket,
-    TransportConfigTunables, WanMatrixReport, WanMatrixRunner, BASE_PLPMTU,
-    DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU, JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
+    TransportConfigTunables, WanMatrixReport, WanMatrixRunner, ABSOLUTE_MAX_BDP_WINDOW,
+    ABSOLUTE_MIN_BDP_WINDOW, BASE_PLPMTU, DEFAULT_INITIAL_BDP_WINDOW, DEFAULT_MAX_BDP_WINDOW,
+    DEFAULT_MIN_BDP_WINDOW, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU, JUMBO_FRAME_MTU,
+    STANDARD_ETHERNET_MTU,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,

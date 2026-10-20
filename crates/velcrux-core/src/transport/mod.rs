@@ -7,6 +7,7 @@
 //! The trait surface mirrors `ARCHITECTURE.md` §2 so higher layers do not
 //! depend on quinn types.
 
+pub mod bdp;
 pub mod benchmarks;
 pub mod fec;
 pub mod flow_control;
@@ -19,6 +20,11 @@ pub mod pmtu;
 pub mod quic;
 pub mod stats;
 
+pub use bdp::{
+    BdpAutoTuner, BdpTier, BdpTuningDirection, BdpTuningPolicy, BdpTuningReport, BdpWindowConfig,
+    ABSOLUTE_MAX_BDP_WINDOW, ABSOLUTE_MIN_BDP_WINDOW, DEFAULT_INITIAL_BDP_WINDOW,
+    DEFAULT_MAX_BDP_WINDOW, DEFAULT_MIN_BDP_WINDOW,
+};
 pub use benchmarks::{
     BaselineComparator, BenchmarkMetrics, BenchmarkScenario, WanMatrixReport, WanMatrixRunner,
 };

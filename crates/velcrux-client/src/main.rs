@@ -221,6 +221,33 @@ struct Cli {
     #[arg(long = "tenant", env = "VELCRUX_TENANT", global = true)]
     tenant: Option<String>,
 
+    /// Bandwidth-Delay Product (BDP) auto-tuning policy: "auto" (default), "fixed", "aggressive", or "conservative" (Option BR).
+    #[arg(
+        long = "bdp-tuning",
+        env = "VELCRUX_BDP_TUNING",
+        default_value = "auto",
+        global = true
+    )]
+    bdp_tuning: String,
+
+    /// Maximum BDP flow control window ceiling in bytes (default: 536870912 / 512 MiB) (Option BR).
+    #[arg(
+        long = "max-bdp-window",
+        env = "VELCRUX_MAX_BDP_WINDOW",
+        default_value = "536870912",
+        global = true
+    )]
+    max_bdp_window: u64,
+
+    /// Minimum BDP flow control window floor in bytes (default: 4194304 / 4 MiB) (Option BR).
+    #[arg(
+        long = "min-bdp-window",
+        env = "VELCRUX_MIN_BDP_WINDOW",
+        default_value = "4194304",
+        global = true
+    )]
+    min_bdp_window: u64,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -437,6 +464,11 @@ enum Cmd {
     DeltaSlice {
         #[command(subcommand)]
         sub: DeltaSliceSubCmd,
+    },
+    /// Bandwidth-Delay Product (BDP) auto-tuning and flow control inspection (Option BR).
+    Bdp {
+        #[command(subcommand)]
+        sub: BdpSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -680,6 +712,34 @@ enum DeltaSliceSubCmd {
         /// Minimum savings percentage threshold (0-100, default: 15).
         #[arg(long, default_value = "15")]
         threshold: u8,
+        /// Format output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum BdpSubCmd {
+    /// Inspect current active BDP configuration, link tier, and window boundaries.
+    Inspect {
+        /// Format output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Simulate BDP auto-tuning across a given bandwidth, RTT, and loss profile.
+    Simulate {
+        /// Link bandwidth string (e.g. "10Gbps", "1Gbps", "100Mbps", "10MB/s").
+        #[arg(long, default_value = "1Gbps")]
+        bandwidth: String,
+        /// Path round-trip time in milliseconds (e.g. 150 for transatlantic).
+        #[arg(long, default_value = "150")]
+        rtt_ms: u64,
+        /// Simulated packet loss rate percentage (0.0 to 100.0, default: 0.0).
+        #[arg(long, default_value = "0.0")]
+        loss_pct: f64,
+        /// Tuning policy: "auto", "fixed", "aggressive", or "conservative" (default: "auto").
+        #[arg(long, default_value = "auto")]
+        policy: String,
         /// Format output as JSON.
         #[arg(long)]
         json: bool,
@@ -2300,6 +2360,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::DeltaSlice { sub } => {
             run_delta_slice(&cli, sub).await?;
+        }
+        Cmd::Bdp { sub } => {
+            run_bdp(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -4973,6 +5036,154 @@ async fn run_delta_slice(cli: &Cli, sub: &DeltaSliceSubCmd) -> anyhow::Result<()
                     report.vanilla_compressed_chunks
                 );
                 println!("Raw Literal Chunks:      {}", report.raw_literal_chunks);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_bdp(cli: &Cli, sub: &BdpSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        BdpSubCmd::Inspect { json } => {
+            let policy: velcrux_core::transport::BdpTuningPolicy = cli.bdp_tuning.parse()?;
+            let config = velcrux_core::transport::BdpWindowConfig::new(
+                policy,
+                cli.min_bdp_window,
+                cli.max_bdp_window,
+                velcrux_core::transport::DEFAULT_BDP_MULTIPLIER,
+            );
+            let tuner = velcrux_core::transport::BdpAutoTuner::new(config.clone());
+            let report = tuner.report();
+
+            if *json || is_json {
+                let out = serde_json::json!({
+                    "policy": policy.to_string(),
+                    "current_window_bytes": report.current_window_bytes,
+                    "target_window_bytes": report.target_window_bytes,
+                    "min_window_bytes": config.min_window_bytes,
+                    "max_window_bytes": config.max_window_bytes,
+                    "multiplier": config.multiplier,
+                    "tier": report.tier.to_string(),
+                    "smoothed_rtt_ms": report.smoothed_rtt_ms,
+                    "min_rtt_ms": report.min_rtt_ms,
+                    "estimated_bandwidth_bps": report.estimated_bandwidth_bps,
+                    "bufferbloat_detected": report.bufferbloat_detected,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== BDP Transport Flow Control Status ===");
+                println!("Tuning Policy:           {}", policy);
+                println!(
+                    "Current Active Window:   {} ({})",
+                    report.current_window_bytes,
+                    format_bytes(report.current_window_bytes)
+                );
+                println!(
+                    "Target Optimal Window:   {} ({})",
+                    report.target_window_bytes,
+                    format_bytes(report.target_window_bytes)
+                );
+                println!(
+                    "Window Floor (Min):      {} ({})",
+                    config.min_window_bytes,
+                    format_bytes(config.min_window_bytes)
+                );
+                println!(
+                    "Window Ceiling (Max):    {} ({})",
+                    config.max_window_bytes,
+                    format_bytes(config.max_window_bytes)
+                );
+                println!("BDP Multiplier:          {:.1}x", config.multiplier);
+                println!("Network Delay Tier:      {}", report.tier);
+                println!("Smoothed RTT:            {:.2} ms", report.smoothed_rtt_ms);
+                println!("Min Propagation RTT:     {:.2} ms", report.min_rtt_ms);
+                println!(
+                    "Estimated Bandwidth:     {:.2} Mbps",
+                    report.estimated_bandwidth_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "Bufferbloat Guard:       {}",
+                    if report.bufferbloat_detected {
+                        "TRIGGERED (Queue delay spike)"
+                    } else {
+                        "Clean"
+                    }
+                );
+            }
+            Ok(())
+        }
+        BdpSubCmd::Simulate {
+            bandwidth,
+            rtt_ms,
+            loss_pct,
+            policy,
+            json,
+        } => {
+            let parsed_policy: velcrux_core::transport::BdpTuningPolicy = policy.parse()?;
+            let bps = velcrux_core::transfer::parse_rate_limit(bandwidth)
+                .map_err(|e| anyhow::anyhow!("invalid bandwidth '{bandwidth}': {e}"))?;
+            let effective_bytes_per_sec = if bps == 0 { 125_000_000 } else { bps };
+
+            let config = velcrux_core::transport::BdpWindowConfig::new(
+                parsed_policy,
+                cli.min_bdp_window,
+                cli.max_bdp_window,
+                velcrux_core::transport::DEFAULT_BDP_MULTIPLIER,
+            );
+            let mut tuner = velcrux_core::transport::BdpAutoTuner::new(config);
+
+            let rtt = std::time::Duration::from_millis(*rtt_ms);
+            let loss_events = if *loss_pct > 0.0 {
+                ((*loss_pct / 100.0) * 100.0).round() as u64
+            } else {
+                0
+            };
+
+            // Run 5 iterative tuning feedback samples
+            let chunk_sample =
+                (effective_bytes_per_sec as f64 * (rtt.as_secs_f64().max(0.01))).round() as u64;
+            for _ in 0..5 {
+                tuner.record_sample(rtt, chunk_sample, rtt, loss_events);
+            }
+            let report = tuner.report();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== BDP Auto-Tuning Simulation Report ===");
+                println!(
+                    "Link Bandwidth:          {} ({:.2} Mbps)",
+                    bandwidth,
+                    (effective_bytes_per_sec * 8) as f64 / 1_000_000.0
+                );
+                println!("Path RTT:                {} ms", rtt_ms);
+                println!("Loss Rate:               {:.2}%", loss_pct);
+                println!("Tuning Policy:           {}", parsed_policy);
+                println!("Classified Tier:         {}", report.tier);
+                println!(
+                    "Converged Window:        {} ({})",
+                    report.current_window_bytes,
+                    format_bytes(report.current_window_bytes)
+                );
+                println!(
+                    "Target BDP Window:       {} ({})",
+                    report.target_window_bytes,
+                    format_bytes(report.target_window_bytes)
+                );
+                println!("Adjustment Action:       {}", report.direction);
+                println!(
+                    "Bufferbloat Status:      {}",
+                    if report.bufferbloat_detected {
+                        "DECAY APPLIED"
+                    } else {
+                        "Nominal"
+                    }
+                );
+                println!(
+                    "Expansions / Decays:     {} / {}",
+                    report.expansions_total, report.decays_total
+                );
             }
             Ok(())
         }

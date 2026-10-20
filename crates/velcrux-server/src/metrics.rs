@@ -130,6 +130,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let delta_slices_vanilla = stats.delta_slices_vanilla.load(Ordering::Relaxed);
     let delta_dict_bytes_saved = stats.delta_dict_bytes_saved.load(Ordering::Relaxed);
 
+    let bdp_window = stats.bdp_current_window_bytes.load(Ordering::Relaxed);
+    let bdp_est_bps = stats.bdp_estimated_bps.load(Ordering::Relaxed);
+    let bdp_expansions = stats.bdp_expansions_total.load(Ordering::Relaxed);
+    let bdp_decays = stats.bdp_decays_total.load(Ordering::Relaxed);
+    let bdp_holds = stats.bdp_holds_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -255,6 +261,17 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_delta_dict_bytes_saved_total Total bytes saved via zstd dictionary delta compression\n\
          # TYPE velcrux_delta_dict_bytes_saved_total counter\n\
          velcrux_delta_dict_bytes_saved_total {delta_dict_bytes_saved}\n\n\
+         # HELP velcrux_bdp_current_window_bytes Current active flow control window in bytes\n\
+         # TYPE velcrux_bdp_current_window_bytes gauge\n\
+         velcrux_bdp_current_window_bytes {bdp_window}\n\n\
+         # HELP velcrux_bdp_estimated_bps Estimated path bandwidth in bits per second\n\
+         # TYPE velcrux_bdp_estimated_bps gauge\n\
+         velcrux_bdp_estimated_bps {bdp_est_bps}\n\n\
+         # HELP velcrux_bdp_tuning_adjustments_total Total BDP window auto-tuning adjustments\n\
+         # TYPE velcrux_bdp_tuning_adjustments_total counter\n\
+         velcrux_bdp_tuning_adjustments_total{{direction=\"expand\"}} {bdp_expansions}\n\
+         velcrux_bdp_tuning_adjustments_total{{direction=\"decay\"}} {bdp_decays}\n\
+         velcrux_bdp_tuning_adjustments_total{{direction=\"hold\"}} {bdp_holds}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\
