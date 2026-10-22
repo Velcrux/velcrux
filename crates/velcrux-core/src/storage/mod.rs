@@ -22,6 +22,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub mod azure;
+pub mod cas_gc;
 pub mod chunk_store;
 pub mod cluster;
 pub mod dedup_defense;
@@ -38,6 +39,10 @@ pub mod xattr;
 pub use azure::{
     AzureBlobConfig, AzureBlobMeta, AzureBlobStorageBackend, AzureBlobSyncReport, AzureError,
     AzureSharedKeySigner,
+};
+pub use cas_gc::{
+    CasChunkEntry, CasCompactionDaemon, CasCompactionDaemonConfig, CasGcPolicy, CasGeneration,
+    CasGenerationalGcReport, CasStoreStatus, CasTombstone, GenerationalCasManager,
 };
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
 pub use cluster::{

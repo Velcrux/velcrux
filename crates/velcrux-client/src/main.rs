@@ -312,6 +312,24 @@ struct Cli {
     )]
     qos_bandwidth: String,
 
+    /// CAS tombstone retention time-to-live in seconds before physical purge (Option BV).
+    #[arg(
+        long = "cas-tombstone-ttl",
+        env = "VELCRUX_CAS_TOMBSTONE_TTL",
+        default_value = "86400",
+        global = true
+    )]
+    cas_tombstone_ttl: u64,
+
+    /// CAS nursery grace period in seconds protecting recently ingested chunks from GC (Option BV).
+    #[arg(
+        long = "cas-nursery-grace",
+        env = "VELCRUX_CAS_NURSERY_GRACE",
+        default_value = "3600",
+        global = true
+    )]
+    cas_nursery_grace: u64,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -549,6 +567,11 @@ enum Cmd {
     Qos {
         #[command(subcommand)]
         sub: QosSubCmd,
+    },
+    /// Content-Addressable Storage (CAS) generational GC, tombstoning, and compaction (Option BV).
+    Cas {
+        #[command(subcommand)]
+        sub: CasSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -931,6 +954,70 @@ enum QosSubCmd {
     },
     /// Display active QoS configuration and client priority tier status.
     Status {
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CasSubCmd {
+    /// Inspect CAS store inventory, generations (nursery, tenured, tombstoned), and reclaimable space.
+    Status {
+        /// Path to chunk store directory. Defaults to standard local store path.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute a generational mark-and-sweep garbage collection pass.
+    Gc {
+        /// Path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Storage directory roots to scan for active chunk references.
+        #[arg(long)]
+        storage_root: Vec<PathBuf>,
+        /// Nursery grace period in seconds (default: 3600 / 1 hour).
+        #[arg(long)]
+        nursery_grace: Option<u64>,
+        /// Tombstone retention TTL in seconds (default: 86400 / 24 hours).
+        #[arg(long)]
+        tombstone_ttl: Option<u64>,
+        /// Hard purge expired tombstones immediately during sweep.
+        #[arg(long)]
+        purge_expired: bool,
+        /// Dry run mode (simulate sweep without modifying disk).
+        #[arg(long)]
+        dry_run: bool,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resurrect a tombstoned chunk back into active service.
+    Resurrect {
+        /// Hash of the chunk to resurrect (hex string).
+        #[arg(long)]
+        hash: String,
+        /// Path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Hard-purge expired tombstones and reclaim physical disk space.
+    Purge {
+        /// Path to chunk store directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Tombstone age threshold in seconds (default: 86400 / 24 hours).
+        #[arg(long, default_value = "86400")]
+        older_than_secs: u64,
+        /// Dry run mode.
+        #[arg(long)]
+        dry_run: bool,
         /// Output in JSON format.
         #[arg(long)]
         json: bool,
@@ -2605,6 +2692,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Qos { sub } => {
             run_qos(&cli, sub).await?;
+        }
+        Cmd::Cas { sub } => {
+            run_cas(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -5914,6 +6004,181 @@ async fn run_qos(cli: &Cli, sub: &QosSubCmd) -> anyhow::Result<()> {
                 println!("CIR Guaranteed Rate:     {}", report.cir_bandwidth);
                 println!("Root Bandwidth Ceiling:  {}", report.root_bandwidth);
                 println!("Multiplexing Mode:       {}", report.multiplexing);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_cas(cli: &Cli, sub: &CasSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        CasSubCmd::Status { chunk_store, json } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::GenerationalCasManager::new(root);
+            let status = mgr.status(cli.cas_nursery_grace)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Content-Addressable Storage (CAS) Status ===");
+                println!("Chunks Root:             {}", status.chunks_dir);
+                println!(
+                    "Total Chunks:            {} ({} stored)",
+                    status.total_chunks,
+                    format_bytes(status.total_bytes)
+                );
+                println!(
+                    "  Nursery (Gen 0):       {} ({})",
+                    status.nursery_chunks,
+                    format_bytes(status.nursery_bytes)
+                );
+                println!(
+                    "  Tenured (Gen 1):       {} ({})",
+                    status.tenured_chunks,
+                    format_bytes(status.tenured_bytes)
+                );
+                println!(
+                    "  Tombstoned (Gen 2):    {} ({})",
+                    status.tombstoned_chunks,
+                    format_bytes(status.tombstoned_bytes)
+                );
+                println!(
+                    "Reclaimable Storage:     {}",
+                    format_bytes(status.reclaimable_bytes)
+                );
+            }
+            Ok(())
+        }
+        CasSubCmd::Gc {
+            chunk_store,
+            storage_root,
+            nursery_grace,
+            tombstone_ttl,
+            purge_expired,
+            dry_run,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::GenerationalCasManager::new(root);
+
+            let roots: Vec<PathBuf> = if storage_root.is_empty() {
+                vec![PathBuf::from(".")]
+            } else {
+                storage_root.clone()
+            };
+            let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
+            let refs = velcrux_core::storage::GenerationalCasManager::collect_references(
+                &root_refs, None, None,
+            )?;
+
+            let policy = velcrux_core::storage::CasGcPolicy {
+                nursery_grace_secs: nursery_grace.unwrap_or(cli.cas_nursery_grace),
+                tombstone_ttl_secs: tombstone_ttl.unwrap_or(cli.cas_tombstone_ttl),
+                purge_expired: *purge_expired,
+                dry_run: *dry_run,
+            };
+
+            let report = mgr.mark_and_sweep(&refs, &policy)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== CAS Generational Mark-and-Sweep Garbage Collection ===");
+                if report.dry_run {
+                    println!("Mode:                    DRY-RUN (Simulated)");
+                }
+                println!("Total Chunks Scanned:    {}", report.total_chunks_scanned);
+                println!("Nursery (Gen 0) Leased:  {}", report.nursery_chunks);
+                println!("Tenured (Gen 1) Active:  {}", report.tenured_chunks);
+                println!("Existing Tombstones:     {}", report.existing_tombstones);
+                println!("Newly Tombstoned:        {}", report.newly_tombstoned);
+                println!("Resurrected Chunks:      {}", report.resurrected_chunks);
+                println!("Purged Chunks:           {}", report.purged_chunks);
+                println!(
+                    "Total Bytes Scanned:     {} ({})",
+                    report.bytes_scanned,
+                    format_bytes(report.bytes_scanned)
+                );
+                println!(
+                    "Bytes in Tombstoned:     {} ({})",
+                    report.bytes_tombstoned,
+                    format_bytes(report.bytes_tombstoned)
+                );
+                println!(
+                    "Bytes Reclaimed:         {} ({})",
+                    report.bytes_reclaimed,
+                    format_bytes(report.bytes_reclaimed)
+                );
+                println!(
+                    "Bytes Retained:          {} ({})",
+                    report.bytes_retained,
+                    format_bytes(report.bytes_retained)
+                );
+                println!("Elapsed Duration:        {} ms", report.duration_ms);
+            }
+            Ok(())
+        }
+        CasSubCmd::Resurrect {
+            hash,
+            chunk_store,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::GenerationalCasManager::new(root);
+            let h = velcrux_core::util::Hash::from_hex(hash)
+                .ok_or_else(|| anyhow::anyhow!("Invalid chunk hash: {hash}"))?;
+
+            let success = mgr.resurrect(&h)?;
+
+            #[derive(Serialize)]
+            struct ResurrectResponse {
+                hash: String,
+                resurrected: bool,
+            }
+
+            let resp = ResurrectResponse {
+                hash: hash.clone(),
+                resurrected: success,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else if success {
+                println!("Successfully resurrected chunk {hash} from tombstoned to tenured.");
+            } else {
+                println!("Chunk {hash} was not found or not tombstoned.");
+            }
+            Ok(())
+        }
+        CasSubCmd::Purge {
+            chunk_store,
+            older_than_secs,
+            dry_run,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::GenerationalCasManager::new(root);
+
+            let report = mgr.purge_tombstones(*older_than_secs, *dry_run)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== CAS Tombstone Hard-Purge Compaction ===");
+                if report.dry_run {
+                    println!("Mode:                    DRY-RUN (Simulated)");
+                }
+                println!("Chunks Scanned:          {}", report.total_chunks_scanned);
+                println!("Tombstones Inspected:    {}", report.existing_tombstones);
+                println!("Chunks Purged:           {}", report.purged_chunks);
+                println!(
+                    "Disk Space Reclaimed:    {} ({})",
+                    report.bytes_reclaimed,
+                    format_bytes(report.bytes_reclaimed)
+                );
+                println!("Compaction Duration:     {} ms", report.duration_ms);
             }
             Ok(())
         }

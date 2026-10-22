@@ -221,6 +221,16 @@ pub struct ServerStats {
     pub qos_default_bytes_total: AtomicU64,
     /// Admitted bytes for Background QoS traffic class (Option BU).
     pub qos_background_bytes_total: AtomicU64,
+    /// Total CAS generational garbage collection and compaction sweeps executed (Option BV).
+    pub cas_gc_runs_total: AtomicU64,
+    /// Total CAS chunks marked with tombstones (Option BV).
+    pub cas_chunks_tombstoned_total: AtomicU64,
+    /// Total CAS tombstoned chunks resurrected back to active service (Option BV).
+    pub cas_chunks_resurrected_total: AtomicU64,
+    /// Total CAS chunks permanently purged from disk (Option BV).
+    pub cas_chunks_purged_total: AtomicU64,
+    /// Total disk bytes permanently reclaimed via CAS compaction (Option BV).
+    pub cas_bytes_reclaimed_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -303,6 +313,11 @@ impl Default for ServerStats {
             qos_critical_bytes_total: AtomicU64::new(0),
             qos_default_bytes_total: AtomicU64::new(0),
             qos_background_bytes_total: AtomicU64::new(0),
+            cas_gc_runs_total: AtomicU64::new(0),
+            cas_chunks_tombstoned_total: AtomicU64::new(0),
+            cas_chunks_resurrected_total: AtomicU64::new(0),
+            cas_chunks_purged_total: AtomicU64::new(0),
+            cas_bytes_reclaimed_total: AtomicU64::new(0),
         }
     }
 }

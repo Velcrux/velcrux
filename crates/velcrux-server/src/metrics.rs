@@ -155,6 +155,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let qos_bytes_def = stats.qos_default_bytes_total.load(Ordering::Relaxed);
     let qos_bytes_bg = stats.qos_background_bytes_total.load(Ordering::Relaxed);
 
+    let cas_gc_runs = stats.cas_gc_runs_total.load(Ordering::Relaxed);
+    let cas_chunks_tombstoned = stats.cas_chunks_tombstoned_total.load(Ordering::Relaxed);
+    let cas_chunks_resurrected = stats.cas_chunks_resurrected_total.load(Ordering::Relaxed);
+    let cas_chunks_purged = stats.cas_chunks_purged_total.load(Ordering::Relaxed);
+    let cas_bytes_reclaimed = stats.cas_bytes_reclaimed_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -327,6 +333,21 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_qos_class_bytes_total{{class=\"critical\"}} {qos_bytes_crit}\n\
          velcrux_qos_class_bytes_total{{class=\"default\"}} {qos_bytes_def}\n\
          velcrux_qos_class_bytes_total{{class=\"background\"}} {qos_bytes_bg}\n\n\
+         # HELP velcrux_cas_gc_runs_total Total Content-Addressable Storage (CAS) generational GC runs\n\
+         # TYPE velcrux_cas_gc_runs_total counter\n\
+         velcrux_cas_gc_runs_total {cas_gc_runs}\n\n\
+         # HELP velcrux_cas_chunks_tombstoned_total Total CAS chunks transitioned to tombstoned state\n\
+         # TYPE velcrux_cas_chunks_tombstoned_total counter\n\
+         velcrux_cas_chunks_tombstoned_total {cas_chunks_tombstoned}\n\n\
+         # HELP velcrux_cas_chunks_resurrected_total Total CAS tombstoned chunks resurrected back to active service\n\
+         # TYPE velcrux_cas_chunks_resurrected_total counter\n\
+         velcrux_cas_chunks_resurrected_total {cas_chunks_resurrected}\n\n\
+         # HELP velcrux_cas_chunks_purged_total Total CAS chunks permanently purged from disk storage\n\
+         # TYPE velcrux_cas_chunks_purged_total counter\n\
+         velcrux_cas_chunks_purged_total {cas_chunks_purged}\n\n\
+         # HELP velcrux_cas_bytes_reclaimed_total Total disk storage bytes reclaimed via CAS compaction\n\
+         # TYPE velcrux_cas_bytes_reclaimed_total counter\n\
+         velcrux_cas_bytes_reclaimed_total {cas_bytes_reclaimed}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

@@ -545,4 +545,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-035](adr/ADR-035-zero-copy-kernel-direct-io-ring-buffer.md) | Zero-Copy Kernel Direct I/O Ring Buffer | Accepted | Page-cache bypass, physical sector DMA alignment, circular ring prefetch and write-behind |
 | [ADR-036](adr/ADR-036-persistent-transfer-checkpointing-wal-recovery.md) | Persistent Transfer Checkpointing & WAL Recovery | Accepted | SQLite WAL control, instant resume without directory rescans, stale pruning |
 | [ADR-037](adr/ADR-037-hierarchical-token-bucket-qos-multiplexer.md) | Hierarchical Token-Bucket QoS & Flow Multiplexer | Accepted | Dual CIR/PIR bandwidth guarantees, capacity borrowing, and 4:2:1 DRR flow multiplexing |
+| [ADR-038](adr/ADR-038-cas-generational-gc-tombstoning-compaction.md) | CAS Generational GC, Tombstoning & Compaction Daemon | Accepted | Generational nursery lease, crash-safe tombstones, resurrection, and empty shard pruning |
 

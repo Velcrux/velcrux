@@ -3071,6 +3071,59 @@ Exposed under `/metrics`:
 - `velcrux_qos_delays_total`: Total rate-throttling events requiring transmission delay.
 - `velcrux_qos_class_bytes_total{class="realtime|critical|default|background"}`: Bytes transmitted per QoS priority class.
 
+## 43. Content-Addressable Storage (CAS) Generational GC, Tombstoning & Compaction Daemon (ADR-038, Option BV)
+
+Velcrux implements a generational Content-Addressable Storage (CAS) garbage collector and compaction daemon (`REQUIREMENTS.md` §61, §62, `ADR-038`). It partitions chunk lifecycles into generational tiers to prevent race conditions with in-flight transfers, safely marks unreferenced chunks with resurrectable tombstones, and purges expired data while reclaiming shard directory inodes.
+
+### Architecture Highlights
+- **Generational Classification**:
+  - `Nursery` (Gen 0): Chunks younger than `--cas-nursery-grace` (default: 3600s / 1 hour) are protected from tombstoning, guaranteeing race-free in-flight uploads.
+  - `Tenured` (Gen 1): Actively referenced chunks verified by storage trees, database manifests, and snapshots.
+  - `Tombstoned` (Gen 2): Unreferenced chunks marked with a companion `<hex>.tombstone` metadata file.
+- **Instantaneous Safe Resurrection**: If a transfer or user references a tombstoned chunk prior to TTL expiry, the tombstone is removed atomically without re-uploading payload bytes.
+- **Compaction & Shard Inode Reclamation**: Expired tombstones and underlying payload chunks are unlinked, and empty two-level shard directories (`chunks/ab/cd/`) are pruned automatically.
+
+### Global CLI Flags
+- `--cas-tombstone-ttl <seconds>` (env: `VELCRUX_CAS_TOMBSTONE_TTL`, default: `86400` / 24 hours):
+  - Retention duration for tombstoned chunks before hard physical purge.
+- `--cas-nursery-grace <seconds>` (env: `VELCRUX_CAS_NURSERY_GRACE`, default: `3600` / 1 hour):
+  - In-flight lease duration protecting newly written chunks from garbage collection.
+
+### Operational CLI Tools (`velcrux cas`)
+
+```bash
+# Display CAS inventory, generational chunk counts, and reclaimable bytes
+velcrux cas status
+
+# Inspect remote or custom chunk store root in machine-readable JSON
+velcrux cas status --chunk-store /mnt/storage/chunks --json
+
+# Run generational mark-and-sweep garbage collection in dry-run simulation mode
+velcrux cas gc --dry-run
+
+# Run mark-and-sweep with custom nursery grace and hard-purge expired tombstones
+velcrux cas gc --nursery-grace 1800 --purge-expired
+
+# Resurrect a tombstoned chunk back to active tenured service
+velcrux cas resurrect --hash e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+# Hard-purge tombstones older than 7 days (604800s) and reclaim physical disk space
+velcrux cas purge --older-than-secs 604800
+
+# JSON report of purge operation for audit trails
+velcrux cas purge --older-than-secs 86400 --json
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics`:
+- `velcrux_cas_gc_runs_total`: Cumulative generational GC compaction sweeps.
+- `velcrux_cas_chunks_tombstoned_total`: Cumulative chunks transitioned to tombstone status.
+- `velcrux_cas_chunks_resurrected_total`: Cumulative tombstoned chunks resurrected back to active service.
+- `velcrux_cas_chunks_purged_total`: Total physical CAS chunk files permanently deleted.
+- `velcrux_cas_bytes_reclaimed_total`: Cumulative physical disk bytes reclaimed from storage.
+
+
 
 
 
