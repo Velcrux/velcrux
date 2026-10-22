@@ -248,6 +248,24 @@ struct Cli {
     )]
     min_bdp_window: u64,
 
+    /// Number of ring buffer slots for Direct I/O kernel zero-copy pipeline (default: 4) (Option BS).
+    #[arg(
+        long = "direct-io-slots",
+        env = "VELCRUX_DIRECT_IO_SLOTS",
+        default_value = "4",
+        global = true
+    )]
+    direct_io_slots: usize,
+
+    /// Slot capacity in bytes for Direct I/O ring buffer pipeline (default: 2097152 / 2 MiB) (Option BS).
+    #[arg(
+        long = "direct-io-slot-size",
+        env = "VELCRUX_DIRECT_IO_SLOT_SIZE",
+        default_value = "2097152",
+        global = true
+    )]
+    direct_io_slot_size: usize,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -469,6 +487,12 @@ enum Cmd {
     Bdp {
         #[command(subcommand)]
         sub: BdpSubCmd,
+    },
+    /// Direct I/O zero-copy kernel ring-buffer engine inspection and benchmarks (Option BS).
+    #[command(name = "direct-io")]
+    DirectIo {
+        #[command(subcommand)]
+        sub: DirectIoSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -740,6 +764,37 @@ enum BdpSubCmd {
         /// Tuning policy: "auto", "fixed", "aggressive", or "conservative" (default: "auto").
         #[arg(long, default_value = "auto")]
         policy: String,
+        /// Format output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DirectIoSubCmd {
+    /// Inspect current active Direct I/O configuration, sector alignments, and ring parameters.
+    Inspect {
+        /// Target file or directory path to check sector alignment and direct I/O support.
+        #[arg(short, long)]
+        path: Option<String>,
+        /// Format output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark Direct I/O ring-buffer streaming throughput (write + read + integrity verification).
+    Benchmark {
+        /// Benchmark target test file path.
+        #[arg(short, long)]
+        path: String,
+        /// Benchmark test file size in bytes (default: 33554432 / 32 MiB).
+        #[arg(short, long, default_value = "33554432")]
+        size: u64,
+        /// Number of ring slots override.
+        #[arg(long)]
+        slots: Option<usize>,
+        /// Slot capacity in bytes override.
+        #[arg(long)]
+        slot_size: Option<usize>,
         /// Format output as JSON.
         #[arg(long)]
         json: bool,
@@ -1917,6 +1972,25 @@ fn get_direct_io_mode(cli: &Cli) -> anyhow::Result<velcrux_core::DirectIoMode> {
         .map_err(|e: String| anyhow::anyhow!(e))
 }
 
+fn get_direct_io_ring_config(
+    cli: &Cli,
+) -> anyhow::Result<velcrux_core::storage::direct_io::DirectIoRingConfig> {
+    let mode = get_direct_io_mode(cli)?;
+    if cli.direct_io_slots < 2 || cli.direct_io_slots > 32 {
+        anyhow::bail!("--direct-io-slots must be between 2 and 32");
+    }
+    if cli.direct_io_slot_size < 4096 {
+        anyhow::bail!("--direct-io-slot-size must be at least 4096 bytes");
+    }
+    Ok(velcrux_core::storage::direct_io::DirectIoRingConfig {
+        ring_slots: cli.direct_io_slots,
+        slot_capacity: cli.direct_io_slot_size,
+        sector_size: velcrux_core::storage::direct_io::DEFAULT_SECTOR_SIZE,
+        mode,
+        min_file_size: velcrux_core::storage::direct_io::DEFAULT_DIRECT_IO_MIN_SIZE,
+    })
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut cli = Cli::parse();
@@ -1924,6 +1998,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = get_rate_limiter(&cli)?;
     let _ = get_priority(&cli)?;
     let _ = get_direct_io_mode(&cli)?;
+    let _ = get_direct_io_ring_config(&cli)?;
     if cli.concurrency == 0 {
         anyhow::bail!("--concurrency must be greater than 0");
     }
@@ -2363,6 +2438,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Bdp { sub } => {
             run_bdp(&cli, sub).await?;
+        }
+        Cmd::DirectIo { sub } => {
+            run_direct_io(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -5184,6 +5262,134 @@ async fn run_bdp(cli: &Cli, sub: &BdpSubCmd) -> anyhow::Result<()> {
                     "Expansions / Decays:     {} / {}",
                     report.expansions_total, report.decays_total
                 );
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_direct_io(cli: &Cli, sub: &DirectIoSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    let mut config = get_direct_io_ring_config(cli)?;
+
+    match sub {
+        DirectIoSubCmd::Inspect { path, json } => {
+            let mut file_exists = false;
+            let mut file_size = 0u64;
+            let mut direct_eligible = false;
+
+            if let Some(ref p_str) = path {
+                let p = std::path::Path::new(p_str);
+                if let Ok(meta) = std::fs::metadata(p) {
+                    file_exists = true;
+                    file_size = meta.len();
+                    direct_eligible = match config.mode {
+                        velcrux_core::DirectIoMode::Always => true,
+                        velcrux_core::DirectIoMode::Disabled => false,
+                        velcrux_core::DirectIoMode::Auto => file_size >= config.min_file_size,
+                    };
+                }
+            }
+
+            if *json || is_json {
+                let out = serde_json::json!({
+                    "direct_io_mode": config.mode.to_string(),
+                    "ring_slots": config.ring_slots,
+                    "slot_capacity_bytes": config.slot_capacity,
+                    "sector_size_bytes": config.sector_size,
+                    "min_file_size_bytes": config.min_file_size,
+                    "target_path": path,
+                    "file_exists": file_exists,
+                    "file_size_bytes": file_size,
+                    "direct_io_eligible": direct_eligible,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Direct I/O Ring-Buffer Pipeline Configuration ===");
+                println!("Execution Mode:          {}", config.mode);
+                println!("Ring Buffer Slots:       {}", config.ring_slots);
+                println!(
+                    "Slot Capacity:           {} ({})",
+                    config.slot_capacity,
+                    format_bytes(config.slot_capacity as u64)
+                );
+                println!("Physical Sector Size:    {} bytes", config.sector_size);
+                println!(
+                    "Auto Mode Min Size:      {} ({})",
+                    config.min_file_size,
+                    format_bytes(config.min_file_size)
+                );
+                if let Some(ref p) = path {
+                    println!("\nTarget Path Inspection:  {}", p);
+                    println!("Path Exists:             {}", file_exists);
+                    if file_exists {
+                        println!(
+                            "File Size:               {} ({})",
+                            file_size,
+                            format_bytes(file_size)
+                        );
+                        println!("Direct I/O Eligible:     {}", direct_eligible);
+                    }
+                }
+            }
+            Ok(())
+        }
+        DirectIoSubCmd::Benchmark {
+            path,
+            size,
+            slots,
+            slot_size,
+            json,
+        } => {
+            if let Some(s) = slots {
+                config.ring_slots = *s;
+            }
+            if let Some(sz) = slot_size {
+                config.slot_capacity = *sz;
+            }
+
+            let report = velcrux_core::storage::direct_io::run_direct_io_benchmark(
+                std::path::Path::new(path),
+                *size,
+                config,
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Direct I/O Ring-Buffer Pipeline Benchmark ===");
+                println!("Target Path:             {}", report.path);
+                println!(
+                    "Payload Streamed:        {} ({})",
+                    report.total_bytes,
+                    format_bytes(report.total_bytes)
+                );
+                println!(
+                    "Ring Configuration:      {} slots × {} ({})",
+                    report.ring_slots,
+                    report.slot_capacity,
+                    format_bytes(report.slot_capacity as u64)
+                );
+                println!("Sector Alignment:        {} bytes", report.sector_size);
+                println!("Direct I/O Active:       {}", report.is_direct);
+                println!(
+                    "Streaming Write:         {:.2} ms ({:.2} MiB/s)",
+                    report.write_duration_ms, report.write_throughput_mb_s
+                );
+                println!(
+                    "Streaming Read:          {:.2} ms ({:.2} MiB/s)",
+                    report.read_duration_ms, report.read_throughput_mb_s
+                );
+                println!("Pipeline Stalls:         {}", report.stalls_count);
+                println!(
+                    "Integrity Verified:      {}",
+                    if report.data_integrity_verified {
+                        "PASS (BLAKE3 exact match)"
+                    } else {
+                        "FAIL (checksum mismatch)"
+                    }
+                );
+                println!("BLAKE3 Hash:             {}", report.checksum_blake3);
             }
             Ok(())
         }

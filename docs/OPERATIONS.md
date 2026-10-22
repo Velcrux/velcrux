@@ -2914,6 +2914,61 @@ velcrux bdp simulate --bandwidth 10Gbps --rtt-ms 150 --policy aggressive
 velcrux bdp simulate --bandwidth 100Mbps --rtt-ms 250 --loss-pct 3.0 --policy conservative --json
 ```
 
+## 39. Zero-Copy Kernel Direct I/O (`O_DIRECT` / `F_NOCACHE`) Ring-Buffer Pipeline (ADR-035, Option BS)
+
+The Direct I/O ring buffer pipeline allows operators to stream bulk file transfers directly between physical NVMe storage and DMA-aligned memory, completely bypassing the operating system page cache to prevent memory exhaustion, cache eviction, and copy overhead.
+
+### Prometheus Metrics
+
+Exported under `/metrics` matching the specification in §7:
+
+```prometheus
+# HELP velcrux_direct_io_ring_transfers_total Total Direct I/O ring-buffer transfers executed
+# TYPE velcrux_direct_io_ring_transfers_total counter
+velcrux_direct_io_ring_transfers_total 42
+
+# HELP velcrux_direct_io_ring_bytes_total Total bytes processed through Direct I/O ring-buffer pipeline
+# TYPE velcrux_direct_io_ring_bytes_total counter
+velcrux_direct_io_ring_bytes_total 35184372088832
+
+# HELP velcrux_direct_io_ring_stalls_total Total ring-buffer pipeline stall events waiting for slots
+# TYPE velcrux_direct_io_ring_stalls_total counter
+velcrux_direct_io_ring_stalls_total 12
+```
+
+### Global CLI Flags
+
+- `--direct-io <auto|always|disabled>` (env: `VELCRUX_DIRECT_IO`, default: `auto`):
+  - `auto`: Automatically engages Direct I/O for files $\ge$ 16 MiB when supported by the filesystem, with graceful fallback to standard buffered streaming if unsupported.
+  - `always`: Strictly enforces Direct I/O; operations fail if unsupported by the target filesystem.
+  - `disabled`: Disables Direct I/O entirely, always using standard OS buffered streaming.
+- `--direct-io-slots <n>` (env: `VELCRUX_DIRECT_IO_SLOTS`, default: `4`):
+  - Number of circular DMA buffer slots in the ring buffer pipeline (valid: 2–32).
+- `--direct-io-slot-size <bytes>` (env: `VELCRUX_DIRECT_IO_SLOT_SIZE`, default: `2097152` / 2 MiB):
+  - Capacity in bytes for each sector-aligned ring slot (aligned to 4096-byte boundaries).
+
+### Operational CLI Tools (`velcrux direct-io`)
+
+Operators can inspect filesystem sector alignment support and benchmark storage throughput:
+
+```bash
+# Inspect current Direct I/O policy, sector sizes, and ring configuration
+velcrux direct-io inspect
+
+# Test whether a specific file or storage mount is eligible for Direct I/O
+velcrux direct-io inspect --path /mnt/nvme/largefile.tar
+
+# Machine-readable inspection output
+velcrux direct-io inspect --path /data --json
+
+# Run end-to-end write-then-read throughput benchmark with 32 MiB test payload
+velcrux direct-io benchmark --path /tmp/bench.bin --size 33554432
+
+# High-concurrency benchmark with 8 slots of 4 MiB each and JSON report
+velcrux direct-io benchmark --path /data/bench.bin --size 67108864 --slots 8 --slot-size 4194304 --json
+```
+
+
 
 
 

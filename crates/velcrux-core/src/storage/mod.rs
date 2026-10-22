@@ -49,8 +49,11 @@ pub use dedup_defense::{
     DedupNamespacePolicy, NamespacedChunkStore, ProofOfOwnershipEngine, QuarantinedChunk,
 };
 pub use direct_io::{
-    AlignedSectorBuffer, DirectFileReader, DirectFileWriter, DirectIoConfig, DirectIoMode,
-    DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_SECTOR_SIZE,
+    run_direct_io_benchmark, AlignedSectorBuffer, DirectFileReader, DirectFileWriter,
+    DirectIoBenchmarkReport, DirectIoConfig, DirectIoMode, DirectIoPipelineReader,
+    DirectIoPipelineStats, DirectIoPipelineWriter, DirectIoRingBuffer, DirectIoRingConfig,
+    RingSlot, RingSlotState, DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_RING_SLOTS, DEFAULT_SECTOR_SIZE,
+    DEFAULT_SLOT_CAPACITY,
 };
 pub use gc::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, ChunkStoreGcReport, StagingGcReport,

@@ -136,6 +136,10 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let bdp_decays = stats.bdp_decays_total.load(Ordering::Relaxed);
     let bdp_holds = stats.bdp_holds_total.load(Ordering::Relaxed);
 
+    let direct_io_transfers = stats.direct_io_ring_transfers_total.load(Ordering::Relaxed);
+    let direct_io_bytes = stats.direct_io_ring_bytes_total.load(Ordering::Relaxed);
+    let direct_io_stalls = stats.direct_io_ring_stalls_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -272,6 +276,15 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_bdp_tuning_adjustments_total{{direction=\"expand\"}} {bdp_expansions}\n\
          velcrux_bdp_tuning_adjustments_total{{direction=\"decay\"}} {bdp_decays}\n\
          velcrux_bdp_tuning_adjustments_total{{direction=\"hold\"}} {bdp_holds}\n\n\
+         # HELP velcrux_direct_io_ring_transfers_total Total Direct I/O ring-buffer transfers executed\n\
+         # TYPE velcrux_direct_io_ring_transfers_total counter\n\
+         velcrux_direct_io_ring_transfers_total {direct_io_transfers}\n\n\
+         # HELP velcrux_direct_io_ring_bytes_total Total bytes processed through Direct I/O ring-buffer pipeline\n\
+         # TYPE velcrux_direct_io_ring_bytes_total counter\n\
+         velcrux_direct_io_ring_bytes_total {direct_io_bytes}\n\n\
+         # HELP velcrux_direct_io_ring_stalls_total Total ring-buffer pipeline stall events waiting for slots\n\
+         # TYPE velcrux_direct_io_ring_stalls_total counter\n\
+         velcrux_direct_io_ring_stalls_total {direct_io_stalls}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

@@ -193,6 +193,12 @@ pub struct ServerStats {
     pub bdp_decays_total: AtomicU64,
     /// Total BDP window hold adjustments (Option BR).
     pub bdp_holds_total: AtomicU64,
+    /// Total direct I/O ring buffer transfers (Option BS).
+    pub direct_io_ring_transfers_total: AtomicU64,
+    /// Total bytes processed via direct I/O ring buffer pipeline (Option BS).
+    pub direct_io_ring_bytes_total: AtomicU64,
+    /// Total stalls encountered waiting for free or filled ring buffer slots (Option BS).
+    pub direct_io_ring_stalls_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -261,6 +267,9 @@ impl Default for ServerStats {
             bdp_expansions_total: AtomicU64::new(0),
             bdp_decays_total: AtomicU64::new(0),
             bdp_holds_total: AtomicU64::new(0),
+            direct_io_ring_transfers_total: AtomicU64::new(0),
+            direct_io_ring_bytes_total: AtomicU64::new(0),
+            direct_io_ring_stalls_total: AtomicU64::new(0),
         }
     }
 }
