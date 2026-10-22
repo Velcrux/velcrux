@@ -21,8 +21,9 @@ pub mod rate_limit;
 pub mod scheduler;
 
 pub use checkpoint::{
-    CheckpointCoordinator, CheckpointPolicy, CheckpointStats, DEFAULT_CHECKPOINT_BYTES,
-    DEFAULT_CHECKPOINT_INTERVAL,
+    CheckpointCoordinator, CheckpointDaemonConfig, CheckpointPolicy, CheckpointStats,
+    RecoveredTransferSummary, ResumeRecoveryReport, TransferResumeCoordinator,
+    DEFAULT_CHECKPOINT_BYTES, DEFAULT_CHECKPOINT_INTERVAL,
 };
 pub use rate_limit::{parse_rate_limit, RateLimiter};
 pub use scheduler::{

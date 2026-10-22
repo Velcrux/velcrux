@@ -37,7 +37,8 @@ use crate::util::{Hash, TransferId};
 /// keys are scoped to a role so the same key used by a client and a
 /// server does not collide (they have separate DBs in any case, but
 /// the role disambiguates diagnostics).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     /// The `velcrux` client.
     Client,
@@ -45,8 +46,28 @@ pub enum Role {
     Server,
 }
 
+impl Role {
+    /// Wire-stable string form.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Role::Client => "client",
+            Role::Server => "server",
+        }
+    }
+
+    /// Parse from case-insensitive string.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "client" => Some(Role::Client),
+            "server" => Some(Role::Server),
+            _ => None,
+        }
+    }
+}
+
 /// Lifecycle of a transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TransferStatus {
     /// Bytes are still being moved.
     Active,
@@ -69,10 +90,74 @@ impl TransferStatus {
             TransferStatus::Resumable => "resumable",
         }
     }
+
+    /// Parse from stored string.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(TransferStatus::Active),
+            "cancelled" => Some(TransferStatus::Cancelled),
+            "committed" => Some(TransferStatus::Committed),
+            "resumable" => Some(TransferStatus::Resumable),
+            _ => None,
+        }
+    }
+}
+
+/// SQLite Write-Ahead Logging (WAL) checkpoint mode (`REQUIREMENTS.md` §68, §69).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WalCheckpointMode {
+    /// Checkpoint as many frames as possible without waiting for any reader or writer.
+    Passive,
+    /// Wait for readers to finish and checkpoint as many frames as possible.
+    Full,
+    /// Like Full, but blocks new readers until checkpoint completes.
+    Restart,
+    /// Like Restart, but also truncates the WAL file to zero bytes.
+    Truncate,
+}
+
+impl WalCheckpointMode {
+    /// Pragma argument string representation for SQLite `PRAGMA wal_checkpoint(...)`.
+    pub const fn as_pragma_str(&self) -> &'static str {
+        match self {
+            Self::Passive => "PASSIVE",
+            Self::Full => "FULL",
+            Self::Restart => "RESTART",
+            Self::Truncate => "TRUNCATE",
+        }
+    }
+
+    /// Parse from case-insensitive string.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "passive" => Some(Self::Passive),
+            "full" => Some(Self::Full),
+            "restart" => Some(Self::Restart),
+            "truncate" => Some(Self::Truncate),
+            _ => None,
+        }
+    }
+}
+
+/// Diagnostic report resulting from a SQLite WAL checkpoint operation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WalCheckpointReport {
+    /// Mode requested.
+    pub mode: WalCheckpointMode,
+    /// Whether the checkpoint was blocked/busy (true = busy/blocked, false = success).
+    pub busy: bool,
+    /// Total number of pages in the WAL file at the time of checkpoint.
+    pub log_pages: i32,
+    /// Total number of pages successfully moved to the database file.
+    pub checkpointed_pages: i32,
+    /// Checkpoint operation duration in microseconds.
+    pub duration_micros: u64,
 }
 
 /// Direction of a transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Direction {
     /// Client → server.
     Upload,
@@ -306,6 +391,17 @@ pub trait StateStore: Send + Sync {
     /// Transition any transfer currently in `Active` status to `Resumable`.
     /// Called during server graceful drain and at startup crash recovery.
     fn mark_active_transfers_resumable(&self) -> StateStoreResult<usize>;
+
+    /// Execute a SQLite Write-Ahead Logging (WAL) checkpoint to control WAL size and flush pages.
+    fn wal_checkpoint(&self, mode: WalCheckpointMode) -> StateStoreResult<WalCheckpointReport>;
+
+    /// List all transfers currently in `Resumable` status, optionally filtered by `role`.
+    fn list_resumable_transfers(&self, role: Option<Role>)
+        -> StateStoreResult<Vec<TransferRecord>>;
+
+    /// Prune completed or cancelled transfer records and bitmaps older than `max_age_secs`.
+    /// Returns the number of pruned transfer records.
+    fn prune_stale_transfers(&self, max_age_secs: u64) -> StateStoreResult<usize>;
 }
 
 /// Convenience: a request from the engine to commit a transfer. The

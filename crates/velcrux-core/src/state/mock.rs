@@ -13,6 +13,7 @@ use crate::util::TransferId;
 use super::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, JournalRecovery, Role, StateStore,
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
+    WalCheckpointMode, WalCheckpointReport,
 };
 
 /// In-memory state store. All operations are serialized through a
@@ -257,6 +258,62 @@ impl StateStore for MockStateStore {
                 count += 1;
             }
         }
+        Ok(count)
+    }
+
+    fn wal_checkpoint(&self, mode: WalCheckpointMode) -> StateStoreResult<WalCheckpointReport> {
+        Ok(WalCheckpointReport {
+            mode,
+            busy: false,
+            log_pages: 0,
+            checkpointed_pages: 0,
+            duration_micros: 10,
+        })
+    }
+
+    fn list_resumable_transfers(
+        &self,
+        role: Option<Role>,
+    ) -> StateStoreResult<Vec<TransferRecord>> {
+        let g = self.inner.lock().unwrap();
+        let mut list: Vec<TransferRecord> = g
+            .transfers_by_id
+            .values()
+            .filter(|r| r.status == TransferStatus::Resumable)
+            .filter(|r| role.map_or(true, |target_role| r.role == target_role))
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
+        Ok(list)
+    }
+
+    fn prune_stale_transfers(&self, max_age_secs: u64) -> StateStoreResult<usize> {
+        let mut g = self.inner.lock().unwrap();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let cutoff_ms = now_ms.saturating_sub(max_age_secs * 1000);
+
+        let stale_tids: Vec<TransferId> = g
+            .transfers_by_id
+            .values()
+            .filter(|r| {
+                (r.status == TransferStatus::Committed || r.status == TransferStatus::Cancelled)
+                    && r.updated_ms < cutoff_ms
+            })
+            .map(|r| r.transfer_id)
+            .collect();
+
+        let count = stale_tids.len();
+        for tid in stale_tids {
+            if let Some(r) = g.transfers_by_id.remove(&tid) {
+                g.idem_index.remove(&(r.role, r.idempotency_key));
+            }
+            g.bitmaps.remove(&tid);
+            g.journal.retain(|(t, _), _| *t != tid);
+        }
+
         Ok(count)
     }
 }

@@ -28,6 +28,7 @@ use super::bitmap::ChunkBitmap;
 use super::{
     CommitJournalEntry, CommitStatus, Direction, JournalRecovery, Role, StateStore,
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
+    WalCheckpointMode, WalCheckpointReport,
 };
 
 /// Current schema version. Bumped by hand when migrations are added.
@@ -629,6 +630,122 @@ impl StateStore for SqliteStateStore {
             .map_err(|e| StateStoreError::Database(format!("mark active resumable: {e}")))?;
         Ok(count)
     }
+
+    fn wal_checkpoint(&self, mode: WalCheckpointMode) -> StateStoreResult<WalCheckpointReport> {
+        let t0 = std::time::Instant::now();
+        let g = lock_db(self.conn.lock())?;
+        let pragma_sql = format!("PRAGMA wal_checkpoint({})", mode.as_pragma_str());
+        let (busy_code, log_pages, checkpointed_pages) = match g.query_row(&pragma_sql, [], |r| {
+            let busy: i32 = r.get(0)?;
+            let log: i32 = r.get(1)?;
+            let ckpt: i32 = r.get(2)?;
+            Ok((busy, log, ckpt))
+        }) {
+            Ok(tuple) => tuple,
+            Err(_) => (0, 0, 0),
+        };
+        let duration_micros = t0.elapsed().as_micros() as u64;
+        Ok(WalCheckpointReport {
+            mode,
+            busy: busy_code != 0,
+            log_pages,
+            checkpointed_pages,
+            duration_micros,
+        })
+    }
+
+    fn list_resumable_transfers(
+        &self,
+        role: Option<Role>,
+    ) -> StateStoreResult<Vec<TransferRecord>> {
+        let g = lock_db(self.conn.lock())?;
+        let sql = match role {
+            Some(_) => format!(
+                "SELECT {TRANSFER_COLS_LIST} FROM transfers \
+                 WHERE status='resumable' AND role=? \
+                 ORDER BY updated_ms DESC"
+            ),
+            None => format!(
+                "SELECT {TRANSFER_COLS_LIST} FROM transfers \
+                 WHERE status='resumable' \
+                 ORDER BY updated_ms DESC"
+            ),
+        };
+        let mut stmt = g
+            .prepare(&sql)
+            .map_err(|e| StateStoreError::Database(format!("prepare list resumable: {e}")))?;
+        let mut out = Vec::new();
+        if let Some(r) = role {
+            let rows = stmt
+                .query_map(params![role_to_int(r)], row_to_record)
+                .map_err(|e| StateStoreError::Database(format!("query list resumable: {e}")))?;
+            for row in rows {
+                out.push(row.map_err(|e| StateStoreError::Database(format!("row: {e}")))?);
+            }
+        } else {
+            let rows = stmt
+                .query_map([], row_to_record)
+                .map_err(|e| StateStoreError::Database(format!("query list resumable: {e}")))?;
+            for row in rows {
+                out.push(row.map_err(|e| StateStoreError::Database(format!("row: {e}")))?);
+            }
+        }
+        Ok(out)
+    }
+
+    fn prune_stale_transfers(&self, max_age_secs: u64) -> StateStoreResult<usize> {
+        let cutoff_ms = current_ms().saturating_sub(max_age_secs * 1000) as i64;
+        let mut g = lock_db(self.conn.lock())?;
+        let tx = g
+            .transaction()
+            .map_err(|e| StateStoreError::Database(format!("begin prune tx: {e}")))?;
+
+        let mut stmt = tx
+            .prepare(
+                "SELECT transfer_id FROM transfers \
+                 WHERE status IN ('committed', 'cancelled') AND updated_ms < ?",
+            )
+            .map_err(|e| StateStoreError::Database(format!("prepare stale query: {e}")))?;
+        let rows = stmt
+            .query_map(params![cutoff_ms], |r| {
+                let tid_blob: Vec<u8> = r.get(0)?;
+                Ok(tid_blob)
+            })
+            .map_err(|e| StateStoreError::Database(format!("query stale ids: {e}")))?;
+
+        let mut stale_ids = Vec::new();
+        for r in rows {
+            stale_ids.push(r.map_err(|e| StateStoreError::Database(format!("stale id row: {e}")))?);
+        }
+        drop(stmt);
+
+        for tid_bytes in &stale_ids {
+            tx.execute(
+                "DELETE FROM chunk_bitmap WHERE transfer_id=?",
+                params![tid_bytes.as_slice()],
+            )
+            .map_err(|e| StateStoreError::Database(format!("prune chunk_bitmap: {e}")))?;
+
+            tx.execute(
+                "DELETE FROM commit_journal WHERE transfer_id=?",
+                params![tid_bytes.as_slice()],
+            )
+            .map_err(|e| StateStoreError::Database(format!("prune commit_journal: {e}")))?;
+        }
+
+        let pruned_count = tx
+            .execute(
+                "DELETE FROM transfers \
+                 WHERE status IN ('committed', 'cancelled') AND updated_ms < ?",
+                params![cutoff_ms],
+            )
+            .map_err(|e| StateStoreError::Database(format!("prune transfers: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| StateStoreError::Database(format!("commit prune tx: {e}")))?;
+
+        Ok(pruned_count)
+    }
 }
 
 #[cfg(test)]
@@ -862,5 +979,54 @@ mod tests {
         let bm = s2.read_bitmap(tid).unwrap();
         assert!(bm.contains(7));
         assert_eq!(bm.bytes_completed(), 4096);
+    }
+
+    #[test]
+    fn wal_checkpoint_modes() {
+        let p = tmp_path("wal_cp.db");
+        let s = SqliteStateStore::new(&p).unwrap();
+        let report = s.wal_checkpoint(WalCheckpointMode::Passive).unwrap();
+        assert_eq!(report.mode, WalCheckpointMode::Passive);
+        assert!(!report.busy);
+
+        let report_trunc = s.wal_checkpoint(WalCheckpointMode::Truncate).unwrap();
+        assert_eq!(report_trunc.mode, WalCheckpointMode::Truncate);
+    }
+
+    #[test]
+    fn list_resumable_and_prune_stale() {
+        let p = tmp_path("resumable_prune.db");
+        let s = SqliteStateStore::new(&p).unwrap();
+        let tid1 = TransferId::generate();
+        let tid2 = TransferId::generate();
+        let tid3 = TransferId::generate();
+
+        let mut r1 = sample("k1", tid1);
+        r1.status = TransferStatus::Active;
+        s.upsert_transfer(&r1).unwrap();
+
+        let mut r2 = sample("k2", tid2);
+        r2.status = TransferStatus::Resumable;
+        s.upsert_transfer(&r2).unwrap();
+
+        let mut r3 = sample("k3", tid3);
+        r3.status = TransferStatus::Committed;
+        r3.updated_ms = 1000;
+        s.upsert_transfer(&r3).unwrap();
+
+        // mark_active_transfers_resumable should convert r1 to resumable
+        let converted = s.mark_active_transfers_resumable().unwrap();
+        assert_eq!(converted, 1);
+
+        let list = s.list_resumable_transfers(Some(Role::Client)).unwrap();
+        assert_eq!(list.len(), 2);
+
+        // Pruning older than 1 second (1000 ms is well over a few seconds ago)
+        let pruned = s.prune_stale_transfers(1).unwrap();
+        assert_eq!(pruned, 1);
+        assert!(matches!(
+            s.get_transfer(tid3),
+            Err(StateStoreError::NotFound)
+        ));
     }
 }

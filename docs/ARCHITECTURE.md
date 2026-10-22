@@ -543,4 +543,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-033](adr/ADR-033-content-aware-delta-compression-and-cdc-slicing.md) | Content-Aware Delta Compression Engine | Accepted | Dynamic Zstd dictionary training from baseline reference extents |
 | [ADR-034](adr/ADR-034-adaptive-bdp-auto-tuning-and-quic-flow-control.md) | Adaptive BDP Auto-Tuning Engine | Accepted | Real-time QUIC congestion control feedback loop and bufferbloat protection |
 | [ADR-035](adr/ADR-035-zero-copy-kernel-direct-io-ring-buffer.md) | Zero-Copy Kernel Direct I/O Ring Buffer | Accepted | Page-cache bypass, physical sector DMA alignment, circular ring prefetch and write-behind |
+| [ADR-036](adr/ADR-036-persistent-transfer-checkpointing-wal-recovery.md) | Persistent Transfer Checkpointing & WAL Recovery | Accepted | SQLite WAL control, instant resume without directory rescans, stale pruning |
 

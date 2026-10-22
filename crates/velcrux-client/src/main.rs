@@ -266,6 +266,33 @@ struct Cli {
     )]
     direct_io_slot_size: usize,
 
+    /// Checkpoint time interval in seconds (default: 10) (Option BT).
+    #[arg(
+        long = "checkpoint-interval",
+        env = "VELCRUX_CHECKPOINT_INTERVAL",
+        default_value = "10",
+        global = true
+    )]
+    checkpoint_interval: u64,
+
+    /// Checkpoint byte threshold in bytes (default: 268435456 / 256 MiB) (Option BT).
+    #[arg(
+        long = "checkpoint-bytes",
+        env = "VELCRUX_CHECKPOINT_BYTES",
+        default_value = "268435456",
+        global = true
+    )]
+    checkpoint_bytes: u64,
+
+    /// SQLite Write-Ahead Logging (WAL) auto-checkpoint page threshold (default: 1000) (Option BT).
+    #[arg(
+        long = "wal-autocheckpoint",
+        env = "VELCRUX_WAL_AUTOCHECKPOINT",
+        default_value = "1000",
+        global = true
+    )]
+    wal_autocheckpoint: u32,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -493,6 +520,11 @@ enum Cmd {
     DirectIo {
         #[command(subcommand)]
         sub: DirectIoSubCmd,
+    },
+    /// Persistent transfer checkpointing, SQLite WAL management, and fast recovery (Option BT).
+    Checkpoint {
+        #[command(subcommand)]
+        sub: CheckpointSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -796,6 +828,55 @@ enum DirectIoSubCmd {
         #[arg(long)]
         slot_size: Option<usize>,
         /// Format output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CheckpointSubCmd {
+    /// Display status of resumable transfers and SQLite WAL state.
+    Status {
+        /// State role to inspect: "client" (default) or "server".
+        #[arg(long, default_value = "client")]
+        role: String,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Perform fast instantaneous recovery of interrupted transfers without directory re-scans.
+    Recover {
+        /// Optional specific transfer ID (ULID) to recover. If omitted, recovers all resumable transfers.
+        #[arg(long)]
+        transfer_id: Option<String>,
+        /// State role: "client" (default) or "server".
+        #[arg(long, default_value = "client")]
+        role: String,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prune stale completed or cancelled transfer checkpoints and bitmaps.
+    Prune {
+        /// Age threshold in seconds for pruning stale transfers (default: 604800 / 7 days).
+        #[arg(long, default_value = "604800")]
+        older_than_secs: u64,
+        /// State role: "client" (default) or "server".
+        #[arg(long, default_value = "client")]
+        role: String,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Trigger an explicit SQLite Write-Ahead Logging (WAL) checkpoint flush.
+    WalFlush {
+        /// WAL checkpoint mode: "truncate" (default), "passive", "full", or "restart".
+        #[arg(long, default_value = "truncate")]
+        mode: String,
+        /// State role: "client" (default) or "server".
+        #[arg(long, default_value = "client")]
+        role: String,
+        /// Output in JSON format.
         #[arg(long)]
         json: bool,
     },
@@ -1781,6 +1862,28 @@ fn open_client_state_store(cli: &Cli) -> Option<Arc<dyn velcrux_core::state::Sta
     None
 }
 
+fn open_state_store_for_role(
+    cli: &Cli,
+    role_str: &str,
+) -> anyhow::Result<Arc<dyn velcrux_core::state::StateStore>> {
+    if let Some(path) = &cli.state_db {
+        let store = velcrux_core::state::SqliteStateStore::new(path)?;
+        return Ok(Arc::new(store));
+    }
+    let role =
+        velcrux_core::state::Role::parse(role_str).unwrap_or(velcrux_core::state::Role::Client);
+    let db_filename = format!("{}.db", role.as_str());
+    if let Some(home) = std::env::var_os("HOME") {
+        let path = PathBuf::from(home).join(".velcrux").join(db_filename);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let store = velcrux_core::state::SqliteStateStore::new(&path)?;
+        return Ok(Arc::new(store));
+    }
+    anyhow::bail!("unable to determine default state store location; please pass --state-db");
+}
+
 async fn open_client_session(
     conn: &dyn velcrux_core::transport::Connection,
     cli: &Cli,
@@ -2441,6 +2544,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::DirectIo { sub } => {
             run_direct_io(&cli, sub).await?;
+        }
+        Cmd::Checkpoint { sub } => {
+            run_checkpoint(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -5390,6 +5496,167 @@ async fn run_direct_io(cli: &Cli, sub: &DirectIoSubCmd) -> anyhow::Result<()> {
                     }
                 );
                 println!("BLAKE3 Hash:             {}", report.checksum_blake3);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_checkpoint(cli: &Cli, sub: &CheckpointSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        CheckpointSubCmd::Status { role, json } => {
+            let store = open_state_store_for_role(cli, role)?;
+            let report = velcrux_core::transfer::TransferResumeCoordinator::fast_recover_all(
+                store.as_ref(),
+                None,
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Transfer Checkpoint & Recovery Status ({role}) ===");
+                println!("Resumable Transfers:     {}", report.resumable_count);
+                println!(
+                    "Total Resumable Bytes:   {} ({})",
+                    report.total_bytes_resumable,
+                    format_bytes(report.total_bytes_resumable)
+                );
+                println!(
+                    "Total Completed Bytes:   {} ({})",
+                    report.total_bytes_completed,
+                    format_bytes(report.total_bytes_completed)
+                );
+                if let Some(ref wal) = report.wal_status {
+                    println!("\nSQLite WAL Status:");
+                    println!("Mode:                    {:?}", wal.mode);
+                    println!("Busy/Blocked:            {}", wal.busy);
+                    println!("Log Pages:               {}", wal.log_pages);
+                    println!("Checkpointed Pages:      {}", wal.checkpointed_pages);
+                    println!("Duration:                {} µs", wal.duration_micros);
+                }
+                if !report.transfers.is_empty() {
+                    println!("\nActive Resumable Transfers:");
+                    for t in &report.transfers {
+                        println!(
+                            "- [{}] ID: {} ({:.1}%) - {} / {}",
+                            t.status,
+                            t.transfer_id,
+                            t.completion_pct,
+                            format_bytes(t.bytes_completed),
+                            format_bytes(t.file_size)
+                        );
+                        println!("  Path:                  {}", t.remote_path);
+                    }
+                }
+            }
+            Ok(())
+        }
+        CheckpointSubCmd::Recover {
+            transfer_id,
+            role,
+            json,
+        } => {
+            let store = open_state_store_for_role(cli, role)?;
+            if let Some(ref tid_str) = transfer_id {
+                let tid = velcrux_core::util::TransferId::from_string(tid_str)
+                    .ok_or_else(|| anyhow::anyhow!("invalid transfer ID: {tid_str}"))?;
+                let summary = velcrux_core::transfer::TransferResumeCoordinator::recover_transfer(
+                    store.as_ref(),
+                    tid,
+                    None,
+                )?;
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                } else {
+                    println!("=== Transfer Recovery Verification ===");
+                    println!("Transfer ID:             {}", summary.transfer_id);
+                    println!("Status:                  {}", summary.status);
+                    println!("Verified:                {}", summary.verified);
+                    println!("Completed:               {:.1}%", summary.completion_pct);
+                    println!(
+                        "Bytes Completed:         {} / {} ({})",
+                        summary.bytes_completed,
+                        summary.file_size,
+                        format_bytes(summary.bytes_completed)
+                    );
+                    println!("Chunks Completed:        {}", summary.chunks_completed);
+                    println!("Remote Path:             {}", summary.remote_path);
+                }
+            } else {
+                let report = velcrux_core::transfer::TransferResumeCoordinator::fast_recover_all(
+                    store.as_ref(),
+                    None,
+                )?;
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("=== Fast Instantaneous Recovery Report ({role}) ===");
+                    println!(
+                        "Transfers Marked Resumable: {}",
+                        report.active_transfers_marked_resumable
+                    );
+                    println!("Total Resumable Transfers:  {}", report.resumable_count);
+                    println!(
+                        "Total Resumable Data:       {} ({})",
+                        report.total_bytes_resumable,
+                        format_bytes(report.total_bytes_resumable)
+                    );
+                    for t in &report.transfers {
+                        println!(
+                            "- {} | {:.1}% completed ({}) | {}",
+                            t.transfer_id,
+                            t.completion_pct,
+                            format_bytes(t.bytes_completed),
+                            t.remote_path
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+        CheckpointSubCmd::Prune {
+            older_than_secs,
+            role,
+            json,
+        } => {
+            let store = open_state_store_for_role(cli, role)?;
+            let pruned_count = velcrux_core::transfer::TransferResumeCoordinator::prune_stale(
+                store.as_ref(),
+                *older_than_secs,
+            )?;
+            if *json || is_json {
+                let out = serde_json::json!({
+                    "pruned_transfers": pruned_count,
+                    "older_than_secs": older_than_secs,
+                    "role": role,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Pruned Stale Checkpoints ({role}) ===");
+                println!("Pruned Records:          {}", pruned_count);
+                println!("Age Threshold:           {} seconds", older_than_secs);
+            }
+            Ok(())
+        }
+        CheckpointSubCmd::WalFlush { mode, role, json } => {
+            let store = open_state_store_for_role(cli, role)?;
+            let wal_mode = velcrux_core::state::WalCheckpointMode::parse(mode)
+                .ok_or_else(|| anyhow::anyhow!("unknown WAL checkpoint mode: {mode} (valid: truncate, passive, full, restart)"))?;
+            let report = velcrux_core::transfer::TransferResumeCoordinator::wal_flush(
+                store.as_ref(),
+                wal_mode,
+            )?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== SQLite WAL Checkpoint Flush ({role}) ===");
+                println!("Requested Mode:          {:?}", report.mode);
+                println!("Busy / Blocked:          {}", report.busy);
+                println!("Log Pages in WAL:        {}", report.log_pages);
+                println!("Pages Moved to DB:       {}", report.checkpointed_pages);
+                println!("Duration:                {} µs", report.duration_micros);
             }
             Ok(())
         }

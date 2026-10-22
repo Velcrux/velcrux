@@ -70,7 +70,7 @@ pub use state::{
     ChunkBitmap, CommitJournalEntry, CommitStatus, Direction, IdempotencyAction, IdempotencyLedger,
     JournalRecovery, LedgerEntry, MockStateStore, Role, SqliteStateStore, StateStore,
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
-    MAX_WIRE_CHUNKS,
+    WalCheckpointMode, WalCheckpointReport, MAX_WIRE_CHUNKS,
 };
 
 pub use scheduler::{
@@ -134,9 +134,11 @@ pub use transfer::{
     server_download_session, server_download_session_with_delta,
     server_download_session_with_limits, server_staging_path, server_upload_session,
     server_upload_session_with_delta, server_upload_session_with_limits,
-    server_upload_session_with_state, CheckpointCoordinator, CheckpointPolicy, CheckpointStats,
-    ConcurrentTransferLimiter, PipelineConfig, PriorityScheduler, RateLimiter, ScheduledTask,
+    server_upload_session_with_state, CheckpointCoordinator, CheckpointDaemonConfig,
+    CheckpointPolicy, CheckpointStats, ConcurrentTransferLimiter, PipelineConfig,
+    PriorityScheduler, RateLimiter, RecoveredTransferSummary, ResumeRecoveryReport, ScheduledTask,
     TransferDir, TransferKind, TransferPermit, TransferPriority, TransferRequest,
+    TransferResumeCoordinator,
 };
 
 pub use transport::{

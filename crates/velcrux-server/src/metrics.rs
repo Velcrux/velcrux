@@ -140,6 +140,13 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let direct_io_bytes = stats.direct_io_ring_bytes_total.load(Ordering::Relaxed);
     let direct_io_stalls = stats.direct_io_ring_stalls_total.load(Ordering::Relaxed);
 
+    let transfer_checkpoints = stats.transfer_checkpoints_total.load(Ordering::Relaxed);
+    let transfer_checkpoint_bytes = stats
+        .transfer_checkpoint_bytes_total
+        .load(Ordering::Relaxed);
+    let transfer_recoveries = stats.transfer_recoveries_total.load(Ordering::Relaxed);
+    let wal_checkpoints = stats.wal_checkpoints_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -285,6 +292,18 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_direct_io_ring_stalls_total Total ring-buffer pipeline stall events waiting for slots\n\
          # TYPE velcrux_direct_io_ring_stalls_total counter\n\
          velcrux_direct_io_ring_stalls_total {direct_io_stalls}\n\n\
+         # HELP velcrux_transfer_checkpoints_total Total transfer checkpoints committed to durable state store\n\
+         # TYPE velcrux_transfer_checkpoints_total counter\n\
+         velcrux_transfer_checkpoints_total {transfer_checkpoints}\n\n\
+         # HELP velcrux_transfer_checkpoint_bytes_total Cumulative bytes acknowledged and checkpointed to durable storage\n\
+         # TYPE velcrux_transfer_checkpoint_bytes_total counter\n\
+         velcrux_transfer_checkpoint_bytes_total {transfer_checkpoint_bytes}\n\n\
+         # HELP velcrux_transfer_recoveries_total Total transfer recovery operations executed\n\
+         # TYPE velcrux_transfer_recoveries_total counter\n\
+         velcrux_transfer_recoveries_total {transfer_recoveries}\n\n\
+         # HELP velcrux_wal_checkpoints_total Total SQLite Write-Ahead Logging (WAL) checkpoints executed\n\
+         # TYPE velcrux_wal_checkpoints_total counter\n\
+         velcrux_wal_checkpoints_total {wal_checkpoints}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

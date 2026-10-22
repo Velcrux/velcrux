@@ -199,6 +199,14 @@ pub struct ServerStats {
     pub direct_io_ring_bytes_total: AtomicU64,
     /// Total stalls encountered waiting for free or filled ring buffer slots (Option BS).
     pub direct_io_ring_stalls_total: AtomicU64,
+    /// Total transfer checkpoints committed to durable state store (Option BT).
+    pub transfer_checkpoints_total: AtomicU64,
+    /// Cumulative bytes acknowledged and checkpointed to durable storage (Option BT).
+    pub transfer_checkpoint_bytes_total: AtomicU64,
+    /// Total transfer recovery operations executed (Option BT).
+    pub transfer_recoveries_total: AtomicU64,
+    /// Total SQLite Write-Ahead Logging (WAL) checkpoints executed (Option BT).
+    pub wal_checkpoints_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -270,6 +278,10 @@ impl Default for ServerStats {
             direct_io_ring_transfers_total: AtomicU64::new(0),
             direct_io_ring_bytes_total: AtomicU64::new(0),
             direct_io_ring_stalls_total: AtomicU64::new(0),
+            transfer_checkpoints_total: AtomicU64::new(0),
+            transfer_checkpoint_bytes_total: AtomicU64::new(0),
+            transfer_recoveries_total: AtomicU64::new(0),
+            wal_checkpoints_total: AtomicU64::new(0),
         }
     }
 }

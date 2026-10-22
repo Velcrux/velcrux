@@ -2968,6 +2968,59 @@ velcrux direct-io benchmark --path /tmp/bench.bin --size 33554432
 velcrux direct-io benchmark --path /data/bench.bin --size 67108864 --slots 8 --slot-size 4194304 --json
 ```
 
+## 41. Persistent Transfer Checkpointing, SQLite WAL Management & Fast Recovery (ADR-036, Option BT)
+
+Velcrux implements a persistent transfer checkpointing engine with SQLite Write-Ahead Logging (WAL) and bounded chunk-completion bitmaps (`REQUIREMENTS.md` §68, §69, `ADR-036`). It allows interrupted transfers on multi-terabyte datasets to resume instantaneously without directory re-scans, while strictly controlling WAL file bloat and write amplification.
+
+### Architecture Highlights
+- **Instantaneous Resume**: Startup recovery interrogates the SQLite database and chunk bitmaps directly. File lengths and verified extents are confirmed in milliseconds without traversing destination directory trees.
+- **SQLite WAL Flushing**: Programmatic control over SQLite's Write-Ahead Log via `wal_checkpoint` (`truncate`, `passive`, `full`, `restart`) to prevent unbounded log page accumulation during high-throughput streams.
+- **Stale Checkpoint Pruning**: Automatic or operator-driven purging of obsolete completed or cancelled transfer rows and chunk bitmaps.
+
+### Global CLI Flags
+- `--checkpoint-interval <seconds>` (env: `VELCRUX_CHECKPOINT_INTERVAL`, default: `10`):
+  - Maximum elapsed duration between durable checkpoint commits.
+- `--checkpoint-bytes <bytes>` (env: `VELCRUX_CHECKPOINT_BYTES`, default: `268435456` / 256 MiB):
+  - Maximum unpersisted byte threshold between checkpoints.
+- `--wal-autocheckpoint <pages>` (env: `VELCRUX_WAL_AUTOCHECKPOINT`, default: `1000`):
+  - SQLite WAL auto-checkpoint page limit (~4 MiB).
+
+### Operational CLI Tools (`velcrux checkpoint`)
+
+```bash
+# Display all active resumable transfers, completion progress, and SQLite WAL status
+velcrux checkpoint status
+
+# Machine-readable status report for monitoring or automation
+velcrux checkpoint status --json
+
+# Inspect server-side checkpoint database
+velcrux checkpoint status --role server
+
+# Perform instantaneous recovery of all interrupted transfers without directory re-scans
+velcrux checkpoint recover
+
+# Verify and inspect single transfer recovery status by transfer ID
+velcrux checkpoint recover --transfer-id 01H7PZ28ZBN74C5K3X90123456
+
+# Explicitly flush and truncate the SQLite Write-Ahead Log
+velcrux checkpoint wal-flush --mode truncate
+
+# Opportunistic background WAL flush without reader/writer lock contention
+velcrux checkpoint wal-flush --mode passive
+
+# Prune completed and cancelled transfer checkpoints older than 7 days (default: 604800s)
+velcrux checkpoint prune --older-than-secs 604800
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics`:
+- `velcrux_transfer_checkpoints_total`: Cumulative transfer checkpoints committed to durable store.
+- `velcrux_transfer_checkpoint_bytes_total`: Cumulative bytes acknowledged and checkpointed.
+- `velcrux_transfer_recoveries_total`: Total transfer recovery operations executed.
+- `velcrux_wal_checkpoints_total`: Total SQLite WAL checkpoints executed.
+
 
 
 
