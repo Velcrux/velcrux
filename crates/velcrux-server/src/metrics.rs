@@ -147,6 +147,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let transfer_recoveries = stats.transfer_recoveries_total.load(Ordering::Relaxed);
     let wal_checkpoints = stats.wal_checkpoints_total.load(Ordering::Relaxed);
 
+    let qos_tokens_consumed = stats.qos_tokens_consumed_total.load(Ordering::Relaxed);
+    let qos_tokens_borrowed = stats.qos_tokens_borrowed_total.load(Ordering::Relaxed);
+    let qos_delays = stats.qos_delays_total.load(Ordering::Relaxed);
+    let qos_bytes_rt = stats.qos_realtime_bytes_total.load(Ordering::Relaxed);
+    let qos_bytes_crit = stats.qos_critical_bytes_total.load(Ordering::Relaxed);
+    let qos_bytes_def = stats.qos_default_bytes_total.load(Ordering::Relaxed);
+    let qos_bytes_bg = stats.qos_background_bytes_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -304,6 +312,21 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_wal_checkpoints_total Total SQLite Write-Ahead Logging (WAL) checkpoints executed\n\
          # TYPE velcrux_wal_checkpoints_total counter\n\
          velcrux_wal_checkpoints_total {wal_checkpoints}\n\n\
+         # HELP velcrux_qos_tokens_consumed_total Total QoS tokens and bytes consumed across all traffic classes\n\
+         # TYPE velcrux_qos_tokens_consumed_total counter\n\
+         velcrux_qos_tokens_consumed_total {qos_tokens_consumed}\n\n\
+         # HELP velcrux_qos_tokens_borrowed_total Total QoS tokens borrowed from idle spare link capacity\n\
+         # TYPE velcrux_qos_tokens_borrowed_total counter\n\
+         velcrux_qos_tokens_borrowed_total {qos_tokens_borrowed}\n\n\
+         # HELP velcrux_qos_delays_total Total QoS pacing and throttling delay events\n\
+         # TYPE velcrux_qos_delays_total counter\n\
+         velcrux_qos_delays_total {qos_delays}\n\n\
+         # HELP velcrux_qos_class_bytes_total Cumulative admitted bytes by QoS priority tier\n\
+         # TYPE velcrux_qos_class_bytes_total counter\n\
+         velcrux_qos_class_bytes_total{{class=\"realtime\"}} {qos_bytes_rt}\n\
+         velcrux_qos_class_bytes_total{{class=\"critical\"}} {qos_bytes_crit}\n\
+         velcrux_qos_class_bytes_total{{class=\"default\"}} {qos_bytes_def}\n\
+         velcrux_qos_class_bytes_total{{class=\"background\"}} {qos_bytes_bg}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

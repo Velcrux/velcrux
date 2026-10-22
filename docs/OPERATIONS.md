@@ -3021,6 +3021,57 @@ Exposed under `/metrics`:
 - `velcrux_transfer_recoveries_total`: Total transfer recovery operations executed.
 - `velcrux_wal_checkpoints_total`: Total SQLite WAL checkpoints executed.
 
+## 42. Hierarchical Token-Bucket (HTB) Quality of Service (QoS) & Flow Priority Multiplexer (ADR-037, Option BU)
+
+Velcrux incorporates a hierarchical fair-queueing and token-bucket Quality of Service (QoS) scheduler across concurrent transfers (`REQUIREMENTS.md` §28, §29, `ADR-037`). It guarantees minimum Committed Information Rates (CIR) for mission-critical and interactive traffic while dynamically borrowing spare capacity up to Peak Information Rate (PIR) ceilings.
+
+### Architecture Highlights
+- **Dual-Rate Token Bucket (`HtbTokenBucket`)**: Dedicated CIR and PIR token pools provide guaranteed bandwidth minimums and burst allowances without starvation.
+- **Priority Classes & Deficit Round-Robin**:
+  - `Realtime`: Strict preemptive drain for interactive commands, pings, and urgent metadata.
+  - `Critical`, `Default`, `Background`: Interleaved via 4:2:1 Weighted Round-Robin (WRR) to guarantee proportional fairness.
+- **Tenant Bandwidth Isolation**: Operators can bind custom CIR/PIR policies to specific tenant identifiers.
+
+### Global CLI Flags
+- `--qos-priority <realtime|critical|default|background>` (env: `VELCRUX_QOS_PRIORITY`, default: `default`):
+  - Assigns traffic classification tier to client commands and sync jobs.
+- `--qos-bandwidth <rate>` (env: `VELCRUX_QOS_BANDWIDTH`, default: `unlimited`):
+  - Root link bandwidth ceiling (e.g. `10Gbps`, `1Gbps`, `500Mbps`, or `unlimited`).
+
+### Operational CLI Tools (`velcrux qos`)
+
+```bash
+# Inspect bandwidth allocations, CIR percentages, and PIR ceilings
+velcrux qos inspect
+
+# Evaluate class allocations under a custom link speed (e.g. 1 Gbps)
+velcrux qos inspect --bandwidth 1Gbps
+
+# Machine-readable JSON allocation schema
+velcrux qos inspect --bandwidth 10Gbps --json
+
+# Run in-memory contention benchmark evaluating CIR guarantees and capacity borrowing
+velcrux qos benchmark --bandwidth 100Mbps --packets 100
+
+# Machine-readable benchmark report
+velcrux qos benchmark --bandwidth 1Gbps --packets 500 --json
+
+# Display current client QoS status and scheduling properties
+velcrux qos status
+
+# Inspect active client QoS configuration with custom priority
+velcrux --qos-priority critical --qos-bandwidth 2Gbps qos status --json
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics`:
+- `velcrux_qos_tokens_consumed_total`: Cumulative tokens / bytes admitted across all QoS classes.
+- `velcrux_qos_tokens_borrowed_total`: Cumulative tokens borrowed from idle spare link capacity.
+- `velcrux_qos_delays_total`: Total rate-throttling events requiring transmission delay.
+- `velcrux_qos_class_bytes_total{class="realtime|critical|default|background"}`: Bytes transmitted per QoS priority class.
+
+
 
 
 

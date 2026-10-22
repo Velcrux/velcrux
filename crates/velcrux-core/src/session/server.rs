@@ -207,6 +207,20 @@ pub struct ServerStats {
     pub transfer_recoveries_total: AtomicU64,
     /// Total SQLite Write-Ahead Logging (WAL) checkpoints executed (Option BT).
     pub wal_checkpoints_total: AtomicU64,
+    /// Total QoS tokens / bytes consumed across all priority classes (Option BU).
+    pub qos_tokens_consumed_total: AtomicU64,
+    /// Total QoS tokens borrowed from idle spare link capacity (Option BU).
+    pub qos_tokens_borrowed_total: AtomicU64,
+    /// Total QoS transmission throttling / pacing delay events (Option BU).
+    pub qos_delays_total: AtomicU64,
+    /// Admitted bytes for Realtime QoS traffic class (Option BU).
+    pub qos_realtime_bytes_total: AtomicU64,
+    /// Admitted bytes for Critical QoS traffic class (Option BU).
+    pub qos_critical_bytes_total: AtomicU64,
+    /// Admitted bytes for Default QoS traffic class (Option BU).
+    pub qos_default_bytes_total: AtomicU64,
+    /// Admitted bytes for Background QoS traffic class (Option BU).
+    pub qos_background_bytes_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -282,6 +296,13 @@ impl Default for ServerStats {
             transfer_checkpoint_bytes_total: AtomicU64::new(0),
             transfer_recoveries_total: AtomicU64::new(0),
             wal_checkpoints_total: AtomicU64::new(0),
+            qos_tokens_consumed_total: AtomicU64::new(0),
+            qos_tokens_borrowed_total: AtomicU64::new(0),
+            qos_delays_total: AtomicU64::new(0),
+            qos_realtime_bytes_total: AtomicU64::new(0),
+            qos_critical_bytes_total: AtomicU64::new(0),
+            qos_default_bytes_total: AtomicU64::new(0),
+            qos_background_bytes_total: AtomicU64::new(0),
         }
     }
 }

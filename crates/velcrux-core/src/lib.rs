@@ -74,10 +74,12 @@ pub use state::{
 };
 
 pub use scheduler::{
-    civil_time_from_timestamp, ActiveScheduleStatus, BandwidthRate, BandwidthSchedule,
-    BandwidthScheduleRule, DayMatcher, DayOfWeek, FairnessScheduler,
-    HierarchicalBandwidthAllocator, ParseBandwidthError, ParseScheduleError, PriorityClass,
-    ScheduledBandwidthLimiter, ScheduledItem, TimeWindow,
+    civil_time_from_timestamp, run_qos_benchmark, ActiveScheduleStatus, BandwidthRate,
+    BandwidthSchedule, BandwidthScheduleRule, DayMatcher, DayOfWeek, FairnessScheduler,
+    HierarchicalBandwidthAllocator, HierarchicalQosScheduler, HtbTokenBucket, ParseBandwidthError,
+    ParseScheduleError, PriorityClass, QosAdmission, QosBand, QosBenchmarkReport, QosClass,
+    QosFlowMultiplexer, QosScheduledItem, QosStats, ScheduledBandwidthLimiter, ScheduledItem,
+    TimeWindow,
 };
 pub use storage::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, AceFlags, AcePermissions,

@@ -4,6 +4,7 @@
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -293,6 +294,24 @@ struct Cli {
     )]
     wal_autocheckpoint: u32,
 
+    /// Quality of Service (QoS) flow priority tier: "realtime", "critical", "default", or "background" (Option BU).
+    #[arg(
+        long = "qos-priority",
+        env = "VELCRUX_QOS_PRIORITY",
+        default_value = "default",
+        global = true
+    )]
+    qos_priority: String,
+
+    /// QoS root link bandwidth capacity specification (e.g. "1Gbps", "100Mbps", or "unlimited") (Option BU).
+    #[arg(
+        long = "qos-bandwidth",
+        env = "VELCRUX_QOS_BANDWIDTH",
+        default_value = "unlimited",
+        global = true
+    )]
+    qos_bandwidth: String,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -525,6 +544,11 @@ enum Cmd {
     Checkpoint {
         #[command(subcommand)]
         sub: CheckpointSubCmd,
+    },
+    /// Hierarchical Token-Bucket Quality of Service (QoS) & Flow Priority Multiplexer (Option BU).
+    Qos {
+        #[command(subcommand)]
+        sub: QosSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -876,6 +900,37 @@ enum CheckpointSubCmd {
         /// State role: "client" (default) or "server".
         #[arg(long, default_value = "client")]
         role: String,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum QosSubCmd {
+    /// Inspect QoS bandwidth allocations, Committed Information Rates (CIR), and Deficit Round-Robin weights.
+    Inspect {
+        /// QoS root link bandwidth capacity to evaluate (e.g. "1Gbps", "100Mbps", or "unlimited").
+        #[arg(long, default_value = "unlimited")]
+        bandwidth: String,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute a simulated QoS contention benchmark evaluating CIR guarantees and capacity borrowing.
+    Benchmark {
+        /// QoS root link bandwidth capacity (e.g. "1Gbps", "100Mbps", or "unlimited").
+        #[arg(long, default_value = "1Gbps")]
+        bandwidth: String,
+        /// Number of simulated chunks/packets across priority tiers (default: 100).
+        #[arg(long, default_value = "100")]
+        packets: usize,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Display active QoS configuration and client priority tier status.
+    Status {
         /// Output in JSON format.
         #[arg(long)]
         json: bool,
@@ -2547,6 +2602,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Checkpoint { sub } => {
             run_checkpoint(&cli, sub).await?;
+        }
+        Cmd::Qos { sub } => {
+            run_qos(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -5657,6 +5715,205 @@ async fn run_checkpoint(cli: &Cli, sub: &CheckpointSubCmd) -> anyhow::Result<()>
                 println!("Log Pages in WAL:        {}", report.log_pages);
                 println!("Pages Moved to DB:       {}", report.checkpointed_pages);
                 println!("Duration:                {} µs", report.duration_micros);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_qos(cli: &Cli, sub: &QosSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        QosSubCmd::Inspect { bandwidth, json } => {
+            let bw_str = if bandwidth == "unlimited" && cli.qos_bandwidth != "unlimited" {
+                &cli.qos_bandwidth
+            } else {
+                bandwidth
+            };
+            let rate = bw_str
+                .parse::<velcrux_core::scheduler::fairness::BandwidthRate>()
+                .map_err(|e| anyhow::anyhow!("Invalid bandwidth '{bw_str}': {e}"))?;
+
+            let _scheduler = velcrux_core::scheduler::HierarchicalQosScheduler::new(rate);
+
+            #[derive(Serialize)]
+            struct QosClassAllocation {
+                class: String,
+                weight: u32,
+                cir_fraction: f64,
+                cir_bandwidth: String,
+                pir_ceiling: String,
+            }
+
+            let classes = [
+                velcrux_core::scheduler::QosClass::Realtime,
+                velcrux_core::scheduler::QosClass::Critical,
+                velcrux_core::scheduler::QosClass::Default,
+                velcrux_core::scheduler::QosClass::Background,
+            ];
+
+            let allocations: Vec<QosClassAllocation> = classes
+                .iter()
+                .map(|&c| {
+                    let cir_bps = if rate.bytes_per_sec() == 0 {
+                        0
+                    } else {
+                        (rate.bytes_per_sec() as f64 * c.default_cir_fraction()) as u64
+                    };
+                    let cir_rate =
+                        velcrux_core::scheduler::fairness::BandwidthRate::from_bytes_per_sec(
+                            cir_bps,
+                        );
+                    QosClassAllocation {
+                        class: c.as_str().to_string(),
+                        weight: c.weight(),
+                        cir_fraction: c.default_cir_fraction(),
+                        cir_bandwidth: cir_rate.to_string(),
+                        pir_ceiling: rate.to_string(),
+                    }
+                })
+                .collect();
+
+            #[derive(Serialize)]
+            struct QosInspectReport {
+                root_bandwidth: String,
+                allocations: Vec<QosClassAllocation>,
+            }
+
+            let report = QosInspectReport {
+                root_bandwidth: rate.to_string(),
+                allocations,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Hierarchical Token-Bucket (HTB) QoS Inspection ===");
+                println!("Root Bandwidth Ceiling:  {}", report.root_bandwidth);
+                println!("\nClass Allocations:");
+                println!(
+                    "  {:<12} {:<8} {:<14} {:<18} {:<18}",
+                    "CLASS", "WEIGHT", "CIR FRACTION", "GUARANTEED (CIR)", "PEAK CEILING (PIR)"
+                );
+                println!("  {}", "-".repeat(74));
+                for a in &report.allocations {
+                    let cir_pct = format!("{:.1}%", a.cir_fraction * 100.0);
+                    println!(
+                        "  {:<12} {:<8} {:<14} {:<18} {:<18}",
+                        a.class, a.weight, cir_pct, a.cir_bandwidth, a.pir_ceiling
+                    );
+                }
+            }
+            Ok(())
+        }
+        QosSubCmd::Benchmark {
+            bandwidth,
+            packets,
+            json,
+        } => {
+            let bw_str = if bandwidth == "1Gbps" && cli.qos_bandwidth != "unlimited" {
+                &cli.qos_bandwidth
+            } else {
+                bandwidth
+            };
+            let rate = bw_str
+                .parse::<velcrux_core::scheduler::fairness::BandwidthRate>()
+                .map_err(|e| anyhow::anyhow!("Invalid bandwidth '{bw_str}': {e}"))?;
+
+            let report = velcrux_core::scheduler::run_qos_benchmark(rate, *packets);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Hierarchical QoS Flow Contention Benchmark ===");
+                println!("Root Bandwidth:          {}", report.root_bandwidth);
+                println!(
+                    "Total Bytes Admitted:    {} ({})",
+                    report.total_bytes_admitted,
+                    format_bytes(report.total_bytes_admitted)
+                );
+                println!(
+                    "Total Bytes Borrowed:    {} ({})",
+                    report.total_bytes_borrowed,
+                    format_bytes(report.total_bytes_borrowed)
+                );
+                println!("Throttles Triggered:     {}", report.total_throttles);
+                println!("Duration:                {} ms", report.duration_ms);
+                println!("CIR Isolation Verified:  {}", report.cir_isolation_verified);
+                println!("\nPer-Class Distribution:");
+                println!(
+                    "  Realtime:   {} ({})",
+                    report.realtime_bytes,
+                    format_bytes(report.realtime_bytes)
+                );
+                println!(
+                    "  Critical:   {} ({})",
+                    report.critical_bytes,
+                    format_bytes(report.critical_bytes)
+                );
+                println!(
+                    "  Default:    {} ({})",
+                    report.default_bytes,
+                    format_bytes(report.default_bytes)
+                );
+                println!(
+                    "  Background: {} ({})",
+                    report.background_bytes,
+                    format_bytes(report.background_bytes)
+                );
+            }
+            Ok(())
+        }
+        QosSubCmd::Status { json } => {
+            let priority_str = &cli.qos_priority;
+            let class = velcrux_core::scheduler::QosClass::parse(priority_str)
+                .unwrap_or(velcrux_core::scheduler::QosClass::Default);
+            let bw_str = &cli.qos_bandwidth;
+            let rate = bw_str
+                .parse::<velcrux_core::scheduler::fairness::BandwidthRate>()
+                .unwrap_or(velcrux_core::scheduler::fairness::BandwidthRate::UNLIMITED);
+
+            let cir_bps = if rate.bytes_per_sec() == 0 {
+                0
+            } else {
+                (rate.bytes_per_sec() as f64 * class.default_cir_fraction()) as u64
+            };
+            let cir_rate =
+                velcrux_core::scheduler::fairness::BandwidthRate::from_bytes_per_sec(cir_bps);
+
+            #[derive(Serialize)]
+            struct QosStatusReport {
+                qos_priority: String,
+                weight: u32,
+                cir_fraction: f64,
+                cir_bandwidth: String,
+                root_bandwidth: String,
+                multiplexing: &'static str,
+            }
+
+            let report = QosStatusReport {
+                qos_priority: class.as_str().to_string(),
+                weight: class.weight(),
+                cir_fraction: class.default_cir_fraction(),
+                cir_bandwidth: cir_rate.to_string(),
+                root_bandwidth: rate.to_string(),
+                multiplexing: "Hierarchical Token-Bucket (HTB) + Deficit Round-Robin (DRR)",
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Active QoS & Flow Multiplexing Status ===");
+                println!("Priority Tier:           {}", report.qos_priority);
+                println!("Scheduling Weight:       {}", report.weight);
+                println!(
+                    "CIR Guaranteed Fraction: {:.1}%",
+                    report.cir_fraction * 100.0
+                );
+                println!("CIR Guaranteed Rate:     {}", report.cir_bandwidth);
+                println!("Root Bandwidth Ceiling:  {}", report.root_bandwidth);
+                println!("Multiplexing Mode:       {}", report.multiplexing);
             }
             Ok(())
         }

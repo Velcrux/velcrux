@@ -3,11 +3,16 @@
 #![forbid(unsafe_code)]
 
 pub mod fairness;
+pub mod qos;
 pub mod schedule;
 
 pub use fairness::{
     BandwidthRate, FairnessScheduler, HierarchicalBandwidthAllocator, ParseBandwidthError,
     PriorityClass, ScheduledItem, TokenBucket as SchedulerTokenBucket,
+};
+pub use qos::{
+    run_qos_benchmark, HierarchicalQosScheduler, HtbTokenBucket, QosAdmission, QosBand,
+    QosBenchmarkReport, QosClass, QosFlowMultiplexer, QosScheduledItem, QosStats,
 };
 pub use schedule::{
     civil_time_from_timestamp, ActiveScheduleStatus, BandwidthSchedule, BandwidthScheduleRule,
