@@ -231,6 +231,16 @@ pub struct ServerStats {
     pub cas_chunks_purged_total: AtomicU64,
     /// Total disk bytes permanently reclaimed via CAS compaction (Option BV).
     pub cas_bytes_reclaimed_total: AtomicU64,
+    /// Total active and healthy peers in the swarm mesh (Option BW).
+    pub swarm_peers_alive: AtomicU64,
+    /// Total bytes received cooperatively from swarm peer nodes (Option BW).
+    pub swarm_bytes_p2p_inbound: AtomicU64,
+    /// Total bytes served to peer nodes via swarm seeding (Option BW).
+    pub swarm_bytes_p2p_outbound: AtomicU64,
+    /// Total bytes offloaded from origin server via swarm P2P sharing (Option BW).
+    pub swarm_bytes_offloaded: AtomicU64,
+    /// Total corrupt or poisoned chunks received from peers and rejected (Option BW).
+    pub swarm_chunks_poisoned: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -318,6 +328,11 @@ impl Default for ServerStats {
             cas_chunks_resurrected_total: AtomicU64::new(0),
             cas_chunks_purged_total: AtomicU64::new(0),
             cas_bytes_reclaimed_total: AtomicU64::new(0),
+            swarm_peers_alive: AtomicU64::new(0),
+            swarm_bytes_p2p_inbound: AtomicU64::new(0),
+            swarm_bytes_p2p_outbound: AtomicU64::new(0),
+            swarm_bytes_offloaded: AtomicU64::new(0),
+            swarm_chunks_poisoned: AtomicU64::new(0),
         }
     }
 }

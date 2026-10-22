@@ -546,4 +546,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-036](adr/ADR-036-persistent-transfer-checkpointing-wal-recovery.md) | Persistent Transfer Checkpointing & WAL Recovery | Accepted | SQLite WAL control, instant resume without directory rescans, stale pruning |
 | [ADR-037](adr/ADR-037-hierarchical-token-bucket-qos-multiplexer.md) | Hierarchical Token-Bucket QoS & Flow Multiplexer | Accepted | Dual CIR/PIR bandwidth guarantees, capacity borrowing, and 4:2:1 DRR flow multiplexing |
 | [ADR-038](adr/ADR-038-cas-generational-gc-tombstoning-compaction.md) | CAS Generational GC, Tombstoning & Compaction Daemon | Accepted | Generational nursery lease, crash-safe tombstones, resurrection, and empty shard pruning |
+| [ADR-039](adr/ADR-039-distributed-gossip-swarm-p2p-engine.md) | Distributed Gossip-Based Swarm P2P Acceleration Engine | Accepted | SWIM-inspired epidemic gossip discovery, rarest-first chunk mesh, and Byzantine chunk poisoning defense |
 

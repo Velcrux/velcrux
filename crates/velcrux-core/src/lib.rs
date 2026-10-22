@@ -30,6 +30,7 @@ pub mod scheduler;
 pub mod session;
 pub mod state;
 pub mod storage;
+pub mod swarm;
 pub mod sync;
 pub mod telemetry;
 pub mod transfer;
@@ -100,6 +101,10 @@ pub use storage::{
     ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff, Staging, StagingGcReport, StorageBackend,
     VPath, VPathError, VfsAttr, VfsCacheStats, VfsDirEntry, VfsError, VfsFileType, VfsStatFs,
     VirtualMountEngine, XattrPolicy, XattrTransmuter, SNAPSHOT_CHUNK_SIZE, VFS_ROOT_INODE,
+};
+pub use swarm::{
+    run_swarm_benchmark, GossipDiscoveryEngine, GossipMessage, PeerState, SwarmBenchmarkReport,
+    SwarmChunkMesh, SwarmConfig, SwarmPeer, SwarmStats, SwarmStatusReport,
 };
 pub use sync::{
     compute_file_hash, execute_atomic_directory_sync, execute_dedup_sync, execute_delta_sync,

@@ -160,6 +160,11 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let cas_chunks_resurrected = stats.cas_chunks_resurrected_total.load(Ordering::Relaxed);
     let cas_chunks_purged = stats.cas_chunks_purged_total.load(Ordering::Relaxed);
     let cas_bytes_reclaimed = stats.cas_bytes_reclaimed_total.load(Ordering::Relaxed);
+    let swarm_peers_alive = stats.swarm_peers_alive.load(Ordering::Relaxed);
+    let swarm_bytes_inbound = stats.swarm_bytes_p2p_inbound.load(Ordering::Relaxed);
+    let swarm_bytes_outbound = stats.swarm_bytes_p2p_outbound.load(Ordering::Relaxed);
+    let swarm_bytes_offloaded = stats.swarm_bytes_offloaded.load(Ordering::Relaxed);
+    let swarm_chunks_poisoned = stats.swarm_chunks_poisoned.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -348,6 +353,19 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_cas_bytes_reclaimed_total Total disk storage bytes reclaimed via CAS compaction\n\
          # TYPE velcrux_cas_bytes_reclaimed_total counter\n\
          velcrux_cas_bytes_reclaimed_total {cas_bytes_reclaimed}\n\n\
+         # HELP velcrux_swarm_peers_active Total active and healthy peers participating in the swarm mesh\n\
+         # TYPE velcrux_swarm_peers_active gauge\n\
+         velcrux_swarm_peers_active {swarm_peers_alive}\n\n\
+         # HELP velcrux_swarm_bytes_transferred_total Total bytes transferred cooperatively via swarm peer-to-peer sharing\n\
+         # TYPE velcrux_swarm_bytes_transferred_total counter\n\
+         velcrux_swarm_bytes_transferred_total{{direction=\"inbound\"}} {swarm_bytes_inbound}\n\
+         velcrux_swarm_bytes_transferred_total{{direction=\"outbound\"}} {swarm_bytes_outbound}\n\n\
+         # HELP velcrux_swarm_offloaded_bytes_total Total server egress bytes offloaded via swarm P2P sharing\n\
+         # TYPE velcrux_swarm_offloaded_bytes_total counter\n\
+         velcrux_swarm_offloaded_bytes_total {swarm_bytes_offloaded}\n\n\
+         # HELP velcrux_swarm_chunks_poisoned_rejected_total Total poisoned or corrupt chunks rejected and peers banned\n\
+         # TYPE velcrux_swarm_chunks_poisoned_rejected_total counter\n\
+         velcrux_swarm_chunks_poisoned_rejected_total {swarm_chunks_poisoned}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\
