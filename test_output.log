@@ -1,0 +1,1793 @@
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m find-msvc-tools v0.1.12
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m zerocopy v0.8.56
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m pkg-config v0.3.34
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m syn v3.0.4
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m cc v1.4.5
+[1m[92m   Compiling[0m getrandom v0.2.17
+[1m[92m   Compiling[0m ring v0.17.14
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m thiserror v1.0.69
+[1m[92m   Compiling[0m smallvec v1.16.0
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m num-conv v0.1.0
+[1m[92m   Compiling[0m powerfmt v0.2.0
+[1m[92m   Compiling[0m time-core v0.1.2
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m time-macros v0.2.18
+[1m[92m   Compiling[0m thiserror-impl v1.0.69
+[1m[92m   Compiling[0m deranged v0.3.11
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m minimal-lexical v0.2.1
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m tinyvec_macros v0.1.1
+[1m[92m   Compiling[0m tinyvec v1.13.2
+[1m[92m   Compiling[0m nom v7.1.3
+[1m[92m   Compiling[0m time v0.3.36
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m log v0.4.34
+[1m[92m   Compiling[0m parking_lot_core v0.9.12
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m asn1-rs-derive v0.5.1
+[1m[92m   Compiling[0m rusticata-macros v4.1.0
+[1m[92m   Compiling[0m asn1-rs-impl v0.2.0
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m displaydoc v0.2.7
+[1m[92m   Compiling[0m zstd-sys v2.1.0+zstd.1.5.7
+[1m[92m   Compiling[0m ahash v0.8.12
+[1m[92m   Compiling[0m scopeguard v1.2.0
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m asn1-rs v0.6.2
+[1m[92m   Compiling[0m lock_api v0.4.14
+[1m[92m   Compiling[0m num-integer v0.1.47
+[1m[92m   Compiling[0m rand_core v0.6.4
+[1m[92m   Compiling[0m ring v0.16.20
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m rustls v0.21.12
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m vcpkg v0.2.15
+[1m[92m   Compiling[0m rustix v1.1.4
+[1m[92m   Compiling[0m oid-registry v0.7.1
+[1m[92m   Compiling[0m base64 v0.21.7
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m libsqlite3-sys v0.28.0
+[1m[92m   Compiling[0m rustls-pemfile v1.0.4
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m rand_chacha v0.3.1
+[1m[92m   Compiling[0m num-bigint v0.4.8
+[1m[92m   Compiling[0m parking_lot v0.12.5
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m tokio-macros v2.7.2
+[1m[92m   Compiling[0m mio v1.2.3
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m openssl-probe v0.1.6
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m spin v0.5.2
+[1m[92m   Compiling[0m zstd-safe v7.3.0
+[1m[92m   Compiling[0m linux-raw-sys v0.12.1
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m untrusted v0.7.1
+[1m[92m   Compiling[0m indexmap v2.14.1
+[1m[92m   Compiling[0m rustls-native-certs v0.6.3
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m hashbrown v0.14.5
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m der-parser v9.0.0
+[1m[92m   Compiling[0m rand v0.8.8
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m toml_datetime v0.6.11
+[1m[92m   Compiling[0m serde_spanned v0.6.9
+[1m[92m   Compiling[0m blake3 v1.8.7
+[1m[92m   Compiling[0m socket2 v0.5.10
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m rustc-hash v1.1.0
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m rustls-webpki v0.101.7
+[1m[92m   Compiling[0m sct v0.7.1
+[1m[92m   Compiling[0m winnow v0.7.15
+[1m[92m   Compiling[0m toml_write v0.1.2
+[1m[92m   Compiling[0m regex-automata v0.4.18
+[1m[92m   Compiling[0m x509-parser v0.16.0
+[1m[92m   Compiling[0m toml_edit v0.22.27
+[1m[92m   Compiling[0m quinn-proto v0.10.6
+[1m[92m   Compiling[0m quinn-udp v0.4.1
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m hashlink v0.9.1
+[1m[92m   Compiling[0m constant_time_eq v0.4.2
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m arrayvec v0.7.8
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m cpufeatures v0.3.1
+[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[92m   Compiling[0m rusqlite v0.31.0
+[1m[92m   Compiling[0m ulid v1.2.1
+[1m[92m   Compiling[0m quinn v0.10.2
+[1m[92m   Compiling[0m zstd v0.13.3
+[1m[92m   Compiling[0m toml v0.8.23
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m fs4 v1.1.0
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m tracing-serde v0.2.0
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m async-trait v0.1.92
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m pem v3.0.6
+[1m[92m   Compiling[0m velcrux-core v0.1.0 (/home/runner/work/velcrux/velcrux/crates/velcrux-core)
+[1m[92m   Compiling[0m yasna v0.5.2
+[1m[92m   Compiling[0m fastrand v2.5.0
+[1m[92m   Compiling[0m tempfile v3.27.0
+[1m[92m   Compiling[0m rcgen v0.13.2
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m clap_derive v4.6.4
+[1m[92m   Compiling[0m clap_builder v4.6.6
+[1m[92m   Compiling[0m unicode-joining-type v1.0.0
+[1m[92m   Compiling[0m idna_mapping v1.1.0
+[1m[92m   Compiling[0m unicode-normalization v0.1.25
+[1m[92m   Compiling[0m unicode-bidi v0.3.18
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m clap v4.6.6
+[1m[92m   Compiling[0m clap_complete v4.6.10
+[1m[92m   Compiling[0m idna_adapter v1.1.0
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m velcrux-client v0.1.0 (/home/runner/work/velcrux/velcrux/crates/velcrux-client)
+[1m[92m   Compiling[0m velcrux-server v0.1.0 (/home/runner/work/velcrux/velcrux/crates/velcrux-server)
+[1m[33mwarning[0m[1m: unused import: `QuicTransport`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:23:52
+   [1m[94m|[0m
+[1m[94m23[0m [1m[94m|[0m     ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,
+   [1m[94m|[0m                                                    [1m[33m^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: function `wrap_64` is never used[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:63:4
+   [1m[94m|[0m
+[1m[94m63[0m [1m[94m|[0m fn wrap_64(s: &str) -> Vec<String> {
+   [1m[94m|[0m    [1m[33m^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: field `key_der` is never read[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/hello_roundtrip.rs:75:5
+   [1m[94m|[0m
+[1m[94m73[0m [1m[94m|[0m struct DevCa {
+   [1m[94m|[0m        [1m[94m-----[0m [1m[94mfield in this struct[0m
+[1m[94m74[0m [1m[94m|[0m     cert_pem: String,
+[1m[94m75[0m [1m[94m|[0m     key_der: Vec<u8>,
+   [1m[94m|[0m     [1m[33m^^^^^^^[0m
+
+[1m[33mwarning[0m: `velcrux-core` (test "hello_roundtrip") generated 3 warnings (run `cargo fix --test "hello_roundtrip" -p velcrux-core` to apply 1 suggestion)
+[1m[33mwarning[0m[1m: unused import: `std::path::PathBuf`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m2_roundtrip.rs:25:5
+   [1m[94m|[0m
+[1m[94m25[0m [1m[94m|[0m use std::path::PathBuf;
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `velcrux-core` (test "m2_roundtrip") generated 1 warning (run `cargo fix --test "m2_roundtrip" -p velcrux-core` to apply 1 suggestion)
+[1m[33mwarning[0m[1m: unused import: `tokio::time::timeout`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m3_resume.rs:29:5
+   [1m[94m|[0m
+[1m[94m29[0m [1m[94m|[0m use tokio::time::timeout;
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unused import: `Bye as ByeMsg`[0m
+  [1m[94m--> [0mcrates/velcrux-core/tests/m3_resume.rs:38:5
+   [1m[94m|[0m
+[1m[94m38[0m [1m[94m|[0m     Bye as ByeMsg, Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message,
+   [1m[94m|[0m     [1m[33m^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `velcrux-core` (test "m3_resume") generated 2 warnings (run `cargo fix --test "m3_resume" -p velcrux-core` to apply 2 suggestions)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 1m 54s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/velcrux_client-ac00733c381c2378)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/velcrux-d9392f01aeb0ed6c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/cli_attestation.rs (target/debug/deps/cli_attestation-1efb4b6f61760df6)
+
+running 4 tests
+test test_cli_attest_keygen_and_inspect ... ok
+test test_cli_sync_with_attestation_signing_and_verification ... ok
+test test_cli_attest_untrusted_signer_rejection ... ok
+test test_cli_attest_sign_and_verify_lifecycle ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+[1m[92m     Running[0m tests/cli_bdp.rs (target/debug/deps/cli_bdp-9f7bd4e5d1e96edf)
+
+running 4 tests
+test test_cli_bdp_simulate_conservative_decay ... ok
+test test_cli_sync_with_bdp_tuning_flags ... ok
+test test_cli_bdp_inspect_text_and_json ... ok
+test test_cli_bdp_simulate_transatlantic ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/cli_cas_gc.rs (target/debug/deps/cli_cas_gc-e5b70a6e506f3ac7)
+
+running 4 tests
+test test_cli_cas_status_text_and_json ... ok
+test test_generational_manager_sweep_lifecycle ... ok
+test test_cli_cas_purge_expired_tombstones ... ok
+test test_cli_cas_gc_and_resurrect ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+[1m[92m     Running[0m tests/cli_chaos.rs (target/debug/deps/cli_chaos-49d7e68d51647c0e)
+
+running 6 tests
+test test_byzantine_corruption_stress_verification ... ok
+test test_cli_chaos_profile_list_and_single ... ok
+test test_gilbert_elliott_burst_loss_clustering ... ok
+test test_cli_chaos_status_text_and_json ... ok
+test test_cli_chaos_inject_text_and_json ... ok
+test test_cli_chaos_benchmark_simulation ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_checkpoint_recovery.rs (target/debug/deps/cli_checkpoint_recovery-d0291a6e864f962b)
+
+running 4 tests
+test test_cli_checkpoint_wal_flush_modes ... ok
+test test_cli_checkpoint_prune_stale ... ok
+test test_cli_checkpoint_recover_instantaneous ... ok
+test test_cli_checkpoint_status_text_and_json ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+
+[1m[92m     Running[0m tests/cli_cluster.rs (target/debug/deps/cli_cluster-f649cd770ed71ae4)
+
+running 5 tests
+test test_cli_cluster_rebalance_json ... ok
+test test_cli_cluster_custom_nodes_and_weak_consistency ... ok
+test test_cli_cluster_rebalance ... ok
+test test_cli_cluster_status_json ... ok
+test test_cli_cluster_status_table ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+[1m[92m     Running[0m tests/cli_dedup.rs (target/debug/deps/cli_dedup-e573cdb5e7dfacb5)
+
+running 1 test
+[2m2026-10-24T17:46:21.642479Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m connecting [3maddr[0m[2m=[0m127.0.0.1:41798 [3msni[0m[2m=[0mlocalhost [3mpath[0m[2m=[0m"/file_a.bin"
+[2m2026-10-24T17:46:21.645366Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-24T17:46:21.645435Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-24T17:46:21.646845Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-24T17:46:21.646882Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-24T17:46:21.647539Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-24T17:46:21.647560Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mtestclient
+[2m2026-10-24T17:46:21.647573Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m HELLO_ACK [3mversion[0m[2m=[0m1
+[01M5QGAMJ8HGDX0D4HETN0G22H] 512.00 KB / 512.00 KB (100.0%) — 106.74 MB/s
+transfer_id: 01M5QGAMJ8HGDX0D4HETN0G22H
+upload: committed 524288 bytes (transferred 524288 bytes); server hash matches: true
+[2m2026-10-24T17:46:25.479172Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m connecting [3maddr[0m[2m=[0m127.0.0.1:41798 [3msni[0m[2m=[0mlocalhost [3mpath[0m[2m=[0m"/file_b.bin"
+[2m2026-10-24T17:46:25.481782Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-24T17:46:25.481838Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-24T17:46:25.483060Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-24T17:46:25.483096Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-24T17:46:25.483619Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-24T17:46:25.483642Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mtestclient
+[2m2026-10-24T17:46:25.483652Z[0m [32m INFO[0m [2mvelcrux[0m[2m:[0m HELLO_ACK [3mversion[0m[2m=[0m1
+[01M5QGAQTCGHV35KHHK2YN0EVR] 512.00 KB / 512.00 KB (100.0%) — 87.41 MB/s
+transfer_id: 01M5QGAQTCGHV35KHHK2YN0EVR
+download: committed to "/tmp/.tmplIOUUh/downloaded_file_b.bin", hash 0000000000000000000000000000000000000000000000000000000000000000
+test test_network_chunk_store_deduplication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.13s
+
+[1m[92m     Running[0m tests/cli_dedup_defense.rs (target/debug/deps/cli_dedup_defense-6a3e600d611865f0)
+
+running 2 tests
+test test_cli_dedup_status_table_and_json ... ok
+test test_cli_dedup_verify_quarantine_and_purge ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+[1m[92m     Running[0m tests/cli_delta.rs (target/debug/deps/cli_delta-f06eec080eb3c6c4)
+
+running 2 tests
+test test_delta_download_transfers_only_delta ... ok
+test test_delta_upload_transfers_only_delta ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+[1m[92m     Running[0m tests/cli_delta_dict.rs (target/debug/deps/cli_delta_dict-6a9ce6e1cdcd91c5)
+
+running 4 tests
+test test_cli_sync_delta_dict_off ... ok
+test test_cli_sync_delta_dict_aggressive ... ok
+test test_cli_sync_delta_dict_compression ... ok
+test test_cli_delta_slice_test_command ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_deployment_packaging.rs (target/debug/deps/cli_deployment_packaging-39f8437d45d825b2)
+
+running 6 tests
+test test_dockerfile_structure ... ok
+test test_launchd_plist_structure ... ok
+test test_kubernetes_manifest_structure ... ok
+Wrote systemd configuration to test test_systemd_server_unit_structure ... /tmp/.tmp2k35Kr/sub/velcruxd.serviceok
+
+test test_systemd_client_worker_unit_structure ... ok
+test test_execute_package_target_writes_file ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/cli_dict.rs (target/debug/deps/cli_dict-627f619193f301cc)
+
+running 2 tests
+test test_cli_dict_json_mode ... ok
+test test_cli_dict_lifecycle_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+[1m[92m     Running[0m tests/cli_direct_io_ring.rs (target/debug/deps/cli_direct_io_ring-25d2cda5d785afbd)
+
+running 4 tests
+test test_cli_direct_io_inspect_text_and_json ... ok
+test test_cli_direct_io_benchmark_roundtrip ... ok
+test test_cli_direct_io_unaligned_tail_truncation_benchmark ... ok
+test test_cli_direct_io_custom_ring_slots_and_sizes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+[1m[92m     Running[0m tests/cli_e2e.rs (target/debug/deps/cli_e2e-5d7bbcfc0851205d)
+
+running 2 tests
+server state_store.get_transfer for 01M5QGAR8SBK8DB65BRYR6MVS0: Ok(TransferRecord { transfer_id: TransferId(01M5QGAR8SBK8DB65BRYR6MVS0), idempotency_key: "01M5QGAR8SQ1X4YVDAMEQ4398E", role: Server, direction: Upload, status: Committed, remote_path: "data/uploaded.bin", local_path: "", file_size: 1048618, file_hash: Hash(4b6b662c35713662c54aeccafcd44b2e8ee161b65bd011348aee3528cf833701), verified_up_to: 1048618, last_checkpoint_ms: 1792863985972, bytes_completed: 1048618, staging_relpath: "01M5QGAR8SBK8DB65BRYR6MVS0/data/uploaded.bin", created_ms: 1792863985945, updated_ms: 1792863985975 })
+test test_client_config_file_cli ... ok
+test test_cli_e2e_full_flow ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+[1m[92m     Running[0m tests/cli_fec.rs (target/debug/deps/cli_fec-078786214e7a55ba)
+
+running 5 tests
+test test_cli_fec_status_human ... ok
+test test_cli_fec_status_json ... ok
+test test_cli_fec_global_flag_help ... ok
+test test_cli_fec_test_simulation_human ... ok
+test test_cli_fec_test_simulation_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_geo.rs (target/debug/deps/cli_geo-d5c5dd27a26c3f80)
+
+running 5 tests
+test test_cli_geo_status_table ... ok
+test test_cli_geo_sync_json ... ok
+test test_cli_geo_status_json ... ok
+test test_cli_geo_status_custom_regions_and_policy ... ok
+test test_cli_geo_sync_table ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/cli_lock.rs (target/debug/deps/cli_lock-7f188bfbab02968b)
+
+running 2 tests
+test test_cli_lock_json_mode_and_shared_locks ... ok
+test test_cli_lock_lifecycle_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+[1m[92m     Running[0m tests/cli_mount.rs (target/debug/deps/cli_mount-b5698c37b8f57b58)
+
+running 2 tests
+test test_cli_mount_json_mode_and_unmount_command ... ok
+test test_cli_mount_attach_list_status_detach ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+[1m[92m     Running[0m tests/cli_multicloud.rs (target/debug/deps/cli_multicloud-046096b1c767fab1)
+
+running 3 tests
+test test_cli_multicloud_upload_download_url_routing ... ok
+test test_cli_gcs_put_stat_ls_get_delete ... ok
+test test_cli_azure_put_stat_ls_get_delete ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+[1m[92m     Running[0m tests/cli_multipath.rs (target/debug/deps/cli_multipath-ec795691a12efec3)
+
+running 3 tests
+test test_cli_multipath_json_output ... ok
+test test_cli_multipath_status_table ... ok
+test test_cli_multipath_policies_validation ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_parallel.rs (target/debug/deps/cli_parallel-4ffe75977a367f28)
+
+running 1 test
+test test_cli_multi_stream_parallel_transfer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+[1m[92m     Running[0m tests/cli_plan.rs (target/debug/deps/cli_plan-79a95e77b4737e55)
+
+running 4 tests
+test test_cli_sync_exclude_and_delete_excluded ... ok
+test test_cli_sync_delete_before ... ok
+test test_cli_plan_subcommand_display_and_json ... ok
+test test_cli_sync_delete_guardrails_abort_and_force ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_profiler.rs (target/debug/deps/cli_profiler-1bc7266aaae0e5a8)
+
+running 4 tests
+test test_cli_profile_fixed_chunk_mode ... ok
+test test_cli_profile_help ... ok
+test test_cli_profile_execution_json ... ok
+test test_cli_profile_execution_ascii ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/cli_qos_scheduler.rs (target/debug/deps/cli_qos_scheduler-f490cd186c1310a6)
+
+running 5 tests
+test test_flow_multiplexer_strict_priority_and_wrr ... ok
+test test_scheduler_borrowing_and_isolation ... ok
+test test_cli_qos_benchmark_text_and_json ... ok
+test test_cli_qos_inspect_text_and_json ... ok
+test test_cli_qos_status_flags_and_json ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/cli_ratelimit.rs (target/debug/deps/cli_ratelimit-b8ff0744edabd9b7)
+
+running 1 test
+test test_cli_bandwidth_rate_limiting ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.04s
+
+[1m[92m     Running[0m tests/cli_s3.rs (target/debug/deps/cli_s3-a52c1d9cffca991c)
+
+running 2 tests
+test test_cli_s3_sync_bidirectional ... ok
+test test_cli_s3_put_stat_ls_get_delete ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+[1m[92m     Running[0m tests/cli_schedule.rs (target/debug/deps/cli_schedule-50ed8e4476d9bec6)
+
+running 7 tests
+test test_cli_schedule_file_loading ... ok
+test test_cli_schedule_global_flag ... ok
+test test_cli_schedule_eval_human ... ok
+test test_cli_schedule_overnight_window ... ok
+test test_cli_schedule_eval_json_business_vs_offpeak ... ok
+test test_cli_schedule_inspect_json ... ok
+test test_cli_schedule_inspect_human ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_scrub.rs (target/debug/deps/cli_scrub-7afcdce5d038ecb2)
+
+running 2 tests
+test test_cli_scrub_repair_and_json_mode ... ok
+test test_cli_scrub_verify_and_quarantine_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+[1m[92m     Running[0m tests/cli_snapshot.rs (target/debug/deps/cli_snapshot-1e49ddd7c6a99396)
+
+running 2 tests
+test test_cli_snapshot_json ... ok
+test test_cli_snapshot_lifecycle_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+[1m[92m     Running[0m tests/cli_stream.rs (target/debug/deps/cli_stream-90d5db9c03bf4814)
+
+running 1 test
+test test_cli_streaming_pipelines_roundtrip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+[1m[92m     Running[0m tests/cli_swarm_p2p.rs (target/debug/deps/cli_swarm_p2p-6ca44d1161acabf6)
+
+running 6 tests
+test test_cli_swarm_benchmark_text_and_json ... ok
+test test_gossip_swim_incarnation_refutation ... ok
+test test_swarm_rarest_first_scheduling_and_byzantine_defense ... ok
+test test_cli_swarm_status_text_and_json ... ok
+test test_cli_swarm_advertise_file_and_dir ... ok
+test test_cli_swarm_peers_text_and_json ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_sync.rs (target/debug/deps/cli_sync-502cbd810e66b24d)
+
+running 11 tests
+test test_cli_bind_flags ... ok
+test test_cli_batch_small_files_flags ... ok
+test test_cli_direct_io_flags ... ok
+test test_cli_sync_cdc_and_dedup ... ok
+--- CLI Dry-Run Output ---
+========================================================================================
+                   VELCRUX TRANSFER PLAN (DRY-RUN EXECUTION PREVIEW)                   
+========================================================================================
+Source Directory     : /tmp/.tmp8jtQqR/source
+Destination Directory: /tmp/.tmp8jtQqR/destination
+Deletion Policy      : None (safe default, preserves destination)
+----------------------------------------------------------------------------------------
+Files total:                        3
+Files unchanged:                    1
+Files modified:                     1
+Files added:                        1
+Files deleted:                      1
+----------------------------------------------------------------------------------------
+Total source data:               47 B
+Data already present:            14 B
+Data to transfer:                33 B
+Estimated reduction:            29.8%
+========================================================================================
+NOTE: Running in dry-run mode. Destination data was NOT modified.
+
+Batched: 2 small files in 1 streaming containers (1 roundtrips saved)
+
+test test_cli_sync_dry_run ... ok
+test test_cli_network_sync_download_and_json ... ok
+test test_cli_sync_mode_flags ... ok
+test test_cli_priority_and_concurrency_flags ... ok
+test test_cli_sync_full_execute_and_delete_modes ... ok
+test test_cli_sync_posix_metadata_and_symlinks ... ok
+test test_cli_network_sync_dry_run_and_upload ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+[1m[92m     Running[0m tests/cli_transaction.rs (target/debug/deps/cli_transaction-976d3d0395f3bce9)
+
+running 4 tests
+test test_cli_tx_recover_clean ... ok
+test test_cli_sync_atomic_success_and_json ... ok
+test test_cli_tx_rollback_workflow ... ok
+test test_cli_tx_list_and_show ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+[1m[92m     Running[0m tests/cli_watch.rs (target/debug/deps/cli_watch-c2e13ae4c880ec14)
+
+running 3 tests
+test test_cli_watch_bounded_batches ... ok
+test test_cli_watch_json_output ... ok
+test test_cli_sync_with_watch_flag ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+[1m[92m     Running[0m tests/cli_webhook.rs (target/debug/deps/cli_webhook-b41bd0e835cd5ea2)
+
+running 5 tests
+test test_cli_webhook_test_json ... ok
+test test_cli_webhook_list_json ... ok
+test test_cli_webhook_list_table ... ok
+test test_cli_webhook_test_table ... ok
+test test_cli_webhook_dlq_operations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/cli_xattr_transmute.rs (target/debug/deps/cli_xattr_transmute-34c9198ed2e352a0)
+
+running 5 tests
+test test_engine_cross_platform_acl_transmutation ... ok
+test test_reconciliation_diff_recognizes_transmuted_equality ... ok
+test test_cli_sync_xattr_policy_strict ... ok
+test test_cli_sync_xattr_policy_strip ... ok
+test test_cli_sync_xattr_transmute_linux_to_macos ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/velcrux_core-55d55794162c3464)
+
+running 383 tests
+test auth::attestation::tests::test_key_generation_and_debug_redaction ... ok
+test auth::crl::tests::test_crl_pem_der_parsing_with_rcgen ... ok
+test auth::crl::tests::test_crl_store_manual_serials ... ok
+test auth::attestation::tests::test_attestation_signature_verification_and_tamper_detection ... ok
+test auth::pubkey::tests::test_authorized_keys_parsing_and_authentication ... ok
+test auth::attestation::tests::test_pem_save_and_load_roundtrip ... ok
+test auth::tests::component_boundary_matching ... ok
+test auth::tests::cross_identity_isolation ... ok
+test auth::tests::admin_does_not_imply_transfer_perms ... ok
+test auth::pubkey::tests::test_channel_bound_auth_token_roundtrip ... ok
+test auth::tests::deletion_policy_parsing ... ok
+test auth::tests::granted_permission_allows ... ok
+test auth::tests::deny_by_default ... ok
+test auth::tests::granted_permissions_empty_unknown ... ok
+test auth::tests::granted_permissions_union ... ok
+test auth::tests::longest_prefix_wins ... ok
+test auth::tests::mtls_authenticator_passes_through ... ok
+test auth::tests::missing_permission_denies ... ok
+test auth::tests::deletion_limiter_enforces_sliding_window ... ok
+test auth::tests::path_validation_rejects_absolute ... ok
+test auth::tests::role_permissions_structure ... ok
+test auth::tests::path_validation_rejects_traversal ... ok
+test auth::tests::role_parsing_from_str ... ok
+test auth::tests::sync_delete_requires_sync_delete_permission ... ok
+test auth::tests::toml_grant_with_role_and_sync_delete ... ok
+test auth::tests::toml_invalid_grant_path_fails ... ok
+test chaos::tests::test_blackhole_partition ... ok
+test auth::tests::toml_unknown_permission_fails ... ok
+test chaos::tests::test_byzantine_corruption_and_hash_failure ... ok
+test auth::tests::whole_root_grant ... ok
+test chaos::tests::test_gilbert_elliott_burst_loss ... ok
+test chunking::fastcdc::tests::test_gear_64_deterministic ... ok
+test chunking::fastcdc::tests::test_fastcdc_exact_reconstruction ... ok
+test chaos::tests::test_chaos_benchmark_simulation ... ok
+test chunking::pipeline::tests::test_process_slice_reproduces_input ... ok
+test chunking::tests::chunk_engine_reader_streaming ... ok
+test chunking::pipeline::tests::test_stream_reader_pipeline ... ok
+test chunking::tests::boundary_stability_under_prefix_insertion ... ok
+test chunking::tests::create_chunker_factory ... ok
+test chunking::tests::double_finish_is_an_error ... ok
+test chunking::tests::empty_input_yields_zero_chunks ... ok
+test chunking::tests::empty_input_yields_zero_chunks_fixed ... ok
+test chunking::tests::fixed_chunker_arbitrary_buffer_slicing ... ok
+test chunking::tests::gear_table_is_a_permutation ... ok
+test chunking::tests::params_fixed_constructor_and_helpers ... ok
+test chunking::tests::params_validation ... ok
+test chunking::tests::push_after_finish_is_an_error ... ok
+test chunking::tests::reuse_stats_calculation ... ok
+test auth::attestation::tests::test_end_to_end_directory_attestation_lifecycle ... ok
+test chunking::tests::rolling_chunker_respects_min ... ok
+test chunking::tests::test_chunk_reader_sparse_hole_detection ... ok
+test chunking::tests::test_is_all_zeros ... ok
+test crypto::chunk_aead::tests::test_aes256_gcm_roundtrip ... ok
+test crypto::chunk_aead::tests::test_chacha20_poly1305_roundtrip ... ok
+test crypto::chunk_aead::tests::test_derive_transfer_key ... ok
+test chunking::tests::concatenation_reproduces_input_rolling ... ok
+test crypto::chunk_aead::tests::test_tamper_detection_aad_mismatch_rejection ... ok
+test crypto::chunk_aead::tests::test_tamper_detection_in_ciphertext ... ok
+test crypto::chunk_aead::tests::test_tamper_detection_in_nonce ... ok
+test manifest::codec::tests::directory_entry_roundtrip ... ok
+test manifest::codec::tests::file_entry_roundtrip ... ok
+test manifest::codec::tests::file_entry_xattrs_roundtrip ... ok
+test manifest::codec::tests::hardlink_entry_roundtrip ... ok
+test manifest::codec::tests::reject_traversal_path ... ok
+test manifest::codec::tests::symlink_entry_roundtrip ... ok
+test manifest::tests::batch_decoder_roundtrip ... ok
+test manifest::tests::tampered_manifest_hash_is_rejected ... ok
+test chunking::tests::concatenation_reproduces_input_fixed ... ok
+test protocol::capabilities::tests::intersect_basic ... ok
+test protocol::capabilities::tests::intersection_must_have_blake3 ... ok
+test protocol::capabilities::tests::intersection_must_have_chunking ... ok
+test protocol::capabilities::tests::reserved_bits_masked_on_wire ... ok
+test protocol::compression::tests::test_adaptive_selector_backoff_cooldown ... ok
+test protocol::compression::tests::test_adaptive_selector_compressible_stream ... ok
+test protocol::compression::tests::test_adaptive_selector_high_entropy_bypass ... ok
+test protocol::compression::tests::test_compress_if_beneficial ... ok
+test protocol::compression::tests::test_compression_roundtrip ... ok
+test protocol::compression::tests::test_decompression_bomb_ratio_limit ... ok
+test protocol::compression::tests::test_decompression_bomb_size_limit ... ok
+test protocol::compression::tests::test_entropy_tier_classification ... ok
+test protocol::compression::tests::test_invalid_and_corrupt_payload ... ok
+test protocol::compression::tests::test_shannon_entropy_calculation ... ok
+test protocol::error::tests::detail_is_truncated ... ok
+test protocol::error::tests::not_found_and_denied_share_detail ... ok
+test protocol::error::tests::retryability_table ... ok
+test protocol::error::tests::roundtrip_codes ... ok
+test protocol::error::tests::unknown_code_falls_back ... ok
+test protocol::frame::tests::data_frame_compressed_roundtrip ... ok
+test protocol::frame::tests::data_frame_encrypted_roundtrip ... ok
+test protocol::frame::tests::data_frame_rejects_oversized_chunk_len ... ok
+test protocol::frame::tests::data_frame_rejects_reserved_bits ... ok
+test protocol::frame::tests::data_frame_roundtrip ... ok
+test protocol::frame::tests::data_preamble_rejects_truncated ... ok
+test protocol::frame::tests::data_preamble_roundtrip ... ok
+test protocol::frame::tests::empty_payload_roundtrip ... ok
+test protocol::frame::tests::flags_roundtrip ... ok
+test protocol::frame::tests::rejects_oversized_length ... ok
+test protocol::frame::tests::rejects_truncated_buffer ... ok
+test protocol::frame::tests::rejects_version_mismatch ... ok
+test protocol::frame::tests::small_payload_roundtrip ... ok
+test protocol::fuzzing::tests::test_mutator_determinism_and_operations ... ok
+
+thread 'protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder' (8850) panicked at crates/velcrux-core/src/protocol/fuzzing.rs:278:17:
+boom: unhandled byte 0xFF
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder' (8850) panicked at crates/velcrux-core/src/protocol/fuzzing.rs:200:9:
+Decoder panicked on single byte 0xff
+test protocol::fuzzing::tests::test_panic_free_assertion_catches_unsafe_decoder - should panic ... ok
+test protocol::fuzzing::tests::test_panic_free_assertion_with_safe_decoder ... ok
+test protocol::limits::tests::raven_protocol_constants ... ok
+test protocol::message::tests::bye_roundtrip ... ok
+test protocol::message::tests::cancel_roundtrip ... ok
+test protocol::message::tests::checkpoint_rejects_non_monotonic ... ok
+test protocol::message::tests::checkpoint_roundtrip ... ok
+test protocol::message::tests::commit_roundtrip ... ok
+test protocol::message::tests::committed_roundtrip ... ok
+test protocol::message::tests::delta_messages_roundtrip ... ok
+test protocol::message::tests::error_roundtrip ... ok
+test protocol::message::tests::hello_ack_roundtrip ... ok
+test protocol::message::tests::hello_roundtrip ... ok
+test protocol::message::tests::list_query_roundtrip ... ok
+test protocol::message::tests::list_result_roundtrip ... ok
+test protocol::message::tests::manifest_messages_roundtrip ... ok
+test protocol::message::tests::message_enum_full_roundtrip ... ok
+test protocol::message::tests::message_enum_hello_roundtrip ... ok
+test protocol::message::tests::message_enum_routes_all_m2_variants ... ok
+test protocol::message::tests::ping_roundtrip ... ok
+test protocol::message::tests::rejects_overlong_agent ... ok
+test protocol::message::tests::rejects_truncated_hello ... ok
+test protocol::message::tests::resume_roundtrip ... ok
+test protocol::message::tests::resume_state_roundtrip ... ok
+test protocol::message::tests::session_init_roundtrip ... ok
+test protocol::message::tests::stat_query_roundtrip ... ok
+test protocol::message::tests::stat_result_roundtrip ... ok
+test protocol::message::tests::transfer_begin_roundtrip ... ok
+test protocol::message::tests::transfer_create_rejects_truncated ... ok
+test protocol::message::tests::transfer_create_roundtrip ... ok
+test protocol::message::tests::transfer_created_roundtrip ... ok
+test protocol::message::tests::transfer_op_roundtrip ... ok
+test protocol::message::tests::transfer_plan_roundtrip ... ok
+test protocol::message::tests::verify_result_roundtrip ... ok
+test protocol::message::tests::verify_roundtrip ... ok
+test protocol::varint::tests::max_u64_roundtrip ... ok
+test protocol::varint::tests::rejects_non_canonical ... ok
+test protocol::varint::tests::rejects_overflow ... ok
+test protocol::varint::tests::rejects_truncated ... ok
+test protocol::varint::tests::small_roundtrip ... ok
+test protocol::varint::tests::zero_roundtrip ... ok
+test scheduler::fairness::tests::test_bandwidth_rate_display ... ok
+test scheduler::fairness::tests::test_bandwidth_rate_parsing ... ok
+test scheduler::fairness::tests::test_fairness_scheduler_4_to_1_wrr ... ok
+test scheduler::fairness::tests::test_fairness_scheduler_high_priority_exhaustion ... ok
+test scheduler::fairness::tests::test_hierarchical_bandwidth_allocation ... ok
+test scheduler::qos::tests::test_flow_multiplexer_wrr_interleaving ... ok
+test scheduler::qos::tests::test_htb_token_bucket_cir_and_borrowing ... ok
+test scheduler::qos::tests::test_qos_benchmark_execution ... ok
+test scheduler::qos::tests::test_qos_class_properties ... ok
+test scheduler::schedule::tests::test_bandwidth_schedule_multi_rule_resolution ... ok
+test scheduler::schedule::tests::test_day_matcher_parsing_and_matching ... ok
+test scheduler::schedule::tests::test_day_of_week_properties ... ok
+test scheduler::schedule::tests::test_schedule_rule_parsing_and_evaluation ... ok
+test scheduler::schedule::tests::test_scheduled_bandwidth_limiter_dynamic_transition ... ok
+test scheduler::schedule::tests::test_time_window_regular_and_overnight ... ok
+test state::bitmap::tests::bytes_completed_saturates ... ok
+test manifest::tests::writer_reader_roundtrip ... ok
+test state::bitmap::tests::first_missing_from ... ok
+test state::bitmap::tests::mark_complete_idempotent ... ok
+test state::bitmap::tests::missing_count_bounded_by_total ... ok
+test state::bitmap::tests::reject_duplicate_indices ... ok
+test state::bitmap::tests::reject_non_monotonic ... ok
+test state::bitmap::tests::reject_oversized_count ... ok
+test state::bitmap::tests::reject_truncated ... ok
+test state::bitmap::tests::roundtrip_empty ... ok
+test state::bitmap::tests::roundtrip_sparse ... ok
+test state::ledger::tests::test_fallback_to_persistent_state_store ... ok
+test state::ledger::tests::test_idempotency_committed_replay ... ok
+test state::ledger::tests::test_idempotency_mismatched_parameters_conflict ... ok
+test state::ledger::tests::test_idempotency_new_and_replay_active ... ok
+test state::mock::tests::bitmap_roundtrip ... ok
+test state::mock::tests::delete_transfer_removes_everything ... ok
+test state::mock::tests::journal_recovery_split ... ok
+test state::mock::tests::update_not_found ... ok
+test state::mock::tests::upsert_inserts_then_reuses ... ok
+test state::mock::tests::upsert_rejects_mismatched_retry ... ok
+test state::bitmap::tests::encode_rejects_oversized_set ... ok
+test state::sqlite::tests::bitmap_replace_is_whole ... ok
+test state::sqlite::tests::delete_cascades_to_bitmap_and_journal ... ok
+test state::sqlite::tests::bitmap_roundtrip_through_sqlite ... ok
+test state::sqlite::tests::journal_recovery_split ... ok
+test state::sqlite::tests::list_by_path_filters_and_orders ... ok
+test state::sqlite::tests::new_creates_db_at_absolute_path ... ok
+test state::sqlite::tests::new_rejects_relative_path ... ok
+test state::sqlite::tests::list_resumable_and_prune_stale ... ok
+test state::sqlite::tests::upsert_rejects_mismatched_retry ... ok
+test state::sqlite::tests::state_survives_drop_and_reopen ... ok
+test state::sqlite::tests::upsert_reuses_idempotency_key ... ok
+test state::sqlite::tests::upsert_then_get_by_id ... ok
+test storage::azure::tests::test_azure_block_blob_commit ... ok
+test storage::azure::tests::test_azure_directory_sync_bidirectional ... ok
+test storage::azure::tests::test_azure_put_get_properties_delete ... ok
+test storage::azure::tests::test_azure_range_read ... ok
+test storage::azure::tests::test_azure_shared_key_signer ... ok
+test storage::azure::tests::test_azure_storage_backend_trait ... ok
+test storage::azure::tests::test_azure_url_parsing ... ok
+test storage::cas_gc::tests::test_cas_generation_nursery_protection ... ok
+test state::sqlite::tests::wal_checkpoint_modes ... ok
+test storage::cas_gc::tests::test_cas_purge_expired_tombstones ... ok
+test storage::cas_gc::tests::test_cas_tombstoning_and_resurrection ... ok
+test storage::cas_gc::tests::test_compaction_daemon_step ... ok
+test storage::chunk_store::tests::chunk_store_rejects_checksum_mismatch ... ok
+test storage::chunk_store::tests::chunk_store_put_get_has ... ok
+test storage::cluster::tests::test_clustered_chunk_store_quorum_put_and_get ... ok
+test storage::cluster::tests::test_consistent_hash_ring_preference_list ... ok
+test storage::dedup_defense::tests::test_dedup_namespace_policy_parsing ... ok
+test storage::dedup_defense::tests::test_isolated_namespacing_prevents_cross_tenant_leak ... ok
+test storage::cluster::tests::test_clustered_chunk_store_node_failure_and_read_repair ... ok
+test storage::dedup_defense::tests::test_proof_of_ownership_verification ... ok
+test storage::dedup_defense::tests::test_quarantine_corrupted_chunk_poisoning ... ok
+test storage::dedup_defense::tests::test_pow_mode_gates_cross_tenant_reuse ... ok
+test storage::direct_io::tests::test_direct_io_benchmark_runner ... ok
+test storage::direct_io::tests::test_direct_io_pipeline_unaligned_tail_truncation ... ok
+test storage::direct_io::tests::test_direct_io_ring_buffer_state_transitions ... ok
+test storage::direct_io::tests::test_direct_io_pipeline_roundtrip_with_alignment ... ok
+test storage::gc::tests::test_gc_staging_orphans ... ok
+test storage::gc::tests::test_gc_chunk_store_unreferenced ... ok
+test storage::gcs::tests::test_gcs_put_get_head_delete ... ok
+test storage::gcs::tests::test_gcs_range_read ... ok
+test storage::gcs::tests::test_gcs_resumable_upload ... ok
+test storage::gcs::tests::test_gcs_directory_sync_bidirectional ... ok
+test storage::gcs::tests::test_gcs_url_parsing ... ok
+test storage::gcs::tests::test_gcs_storage_backend_trait ... ok
+test storage::s3::tests::test_s3_directory_sync_bidirectional ... ok
+test storage::s3::tests::test_s3_multipart_upload ... ok
+test storage::s3::tests::test_s3_storage_backend_crud_and_range ... ok
+test storage::s3::tests::test_sigv4_signing_determinism ... ok
+test storage::sparse::tests::test_create_sparse_file ... ok
+test storage::sparse::tests::test_detect_extents_interleaved ... ok
+test storage::sparse::tests::test_is_zero_slice ... ok
+test storage::s3::tests::test_s3_url_parsing ... ok
+test storage::tests::local_backend_commit_replaces_existing ... ok
+test storage::tests::local_backend_round_trip ... ok
+test storage::tests::vpath_validate_accepts_simple ... ok
+test storage::tests::vpath_validate_rejects_absolute_and_empty ... ok
+test storage::tests::vpath_validate_rejects_null_and_control ... ok
+test storage::tests::vpath_validate_rejects_overlong_component ... ok
+test storage::tests::local_backend_symlink_and_hardlink_creation ... ok
+test storage::tests::vpath_validate_rejects_overlong_total ... ok
+test storage::tests::vpath_validate_rejects_traversal ... ok
+test storage::tests::vpath_validate_symlink_target_contained ... ok
+test storage::tests::vpath_validate_symlink_target_escapes_rejected ... ok
+test storage::vfs::tests::test_mount_manager_lifecycle ... ok
+test storage::vfs::tests::test_vfs_inode_allocation_and_lookup ... ok
+test storage::vfs::tests::test_vfs_read_only_enforcement ... ok
+test storage::vfs::tests::test_vfs_read_write_and_page_cache ... ok
+test storage::xattr::tests::test_acl_policy_parsing ... ok
+test storage::xattr::tests::test_darwin_acl_text_to_linux_posix_transmutation ... ok
+test storage::xattr::tests::test_darwin_to_posix_attribute_transmutation ... ok
+test storage::xattr::tests::test_lossless_roundtrip_transmutation ... ok
+test storage::xattr::tests::test_platform_os_parsing ... ok
+test storage::xattr::tests::test_policy_strip_discards_all ... ok
+test storage::xattr::tests::test_posix_binary_acl_to_darwin_transmutation ... ok
+test storage::xattr::tests::test_posix_to_darwin_attribute_transmutation ... ok
+test storage::xattr::tests::test_xattr_policy_parsing ... ok
+test swarm::tests::test_gossip_ping_ack_cycle ... ok
+test swarm::tests::test_gossip_refute_suspicion ... ok
+test swarm::tests::test_peer_state_properties ... ok
+test swarm::tests::test_byzantine_corruption_rejection ... ok
+test swarm::tests::test_swarm_mesh_rarest_first_selection ... ok
+test swarm::tests::test_swarm_benchmark_simulation ... ok
+test sync::bloom::tests::bloom_roundtrip_and_query ... ok
+test sync::delta_dict::tests::test_delta_compression_and_decompression_lifecycle ... ok
+test sync::delta_dict::tests::test_delta_slice_header_roundtrip ... ok
+test sync::bloom::tests::bloom_false_positive_rate ... ok
+test sync::directory::tests::test_diff_manifest_readers_streaming_reconciliation ... ok
+test sync::delta_dict::tests::test_evaluate_delta_metrics ... ok
+test sync::directory::tests::test_format_display ... ok
+test sync::directory::tests::test_plan_directory_diff_symlinks_and_hardlinks ... ok
+test sync::estimator::tests::estimator_high_reuse_selects_delta ... ok
+test sync::estimator::tests::estimator_matches_skips ... ok
+test sync::estimator::tests::estimator_small_file_prefers_full ... ok
+test sync::geo::tests::test_geo_coordinator_keep_both_branches ... ok
+test sync::geo::tests::test_geo_coordinator_lww_conflict_resolution ... ok
+test sync::geo::tests::test_geo_coordinator_tombstone_lifecycle ... ok
+test sync::geo::tests::test_vector_clock_causality_and_concurrency ... ok
+test sync::inventory::tests::inventory_from_file ... ok
+test sync::plan::tests::test_delete_guardrails ... ok
+test sync::plan::tests::test_delete_mode_parsing ... ok
+test sync::plan::tests::test_glob_matching ... ok
+test sync::plan::tests::test_path_filter ... ok
+test sync::plan::tests::test_validate_deletion_path ... ok
+test sync::reconstruct::tests::reconstruct_corruption_aborts_and_cleans_up ... ok
+test sync::reconstruct::tests::reconstruct_hybrid_local_and_wire ... ok
+test sync::reconstruct::tests::reconstruct_sparse_file_with_holes ... ok
+test sync::rle::tests::rle_empty ... ok
+test sync::directory::tests::test_plan_directory_diff_reconciliation ... ok
+test sync::rle::tests::rle_roundtrip_various_patterns ... ok
+test sync::transaction::tests::test_transaction_manager_crash_recovery ... ok
+test sync::transaction::tests::test_transaction_commit_success ... ok
+test sync::transaction::tests::test_transaction_prepare_hash_mismatch_aborts ... ok
+test sync::transaction::tests::test_transaction_rollback_restores_original ... ok
+test sync::watcher::tests::test_debounce_queue_coalescing ... ok
+test sync::watcher::tests::test_directory_scanner_create_modify_delete ... ok
+test telemetry::profiler::tests::test_bottleneck_diagnosis_classification ... ok
+test telemetry::profiler::tests::test_component_timing_aggregation ... ok
+test telemetry::profiler::tests::test_profiler_timing_guard ... ok
+test telemetry::profiler::tests::test_report_formatting_and_json ... ok
+test telemetry::webhook::tests::test_webhook_bus_publish_and_mock_delivery ... ok
+test telemetry::webhook::tests::test_webhook_bus_retries_and_dead_letter_queue ... ok
+test telemetry::webhook::tests::test_webhook_signer_generate_and_verify ... ok
+test transfer::checkpoint::tests::test_checkpoint_trigger_by_bytes ... ok
+test transfer::checkpoint::tests::test_checkpoint_trigger_by_chunk_count ... ok
+test transfer::checkpoint::tests::test_commit_checkpoint_updates_state_store ... ok
+test transfer::checkpoint::tests::test_resume_coordinator_fast_recover_and_prune ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_errors ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_plain ... ok
+test transfer::rate_limit::tests::test_parse_rate_limit_units ... ok
+test sync::watcher::tests::test_continuous_sync_coordinator_loop ... ok
+test chunking::tests::rolling_chunker_is_bounded_by_max ... ok
+test transfer::rate_limit::tests::test_rate_limiter_unlimited ... ok
+test transport::bdp::tests::test_bdp_auto_tuner_expansion_on_wan ... ok
+test transport::bdp::tests::test_bdp_tier_classification ... ok
+test transport::bdp::tests::test_bufferbloat_detection_and_decay ... ok
+test transport::bdp::tests::test_policy_parsing_and_clamping ... ok
+test transport::benchmarks::tests::test_scenario_48_flagship_requirements ... ok
+test transport::benchmarks::tests::test_wan_matrix_report_generation ... ok
+test transport::fec::tests::test_adaptive_controller_gating ... ok
+test transport::fec::tests::test_cauchy_matrix_inversion ... ok
+test transport::fec::tests::test_fec_block_encoding_and_reassembly ... ok
+test transport::fec::tests::test_fec_cauchy_dual_parity_roundtrip ... ok
+test transport::fec::tests::test_fec_insufficient_symbols_fails_gracefully ... ok
+test transport::fec::tests::test_fec_single_parity_xor_roundtrip ... ok
+test transport::fec::tests::test_gf_tables_and_arithmetic ... ok
+test transport::fec::tests::test_simulate_fec_recovery_satellite ... ok
+test transport::flow_control::tests::test_adaptive_flow_controller_dispatch_gating ... ok
+test transport::flow_control::tests::test_bdp_estimator_lan_wan_profiles ... ok
+test transport::flow_control::tests::test_optimal_concurrency_calculation ... ok
+test transport::flow_control::tests::test_pacing_controller ... ok
+test transport::impairment::tests::test_deterministic_loss_prng ... ok
+test transport::impairment::tests::test_impaired_channel_queue_and_loss ... ok
+test transport::impairment::tests::test_impairment_profile_bdp_calculations ... ok
+test transport::impairment::tests::test_token_bucket_rate_limiter ... ok
+test transport::migration::tests::test_disabled_policy_rejects_migration ... ok
+test transport::migration::tests::test_gated_rate_limiting ... ok
+test transport::migration::tests::test_gated_subnet_allowlist ... ok
+test transport::migration::tests::test_permissive_migration ... ok
+test transport::multipath::tests::test_multipath_lowest_latency_first ... ok
+test transport::multipath::tests::test_multipath_primary_backup_failover ... ok
+test transport::multipath::tests::test_multipath_redundant_duplication ... ok
+test transport::multipath::tests::test_multipath_scheduler_round_robin ... ok
+test transport::multipath::tests::test_multipath_session_reporting ... ok
+test transport::pmtu::tests::test_nat_diagnostics_report ... ok
+test transport::pmtu::tests::test_nat_traversal_keepalive_adaptation ... ok
+test transport::pmtu::tests::test_pmtu_blackhole_detection_and_fallback ... ok
+test transport::pmtu::tests::test_pmtu_step_search_success ... ok
+test transport::quic::tests::empty_chain_is_rejected ... ok
+test transport::quic::tests::falls_back_to_common_name ... ok
+test transport::quic::tests::non_velcrux_san_uri_falls_back_to_cn ... ok
+test transport::quic::tests::san_uri_identity_wins_over_cn ... ok
+test transport::quic::tests::single_cert_chain_issuer_equals_leaf_fingerprint ... ok
+test transport::quic::tests::validate_identity_name_accepts_reasonable ... ok
+test transport::quic::tests::validate_identity_name_rejects_control_chars ... ok
+test transport::quic::tests::validate_identity_name_rejects_empty ... ok
+test transport::quic::tests::validate_identity_name_rejects_oversize ... ok
+test util::hash::tests::algo_name_is_stable ... ok
+test util::hash::tests::display_is_64_hex_chars ... ok
+test util::hash::tests::from_bytes_rejects_wrong_length ... ok
+test util::hash::tests::from_bytes_roundtrip ... ok
+test util::hash::tests::hash_of_empty_is_blake3_empty ... ok
+test util::hash::tests::of_zeros_matches_full_vector ... ok
+test util::hash::tests::streaming_matches_one_shot ... ok
+test util::hash::tests::zero_hash_is_zero ... ok
+test util::parallel_hash::tests::test_batch_hashing_matches_scalar ... ok
+test util::parallel_hash::tests::test_batch_verify_detects_corruption ... ok
+test util::parallel_hash::tests::test_batch_verify_success ... ok
+test util::parallel_hash::tests::test_tree_hash_consistency ... ok
+test util::redacted::tests::debug_redacts ... ok
+test util::redacted::tests::display_redacts ... ok
+test util::redacted::tests::expose_returns_value ... ok
+test util::simd::tests::test_leading_zeros_count ... ok
+test util::simd::tests::test_simd_features_detection ... ok
+test util::simd::tests::test_vectorized_scanner_all_zeros ... ok
+test util::simd::tests::test_vectorized_scanner_detects_nonzeros ... ok
+test util::ulid::tests::display_is_26_chars ... ok
+test util::ulid::tests::from_bytes_rejects_wrong_length ... ok
+test util::ulid::tests::from_bytes_roundtrip ... ok
+test util::ulid::tests::generate_is_unique ... ok
+test crypto::chunk_aead::tests::test_key_derivation_from_passphrase ... ok
+test transfer::rate_limit::tests::test_rate_limiter_hierarchical_and_hit_counter ... ok
+test transfer::rate_limit::tests::test_rate_limiter_throttle ... ok
+
+test result: ok. 383 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+[1m[92m     Running[0m tests/hello_roundtrip.rs (target/debug/deps/hello_roundtrip-f4664260f9019cb5)
+
+running 2 tests
+test test_raven_protocol_alpn ... ok
+server: accepting
+server: accepted
+client: connected, HELLO_ACK received
+PING rtt = 0 ms
+server: actor finished: Ok(Closed)
+test hello_and_ping_round_trip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/m10_performance.rs (target/debug/deps/m10_performance-673ad0eee486db55)
+
+running 8 tests
+test test_perf_cost_estimator_grid ... ok
+
+--- RLE Bitmap Operations (100,000 chunks) ---
+Raw size:        12500 bytes
+RLE encoded:     50 bytes (250.0x compression)
+Encode latency:  594.518µs
+Decode latency:  4.757µs
+test test_perf_bitmap_ops_scale ... ok
+
+--- BDP Window Calculation (10 Gbps / 150 ms RTT) ---
+BDP:                187.50 MB
+2x BDP Window:      375.00 MB
+test test_perf_flow_control_bdp_window ... ok
+
+--- Frame Header Codec Latency ---
+Control frame:   85.7 ns/op
+Data frame:     217.6 ns/op
+test test_perf_frame_codec_latency ... ok
+
+--- Delta Overhead Verification ---
+Total file size:    4096 KiB
+Theoretical min:    64 KiB
+Actual transferred: 64 KiB
+Bytes reused:       4032 KiB
+
+--- Manifest Streaming Codec ---
+Encode:   128829 entries/s (3.47 B/entry, total: 6 KiB)
+Decode:   214672 entries/s (2000 entries)
+test test_perf_manifest_streaming_codec ... ok
+test test_perf_delta_overhead_bounds ... ok
+
+--- Chunking Performance ---
+Fixed (1 MiB):       1.71 GB/s (8 chunks)
+CDC (256k-4M):       0.13 GB/s (5 chunks)
+FastCDC (256k-4M):   0.33 GB/s (8 chunks)
+test test_perf_chunking_fixed_and_cdc ... ok
+
+--- Hashing Performance (ADR-003) ---
+BLAKE3:     4.97 GB/s (3.377322ms)
+SHA-256:    0.06 GB/s (272.593377ms)
+BLAKE3 speedup: 80.7x
+test test_perf_blake3_vs_sha256 ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s
+
+[1m[92m     Running[0m tests/m11_sparse_files.rs (target/debug/deps/m11_sparse_files-fa93c8b6bba0bf5a)
+
+running 3 tests
+test test_sparse_file_entry_flags ... ok
+Sparse Delta Sync Report:
+- Total bytes: 393216
+- Wire bytes: 65536
+- Local reused: 65536
+- Sparse skipped: 262144
+- Decision: Delta
+test test_sparse_file_delta_sync_with_existing_destination ... ok
+Sparse Full Sync Report:
+- Total bytes: 983040
+- Wire bytes transferred: 196608
+- Sparse bytes skipped: 786432
+- Sparse holes count: 12
+- Wire chunks count: 3
+- Whole file hash: 0c378e9ed7ca4396c58a0253ff0e304e04ce98c440b1b5b348ccc18adeb68a3a
+test test_sparse_file_full_sync_zero_wire_for_holes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/m12_flow_control.rs (target/debug/deps/m12_flow_control-9066ce630f77db56)
+
+running 4 tests
+test test_adaptive_flow_controller_rtt_loss_and_gating ... ok
+test test_pacing_controller_burst_regulation ... ok
+test test_bdp_window_sizing_lan_vs_wan ... ok
+test test_transport_config_tunables_from_link_and_str ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/m14_pubkey_auth.rs (target/debug/deps/m14_pubkey_auth-7ef4746e938aceb0)
+
+running 5 tests
+test test_authorized_keys_parsing_hex_and_openssh ... ok
+test test_hybrid_authenticator_dispatch ... ok
+test test_corrupted_token_and_unauthorized_key ... ok
+test test_replay_attack_prevention ... ok
+test test_channel_bound_signature_verification ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/m24_transfer_scheduler.rs (target/debug/deps/m24_transfer_scheduler-d96bf8fb281e1840)
+
+running 6 tests
+test test_priority_scheduler_push_and_cancel ... ok
+test test_priority_scheduler_drr_fairness_and_starvation_prevention ... ok
+test test_priority_scheduler_urgent_preemptive ... ok
+test test_transfer_priority_weights_and_parsing ... ok
+test test_concurrent_transfer_limiter_capacity ... ok
+test test_concurrent_transfer_limiter_priority_waking ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+[1m[92m     Running[0m tests/m26_direct_io.rs (target/debug/deps/m26_direct_io-393c04b569d527bf)
+
+running 5 tests
+test test_aligned_sector_buffer_pointer_alignment_invariants ... ok
+test test_direct_io_mode_parsing_and_serde ... ok
+test test_direct_io_disabled_buffered_fallback ... ok
+test test_direct_io_sector_aligned_roundtrip ... ok
+test test_direct_io_odd_size_fractional_tail_truncation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/m27_small_files_batch.rs (target/debug/deps/m27_small_files_batch-e0259e1f02884160)
+
+running 4 tests
+test test_batch_path_traversal_rejection ... ok
+test test_batch_payload_tamper_detection ... ok
+test test_directory_sync_with_batching_enabled ... ok
+test test_small_files_batch_pack_unpack_roundtrip ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+[1m[92m     Running[0m tests/m2_roundtrip.rs (target/debug/deps/m2_roundtrip-63e573c379fef958)
+
+running 1 test
+[2m2026-10-24T17:46:38.201951Z[0m [32m INFO[0m [2mm2_roundtrip[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m0
+[2m2026-10-24T17:46:38.210667Z[0m [33m WARN[0m [2mm2_roundtrip[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m0 [3mr[0m[2m=[0mOk(Serving)
+[2m2026-10-24T17:46:38.213013Z[0m [32m INFO[0m [2mm2_roundtrip[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m1
+[2m2026-10-24T17:46:38.221579Z[0m [33m WARN[0m [2mm2_roundtrip[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m1 [3mr[0m[2m=[0mOk(Serving)
+test m2_upload_download_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/m3_resume.rs (target/debug/deps/m3_resume-ceeaa9119fd28f9a)
+
+running 1 test
+[2m2026-10-24T17:46:38.283540Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-24T17:46:38.283618Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-24T17:46:38.284226Z[0m [32m INFO[0m [2mm3_resume[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m0
+[2m2026-10-24T17:46:38.284778Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-24T17:46:38.284814Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-24T17:46:38.285236Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-24T17:46:38.285254Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mdev-user
+[2m2026-10-24T17:46:38.411369Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: control stream opened
+[2m2026-10-24T17:46:38.411438Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: HELLO sent
+[2m2026-10-24T17:46:38.411845Z[0m [32m INFO[0m [2mm3_resume[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m1
+[2m2026-10-24T17:46:38.412250Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m2
+[2m2026-10-24T17:46:38.412278Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH sent
+[2m2026-10-24T17:46:38.412839Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: frame received [3mtype[0m[2m=[0m4
+[2m2026-10-24T17:46:38.412859Z[0m [34mDEBUG[0m [2mvelcrux_core::session::client[0m[2m:[0m client: AUTH_OK received [3midentity[0m[2m=[0mdev-user
+test m3_sigkill_resume_at_50_percent ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+[1m[92m     Running[0m tests/m3_state.rs (target/debug/deps/m3_state-33d6d95c40c67356)
+
+running 15 tests
+test checkpoint_cadence_constants ... ok
+test mock_journal_recovery_split ... ok
+test mock_bitmap_roundtrip ... ok
+test mock_mark_active_transfers_resumable ... ok
+test mock_rejects_mismatched_retry ... ok
+test mock_upsert_then_reuse ... ok
+test sqlite_delete_cascades_to_bitmap_and_journal ... ok
+test sqlite_idempotency_unique_constraint ... ok
+test sqlite_bitmap_replace_is_total ... ok
+test sqlite_journal_recovery_split ... ok
+test sqlite_state_db_rejects_relative_path ... ok
+test sqlite_mark_active_transfers_resumable ... ok
+test sqlite_state_db_creates_at_absolute_path ... ok
+test sqlite_state_survives_drop_and_reopen ... ok
+test sqlite_list_by_path_filters_and_orders ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/m4_authz.rs (target/debug/deps/m4_authz-95c0e708e216d790)
+
+running 1 test
+[2m2026-10-24T17:46:38.476597Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m0
+[2m2026-10-24T17:46:38.485477Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m0 [3mr[0m[2m=[0mErr(Transport(ReadError("connection lost")))
+[2m2026-10-24T17:46:38.488047Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m1
+[2m2026-10-24T17:46:38.489739Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m1 [3mr[0m[2m=[0mOk(Serving)
+[2m2026-10-24T17:46:38.492014Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m2
+[2m2026-10-24T17:46:38.501617Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m2 [3mr[0m[2m=[0mErr(Transport(ReadError("connection lost")))
+[2m2026-10-24T17:46:38.502853Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m3
+[2m2026-10-24T17:46:38.505628Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m3 [3mr[0m[2m=[0mErr(Transport(ReadError("connection lost")))
+[2m2026-10-24T17:46:38.506839Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: accepted connection [3mn[0m[2m=[0m4
+[2m2026-10-24T17:46:38.508565Z[0m [32m INFO[0m [2mm4_authz[0m[2m:[0m server: actor finished [3mn[0m[2m=[0m4 [3mr[0m[2m=[0mErr(Transport(ReadError("connection lost")))
+test m4_cross_tenant_and_traversal_denied ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+[1m[92m     Running[0m tests/m55_adaptive_cost.rs (target/debug/deps/m55_adaptive_cost-84ebc49bdcfd9d00)
+
+running 9 tests
+test test_bloom_match_preliminary_evaluation ... ok
+test test_identical_file_recommends_skip ... ok
+test test_directory_sync_with_direct_stream_mode ... ok
+test test_lan_high_bandwidth_prefers_direct_stream ... ok
+test test_low_similarity_recommends_direct_stream ... ok
+test test_small_file_recommends_direct_stream ... ok
+test test_network_profile_from_transport_stats ... ok
+test test_wan_high_rtt_prefers_delta_cdc ... ok
+test test_directory_sync_auto_mode_small_files_fast_path ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/m5_manifest.rs (target/debug/deps/m5_manifest-0cb254bec47e2aa5)
+
+running 6 tests
+test m5_path_traversal_in_manifest_rejected ... ok
+Starting M5 Exit Test: 1,000,000 files streaming manifest...
+test m5_manifest_store_caching_and_dedup ... ok
+test m5_tampered_manifest_digest_rejected ... ok
+test m5_decompression_bomb_rejected ... ok
+test m5_wire_streaming_manifest_roundtrip ... ok
+  Writer progress: 250000/1000000 files streamed... RSS: 15.59 MB
+  Writer progress: 500000/1000000 files streamed... RSS: 15.59 MB
+  Writer progress: 750000/1000000 files streamed... RSS: 15.59 MB
+Completed writing 1M files in 3.62s. Spill file size: 6.54 MB
+  Reader progress: 250000/1000000 files verified... RSS: 15.79 MB
+  Reader progress: 500000/1000000 files verified... RSS: 15.79 MB
+  Reader progress: 750000/1000000 files verified... RSS: 15.79 MB
+  Reader progress: 1000000/1000000 files verified... RSS: 15.79 MB
+Verified all 1,000,000 files in 3.25s. Final hash validated successfully.
+test m5_streaming_manifest_1m_files_bounded_rss ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.87s
+
+[1m[92m     Running[0m tests/m6_chunking.rs (target/debug/deps/m6_chunking-1675de3ed60f5b70)
+
+running 5 tests
+test m6_manifest_scanner_fixed_and_cdc_parity ... ok
+test m6_exact_concatenation_reconstruction ... ok
+test m6_hard_boundary_clamps_adversarial ... ok
+[middle edit] CDC reuse: 0.9686 (96.86%)
+test m6_middle_edit_blast_radius ... ok
+[1-byte insertion] CDC: total=67108865 bytes, reused=65146146 bytes, ratio=0.9708 (97.08%)
+[1-byte insertion] Fixed: total=67108865 bytes, reused=0 bytes, ratio=0.0000 (0.00%)
+[37-byte insertion] CDC: total=67108901 bytes, reused=65146146 bytes, ratio=0.9708 (97.08%)
+[37-byte insertion] Fixed: total=67108901 bytes, reused=0 bytes, ratio=0.0000 (0.00%)
+[1-MiB insertion] CDC: total=68157440 bytes, reused=65146146 bytes, ratio=0.9558 (95.58%)
+[1-MiB insertion] Fixed: total=68157440 bytes, reused=67108864 bytes, ratio=0.9846 (98.46%)
+test m6_exit_test_insertion_at_offset_0_reuses_95_percent_under_cdc ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+
+[1m[92m     Running[0m tests/m74_multihome_interface.rs (target/debug/deps/m74_multihome_interface-d77777f30b5dedac)
+
+running 7 tests
+test test_parser_ifconfig_output ... ok
+test test_parser_linux_ip_command_output ... ok
+test test_resolve_bind_addr_explicit_ip ... ok
+test test_quic_client_custom_bind_addr ... ok
+test test_resolve_bind_addr_family_matching ... ok
+test test_resolve_bind_addr_by_interface ... ok
+test test_list_interfaces_and_find ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/m7_delta.rs (target/debug/deps/m7_delta-0439d368d1d8e215)
+
+running 5 tests
+test test_missing_destination_falls_back_to_full_sync ... ok
+test test_reconstruction_corruption_preserves_original_intact ... ok
+test test_identical_file_skips_wire_transfer ... ok
+M7 Exit Test Results:
+- Logical Dataset Size: 100.00 GiB
+- Modified Content: 3.00 GiB
+- Wire Bytes Data: 3.000 GiB
+- Wire Protocol Overhead: 6442.22 KiB
+- Total Transferred: 3.006 GiB (moves ≈ 3 GB + overhead)
+test test_exit_criteria_100gb_with_3gb_changed ... ok
+CDC Delta Sync:
+- File size: 17301504 bytes
+- Wire transferred: 1319885 bytes
+- Local reused: 15981619 bytes
+- Reused chunks: 53 / 55
+- Savings: 92.4%
+test test_real_file_end_to_end_delta_cdc_sync ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+[1m[92m     Running[0m tests/m8_dedup.rs (target/debug/deps/m8_dedup-32379b326baf33cd)
+
+running 4 tests
+test test_chunk_store_corruption_defense ... ok
+test test_chunk_store_ingest_file ... ok
+Cross-File Partial Dedup:
+- Derived File Total: 16777216 bytes
+- Wire Transferred: 4505778 bytes
+- Chunk Store Reused: 12271438 bytes
+- Store Chunks Reused: 49 / 62
+- Dedup Savings: 73.1%
+test test_cross_file_partial_deduplication ... ok
+M8 Exit Test Results (Second Copy Transfer):
+- File Size: 16.00 MiB
+- Wire Bytes Transferred: 0 bytes (≈ 0 bytes)
+- Local Path Reused: 0 bytes
+- Chunk Store Reused: 16777216 bytes
+- Store Chunks Reused: 55 / 55
+- Whole File BLAKE3: 80bc84fe51b7ceeae661622dade0b030f481db8ff1940e52aa058a020404cb10
+- Destination Exists: true
+test test_exit_criteria_second_copy_transfers_zero_bytes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+[1m[92m     Running[0m tests/m9_directory.rs (target/debug/deps/m9_directory-ccaf60793799103b)
+
+running 5 tests
+test test_directory_sync_delete_modes ... ok
+test test_directory_sync_dry_run_leaves_destination_untouched ... ok
+test test_stage_failure_leaves_destination_untouched ... ok
+test test_commit_journal_resumes_interrupted_commit ... ok
+test test_directory_sync_delta_reuse_and_sqlite_journal ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/m9_posix_metadata.rs (target/debug/deps/m9_posix_metadata-c6a2ad3f845a8643)
+
+running 5 tests
+test test_deletion_of_symlinks_and_sidecars ... ok
+test test_manifest_streaming_preserves_metadata ... ok
+test test_posix_permission_mode_preservation ... ok
+test test_symlink_replication_and_modified_targets ... ok
+test test_xattr_sidecar_synchronization ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/protocol_dict_tests.rs (target/debug/deps/protocol_dict_tests-3aaa49a19218f7f4)
+
+running 5 tests
+test test_dict_trainer_from_directory ... ok
+test test_dict_decompression_bomb_defense ... ok
+test test_dict_catalog_lifecycle_and_export_import ... ok
+test test_dict_ratio_evaluation ... ok
+test test_dict_trainer_from_samples_and_compression_roundtrip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+[1m[92m     Running[0m tests/protocol_fuzzing.rs (target/debug/deps/protocol_fuzzing-13aa270c8353e504)
+
+running 8 tests
+test test_fuzz_manifest_batch_decoder ... ok
+test test_fuzz_all_26_message_decoders ... ok
+test test_fuzz_manifest_decoders ... ok
+test test_fuzz_varint_decoder ... ok
+test test_fuzz_frame_decoders ... ok
+test test_fuzz_sync_primitives ... ok
+test test_fuzz_vbatch_container_unpack ... ok
+test test_fuzz_message_dispatch_random ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+[1m[92m     Running[0m tests/simd_hashing_tests.rs (target/debug/deps/simd_hashing_tests-189af2a3752a0526)
+
+running 6 tests
+test test_parallel_hasher_batch_verification ... ok
+Host SIMD Profile: x86_64 (AVX-512F, AVX2, SSE4.1, CLMUL/PMULL, AES-NI)
+test test_simd_features_host_detection ... ok
+test test_vectorized_scanner_comprehensive ... ok
+test test_pipelined_chunker_end_to_end ... ok
+test test_parallel_hasher_batched_matches_scalar ... ok
+test test_parallel_tree_hashing_large_buffer ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+[1m[92m     Running[0m tests/storage_cluster_tests.rs (target/debug/deps/storage_cluster_tests-7b04a16c4e1f0a9a)
+
+running 3 tests
+test test_cluster_hash_ring_distribution ... ok
+test test_cluster_strict_consistency_and_quorum_failure ... ok
+test test_cluster_rebalance_and_report ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+[1m[92m     Running[0m tests/storage_multicloud_tests.rs (target/debug/deps/storage_multicloud_tests-36f0888737998c01)
+
+running 5 tests
+test test_azure_shared_key_signing_and_url_variations ... ok
+test test_azure_full_lifecycle_and_block_blob_commit ... ok
+test test_gcs_full_lifecycle_and_chunked_upload ... ok
+test test_azure_bidirectional_sync_verification ... ok
+test test_gcs_bidirectional_sync_verification ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/storage_s3_tests.rs (target/debug/deps/storage_s3_tests-1b098c8b59396164)
+
+running 4 tests
+test test_s3_sigv4_signing_canonical_format ... ok
+test test_s3_backend_multipart_assembly ... ok
+test test_s3_backend_object_lifecycle_and_ranges ... ok
+test test_s3_backend_bidirectional_sync ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/storage_scrub_tests.rs (target/debug/deps/storage_scrub_tests-62ac77b327c0ea75)
+
+running 5 tests
+test test_scrub_report_save_and_load ... ok
+test test_scrub_bit_rot_detection_verify_only ... ok
+test test_scrub_quarantine_mode ... ok
+test test_scrub_healthy_chunk_store ... ok
+test test_scrub_self_healing_from_peer ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/storage_snapshot_tests.rs (target/debug/deps/storage_snapshot_tests-12932a20edd6c085)
+
+running 4 tests
+test test_snapshot_create_list_and_get ... ok
+test test_snapshot_diff_detection ... ok
+test test_snapshot_gc_protection_and_deletion ... ok
+test test_snapshot_cas_chunk_store_and_restore ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/sync_geo_tests.rs (target/debug/deps/sync_geo_tests-fead9777a911efdb)
+
+running 3 tests
+test test_geo_coordinator_tombstone_dominates_stale_mutation ... ok
+test test_geo_coordinator_primary_authority_conflict_policy ... ok
+test test_three_region_vector_clock_propagation ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/sync_lock_tests.rs (target/debug/deps/sync_lock_tests-335d6c63c52e3eec)
+
+running 6 tests
+test test_dlm_lease_heartbeat_renewal ... ok
+test test_dlm_exclusive_lock_mutual_exclusion ... ok
+test test_dlm_fencing_token_and_report ... ok
+test test_dlm_shared_read_locks ... ok
+test test_dlm_lease_ttl_expiry_and_deadlock_prevention ... ok
+test test_dlm_persistence_recovery ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/sync_plan_tests.rs (target/debug/deps/sync_plan_tests-e938ab9034c35276)
+
+running 7 tests
+test test_delete_guardrails_abort_excessive_deletions ... ok
+test test_delete_excluded_mode ... ok
+test test_delete_before_mode ... ok
+test test_delete_guardrails_force_delete_override ... ok
+test test_path_filter_patterns ... ok
+test test_dry_run_leaves_destination_unmutated ... ok
+test test_transfer_plan_format_and_json ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/sync_transaction_tests.rs (target/debug/deps/sync_transaction_tests-86301f5ca40d1c6a)
+
+running 4 tests
+test test_transaction_hash_verification_aborts_without_mutating_target ... ok
+test test_transaction_manager_crash_recovery_of_committing_state ... ok
+test test_atomic_directory_sync_rollback_restores_baseline ... ok
+test test_atomic_directory_sync_success_multi_file ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/sync_watcher_tests.rs (target/debug/deps/sync_watcher_tests-d50d8d1e0d03c15f)
+
+running 3 tests
+test test_watcher_cooperative_shutdown ... ok
+test test_watcher_nested_directories_and_changes ... ok
+test test_watcher_rapid_coalescing_and_ephemeral_files ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+[1m[92m     Running[0m tests/telemetry_profiler_tests.rs (target/debug/deps/telemetry_profiler_tests-aa13f8c441c70970)
+
+running 4 tests
+test test_disk_bottleneck_detection ... ok
+test test_empty_profiler ... ok
+test test_transfer_profiler_stage_breakdown ... ok
+test test_timing_guard_measurement ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/telemetry_webhook_tests.rs (target/debug/deps/telemetry_webhook_tests-4632efae19fe2a98)
+
+running 4 tests
+test test_webhook_signer_tamper_and_replay_detection ... ok
+test test_webhook_retry_backoff_and_dlq_lifecycle ... ok
+test test_webhook_bus_multi_subscriber_fanout ... ok
+test test_webhook_subscription_disable_and_event_type_parsing ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/transport_multipath_tests.rs (target/debug/deps/transport_multipath_tests-b9b5dff44823a702)
+
+running 4 tests
+test test_multipath_degraded_path_handling ... ok
+test test_multipath_redundant_metadata_duplication ... ok
+test test_multipath_weighted_bandwidth_proportional_distribution ... ok
+test test_multipath_auto_discovery_and_binding ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/vfs_mount_tests.rs (target/debug/deps/vfs_mount_tests-2e62426ecb5f06b8)
+
+running 5 tests
+test test_vfs_mount_snapshot_and_cloud_sources ... ok
+test test_vfs_mount_local_directory_hierarchy ... ok
+test test_vfs_rw_create_write_delete_and_symlink ... ok
+test test_vfs_page_cache_lru_and_eviction ... ok
+test test_vfs_mount_manager_process_coordination ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/velcrux_server-8ad2bb8ff65323db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/velcruxd-d67c20f9aa0b7cff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/cli_operations.rs (target/debug/deps/cli_operations-d8d8527296a083e3)
+
+running 7 tests
+test test_parse_size_bytes ... ok
+test test_prometheus_metrics_formatting ... ok
+test test_prometheus_http_server_endpoints ... ok
+test test_server_config_and_env_overrides ... ok
+test test_reloadable_authorizer_sighup ... ok
+test test_server_completions_cli ... ok
+test test_server_gc_cli ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/fuzz_corpus.rs (target/debug/deps/fuzz_corpus-041191d992ec6ab1)
+
+running 12 tests
+test test_adversarial_data_frame_matrix ... ok
+test test_adversarial_frame_decoder_matrix ... ok
+test test_adversarial_config_parser_matrix ... ok
+test test_adversarial_manifest_codec_matrix ... ok
+test test_adversarial_path_traversal_corpus ... ok
+test test_adversarial_cert_identity_matrix ... ok
+test test_adversarial_varint_matrix ... ok
+test test_corpus_cert_identity ... ok
+test test_corpus_manifest_decoder ... ok
+test test_corpus_path_validator ... ok
+test test_corpus_frame_decoder ... ok
+test test_corpus_config_parser ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/server_adaptive_compression.rs (target/debug/deps/server_adaptive_compression-04681f5fd73a30a0)
+
+running 5 tests
+test test_adaptive_compression_high_entropy_bypass_frame_encoding ... ok
+test test_adaptive_compression_historical_backoff_and_probe ... ok
+test test_shannon_entropy_sampler_precision ... ok
+test test_adaptive_compression_multi_tier_optimization ... ok
+test test_end_to_end_adaptive_compression_quic_transfer ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/server_admin_api.rs (target/debug/deps/server_admin_api-ac9446b8eaa15ee7)
+
+running 2 tests
+test test_api_server_bind_and_shutdown ... ok
+test test_rest_control_plane_and_dashboard_handlers ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/server_bandwidth_schedule.rs (target/debug/deps/server_bandwidth_schedule-5c17fc8d9f30389d)
+
+running 5 tests
+test test_limits_manager_schedule_hot_reload ... ok
+test test_limits_manager_with_bandwidth_schedule ... ok
+test test_server_config_bandwidth_schedule_string_toml ... ok
+test test_server_config_bandwidth_schedule_env_override ... ok
+test test_server_config_bandwidth_schedule_toml ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/server_chaos_resilience.rs (target/debug/deps/server_chaos_resilience-ee72c3495245274d)
+
+running 5 tests
+test test_chaos_enospc_disk_full_simulation ... ok
+test test_chaos_crash_during_commit_journal_recovery ... ok
+test test_chaos_whole_file_hash_mismatch_rejected ... ok
+test test_chaos_payload_tampering_and_bit_flip_detection ... ok
+test test_chaos_abrupt_disconnect_and_resumption ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+[1m[92m     Running[0m tests/server_compression.rs (target/debug/deps/server_compression-f6116f4c80f6083e)
+
+running 7 tests
+test test_server_config_compression_parsing_and_validation ... ok
+test test_data_frame_compression_flag_and_hash_invariant ... ok
+test test_wire_frame_compression_flag_and_transparent_decompression ... ok
+test test_wire_frame_decompression_bomb_ratio_rejection ... ok
+test test_quic_e2e_incompressible_fallback_roundtrip ... ok
+test test_quic_e2e_compressed_transfer_roundtrip ... ok
+test test_wire_frame_decompression_bomb_rejection_declared_limit ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+[1m[92m     Running[0m tests/server_config_validation.rs (target/debug/deps/server_config_validation-6af3d74768a51aca)
+
+running 8 tests
+test test_bind_interface_configuration ... ok
+test test_batch_small_files_config_and_validation ... ok
+test test_direct_io_config_and_validation ... ok
+test test_env_var_overrides ... ok
+test test_parse_size_bytes_utility ... ok
+test test_fail_closed_validations ... ok
+test test_full_server_config_parsing_from_spec ... ok
+test test_max_concurrent_transfers_config_and_validation ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/server_connection_migration.rs (target/debug/deps/server_connection_migration-c68f09de3fd1a537)
+
+running 3 tests
+test test_client_socket_rebind_mid_transfer_integrity ... ok
+test test_migration_failover_gating_disabled_policy ... ok
+test test_migration_failover_gating_rate_limit ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+[1m[92m     Running[0m tests/server_dedup_defense.rs (target/debug/deps/server_dedup_defense-84d093db53d5011f)
+
+running 5 tests
+test test_server_config_dedup_policy_parsing ... ok
+test test_server_config_invalid_dedup_policy_validation ... ok
+test test_namespaced_chunk_store_proof_of_ownership_mode ... ok
+test test_namespaced_chunk_store_isolated_mode ... ok
+test test_chunk_quarantine_poisoning_defense ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/server_drain.rs (target/debug/deps/server_drain-5ccf1a6644116676)
+
+running 3 tests
+test test_server_startup_commit_journal_recovery ... ok
+test test_server_drain_timeout_exceeded_safety ... ok
+test test_server_graceful_drain_persists_resumable_state ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+[1m[92m     Running[0m tests/server_fairness_scheduler.rs (target/debug/deps/server_fairness_scheduler-6496e598b2bc9724)
+
+running 5 tests
+test test_server_scheduler_4_to_1_wrr_fairness_interleave ... ok
+test test_server_scheduler_hierarchical_limit_composition ... ok
+test test_server_scheduler_strict_priority_drain ... ok
+test test_server_scheduler_zero_loss_concurrency ... ok
+test test_async_token_bucket_pacing_accuracy ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+[1m[92m     Running[0m tests/server_fastcdc_quotas.rs (target/debug/deps/server_fastcdc_quotas-f8d5e177dce0420d)
+
+running 5 tests
+test test_multi_tenant_concurrent_quota_reservations ... ok
+test test_multi_tenant_soft_quota_and_storage_accounting ... ok
+test test_fastcdc_boundary_distribution_and_invariants ... ok
+
+--- Deduplication Benchmark on Mid-Stream Insertion ---
+Fixed:   24.57% reused (16/66 chunks)
+CDC:     95.69% reused (54/56 chunks)
+FastCDC: 95.66% reused (53/55 chunks)
+test test_fastcdc_vs_fixed_vs_cdc_dedup_comparative ... ok
+test test_chunk_store_cache_pruning_lru_and_ttl ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+[1m[92m     Running[0m tests/server_fec_resilience.rs (target/debug/deps/server_fec_resilience-a0d070c2141f47cc)
+
+running 7 tests
+test test_adaptive_controller_telemetry_scaling ... ok
+test test_cauchy_matrix_invertibility_and_mds_property ... ok
+test test_fast_path_xor_parity_vs_cauchy_linear_solve ... ok
+test test_galois_field_arithmetic_axioms ... ok
+test test_fec_codec_recovers_arbitrary_erasure_patterns ... ok
+test test_fec_simulation_harness_goodput_and_stats ... ok
+test test_high_loss_satellite_channel_block_recovery_and_blake3_integrity ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/server_fuzzing.rs (target/debug/deps/server_fuzzing-033b4a9a62e7946f)
+
+running 5 tests
+test test_server_conn_fuzz_adversarial_lengths ... ok
+test test_server_conn_fuzz_truncated_inputs ... ok
+test test_server_conn_fuzz_random_garbage ... ok
+test test_server_conn_fuzz_out_of_order_messages ... ok
+test test_server_conn_fuzz_mutated_frames ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+[1m[92m     Running[0m tests/server_idempotency_ledger.rs (target/debug/deps/server_idempotency_ledger-7890804df5aa7e8a)
+
+running 4 tests
+test test_checkpoint_coordinator_evaluation_and_flush ... ok
+test test_idempotent_transfer_replay_active_and_committed ... ok
+test test_idempotent_transfer_parameter_conflict_rejection ... ok
+test test_idempotent_transfer_replay_active_in_flight ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests/server_links.rs (target/debug/deps/server_links-a1ad13eabeee1812)
+
+running 5 tests
+test test_scanner_and_manifest_codec_with_links ... ok
+test test_symlink_lexical_containment_pure_logic ... ok
+test test_backend_symlink_and_hardlink_operations ... ok
+test test_quic_hardlink_creation_and_validation ... ok
+test test_quic_symlink_creation_and_escape_defense ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests/server_observability_dashboard.rs (target/debug/deps/server_observability_dashboard-97163786dc4e044d)
+
+running 5 tests
+test test_grafana_dashboard_json_validity_and_coverage ... ok
+test test_prometheus_alerts_yaml_validity ... ok
+test test_live_http_metrics_scrape_and_format ... ok
+
+thread 'test_metrics_doc_catalog_completeness' (9688) panicked at crates/velcrux-server/tests/server_observability_dashboard.rs:86:9:
+Metric 'velcrux_deletions_total' emitted by velcrux-server must be documented in docs/METRICS.md
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test test_metrics_doc_catalog_completeness ... FAILED
+Exported Grafana dashboard to /tmp/.tmpiX1Pl6/exported_dashboard.json
+Exported Prometheus alert rules to /tmp/.tmpiX1Pl6/exported_alerts.yml
+test test_cli_export_subcommands ... ok
+
+failures:
+
+failures:
+    test_metrics_doc_catalog_completeness
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[91merror[0m: test failed, to rerun pass `-p velcrux-server --test server_observability_dashboard`
