@@ -241,6 +241,18 @@ pub struct ServerStats {
     pub swarm_bytes_offloaded: AtomicU64,
     /// Total corrupt or poisoned chunks received from peers and rejected (Option BW).
     pub swarm_chunks_poisoned: AtomicU64,
+    /// Total simulated packet/chunk drop events injected by chaos engine (Option BX).
+    pub chaos_packets_dropped_total: AtomicU64,
+    /// Total packet/chunk delay events injected by chaos engine (Option BX).
+    pub chaos_packets_delayed_total: AtomicU64,
+    /// Total packet reordering events injected by chaos engine (Option BX).
+    pub chaos_packets_reordered_total: AtomicU64,
+    /// Total packet duplication events injected by chaos engine (Option BX).
+    pub chaos_packets_duplicated_total: AtomicU64,
+    /// Total payload bytes corrupted by Byzantine chaos injection (Option BX).
+    pub chaos_bytes_corrupted_total: AtomicU64,
+    /// Total network partitions actively enforced by chaos engine (Option BX).
+    pub chaos_partitions_active: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -333,6 +345,12 @@ impl Default for ServerStats {
             swarm_bytes_p2p_outbound: AtomicU64::new(0),
             swarm_bytes_offloaded: AtomicU64::new(0),
             swarm_chunks_poisoned: AtomicU64::new(0),
+            chaos_packets_dropped_total: AtomicU64::new(0),
+            chaos_packets_delayed_total: AtomicU64::new(0),
+            chaos_packets_reordered_total: AtomicU64::new(0),
+            chaos_packets_duplicated_total: AtomicU64::new(0),
+            chaos_bytes_corrupted_total: AtomicU64::new(0),
+            chaos_partitions_active: AtomicU64::new(0),
         }
     }
 }

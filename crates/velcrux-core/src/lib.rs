@@ -21,6 +21,7 @@
 #![deny(rust_2018_idioms)]
 #[allow(missing_docs)]
 pub mod auth;
+pub mod chaos;
 pub mod chunking;
 pub mod crypto;
 pub mod error;
@@ -44,6 +45,11 @@ pub use auth::{
     Authenticator, AuthorizedKeys, Authorizer, CrlStore, FileAuthorizer, Grant,
     HybridAuthenticator, MtlsAuthenticator, Op, PermSet, PubkeyAuthenticator, VerifiedAttestation,
     ATTESTATION_DOMAIN_SEPARATOR, ATTESTATION_VERSION_1, DEFAULT_SIG_EXT,
+};
+pub use chaos::{
+    run_chaos_benchmark, ChaosBenchmarkReport, ChaosConfig, ChaosEngine, ChaosOutcome, ChaosPrng,
+    ChaosProfileKind, ChaosStats, ChaosStatusReport, GilbertElliottConfig, GilbertElliottModel,
+    MarkovState,
 };
 pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,

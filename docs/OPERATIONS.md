@@ -3176,6 +3176,71 @@ Exposed under `/metrics`:
 - `velcrux_swarm_offloaded_bytes_total`: Total server egress bytes saved through cooperative P2P transfers.
 - `velcrux_swarm_chunks_poisoned_rejected_total`: Total corrupted or poisoned chunks detected and blocked, with rogue peers banned.
 
+## 45. Continuous Chaos Engineering & Network Fault Injection Reference (ADR-040, Option BX)
+
+### Operational Overview & Architecture
+Velcrux integrates an automated in-process chaos engineering and network fault injection suite designed to stress-test QUIC transport robustness, multi-stream multiplexing, BDP discovery, pacing loops, and Byzantine data integrity under harsh synthetic impairment conditions without requiring kernel-level `tc-netem` root privileges.
+
+The chaos engine implements:
+1. **Gilbert-Elliott 2-State Markov Burst Loss**: Simulates bursty loss dynamics with transition probabilities $P(\text{Good} \to \text{Bad}) = p$ and $P(\text{Bad} \to \text{Good}) = r$.
+2. **Dynamic Latency & Normal/Gaussian Jitter**: Configurable base propagation delay and jitter variance.
+3. **Out-of-Order Packet Reordering & Duplicate Generation**: Simulates multipath asymmetry and L2 retransmissions.
+4. **Byzantine Bit-Rot Mutation**: Deterministic bit-flipping on packet bodies to validate BLAKE3 stream hashing and frame checksum rejections.
+5. **Partition Blackholing**: Complete communication severance simulating network netsplit scenarios.
+
+### Global CLI Flags
+Any `velcrux` client command can be executed with active chaos impairments using the following global flags:
+
+- `--chaos`: Activate fault injection on the underlying transport session.
+- `--chaos-loss <RATE>`: Uncorrelated uniform packet drop probability (`0.0` - `1.0`).
+- `--chaos-delay-ms <MS>`: Base latency injected per outbound/inbound transmission.
+- `--chaos-jitter-ms <MS>`: Latency jitter standard deviation in milliseconds.
+- `--chaos-corrupt-rate <RATE>`: Byzantine bit corruption probability (`0.0` - `1.0`).
+
+Example:
+```bash
+velcrux --chaos --chaos-delay-ms 50 --chaos-jitter-ms 15 --chaos-loss 0.05 push ./dataset.tar.zst velcrux://storage.corp/backups/
+```
+
+### Operational CLI Tools (`velcrux chaos`)
+
+```bash
+# Display live chaos engine impairment parameters and cumulative fault statistics
+velcrux chaos status
+
+# Machine-readable JSON status report for automated SRE tooling
+velcrux chaos status --json
+
+# Apply a predefined impairment profile (clean, wan, satellite, cellular, degraded, blackhole)
+velcrux chaos profile satellite
+
+# Machine-readable profile activation status
+velcrux chaos profile wan --json
+
+# Run an in-process Gilbert-Elliott Markov impairment benchmark
+velcrux chaos benchmark --packets 10000 --loss 0.05 --delay-ms 20
+
+# Run a benchmark with custom burst loss transition probabilities and JSON output
+velcrux chaos benchmark --packets 20000 --loss 0.08 --delay-ms 100 --jitter-ms 25 --corrupt-rate 0.001 --json
+
+# Manually trigger immediate fault injection state mutations
+velcrux chaos inject --loss 0.10 --delay-ms 40 --corrupt-rate 0.005
+
+# Inject a complete network partition blackhole
+velcrux chaos inject --blackhole
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics`:
+- `velcrux_chaos_packets_dropped_total`: Total number of packets intentionally dropped by the fault engine.
+- `velcrux_chaos_packets_delayed_total`: Total number of packets subjected to artificial propagation delay and jitter.
+- `velcrux_chaos_packets_reordered_total`: Total number of packets deferred or shuffled out-of-order.
+- `velcrux_chaos_packets_duplicated_total`: Total number of synthetic duplicate packets injected into the stream.
+- `velcrux_chaos_bytes_corrupted_total`: Total number of payload bytes subjected to Byzantine bit-rot mutations.
+- `velcrux_chaos_partitions_active`: Gauge indicating whether an active partition blackhole condition is currently in effect (0 or 1).
+
+
 
 
 

@@ -361,6 +361,46 @@ struct Cli {
     )]
     swarm_max_peers: usize,
 
+    /// Enable Automated Continuous Chaos Engineering and Fault Injection (Option BX).
+    #[arg(long = "chaos", env = "VELCRUX_CHAOS", global = true)]
+    chaos: bool,
+
+    /// Chaos uniform packet loss rate (Option BX, e.g. 0.05 for 5% loss).
+    #[arg(
+        long = "chaos-loss",
+        env = "VELCRUX_CHAOS_LOSS",
+        default_value = "0.0",
+        global = true
+    )]
+    chaos_loss: f64,
+
+    /// Chaos base transmission latency delay in milliseconds (Option BX).
+    #[arg(
+        long = "chaos-delay-ms",
+        env = "VELCRUX_CHAOS_DELAY_MS",
+        default_value = "0",
+        global = true
+    )]
+    chaos_delay_ms: u64,
+
+    /// Chaos latency variance / jitter in milliseconds (Option BX).
+    #[arg(
+        long = "chaos-jitter-ms",
+        env = "VELCRUX_CHAOS_JITTER_MS",
+        default_value = "0",
+        global = true
+    )]
+    chaos_jitter_ms: u64,
+
+    /// Chaos Byzantine payload bit-rot corruption rate (Option BX, e.g. 0.005).
+    #[arg(
+        long = "chaos-corrupt-rate",
+        env = "VELCRUX_CHAOS_CORRUPT_RATE",
+        default_value = "0.0",
+        global = true
+    )]
+    chaos_corrupt_rate: f64,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -608,6 +648,11 @@ enum Cmd {
     Swarm {
         #[command(subcommand)]
         sub: SwarmSubCmd,
+    },
+    /// Automated continuous chaos engineering & network fault injection suite (Option BX).
+    Chaos {
+        #[command(subcommand)]
+        sub: ChaosSubCmd,
     },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
@@ -1090,6 +1135,63 @@ enum SwarmSubCmd {
         /// Total chunks distributed across the mesh.
         #[arg(long, default_value = "50")]
         chunks: usize,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ChaosSubCmd {
+    /// Inspect active chaos fault injection status, parameters, and telemetry counters.
+    Status {
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect preconfigured WAN impairment profiles (clean, subsea, satellite, cellular, byzantine, partition).
+    Profile {
+        /// Optional profile name to inspect (clean, subsea, satellite, cellular, byzantine, partition).
+        name: Option<String>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run an automated chaos fault simulation benchmark and measure loss, latency, and Byzantine detection.
+    Benchmark {
+        /// Impairment profile preset to benchmark (subsea, satellite, cellular, byzantine, partition).
+        #[arg(long, default_value = "subsea")]
+        profile: String,
+        /// Total packets / frames to simulate.
+        #[arg(long, default_value = "1000")]
+        packets: usize,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dynamically inject on-demand network impairments and fault conditions.
+    Inject {
+        /// Uniform packet loss probability (0.0 to 1.0).
+        #[arg(long, default_value = "0.0")]
+        loss: f64,
+        /// Transmission delay in milliseconds.
+        #[arg(long, default_value = "0")]
+        delay_ms: u64,
+        /// Latency jitter variance in milliseconds.
+        #[arg(long, default_value = "0")]
+        jitter_ms: u64,
+        /// Packet reordering probability (0.0 to 1.0).
+        #[arg(long, default_value = "0.0")]
+        reorder: f64,
+        /// Packet duplication probability (0.0 to 1.0).
+        #[arg(long, default_value = "0.0")]
+        duplicate: f64,
+        /// Byzantine payload bit corruption probability (0.0 to 1.0).
+        #[arg(long, default_value = "0.0")]
+        corrupt: f64,
+        /// Enable complete network severance / partition blackhole.
+        #[arg(long)]
+        partition: bool,
         /// Output in JSON format.
         #[arg(long)]
         json: bool,
@@ -2770,6 +2872,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Swarm { sub } => {
             run_swarm(&cli, sub).await?;
+        }
+        Cmd::Chaos { sub } => {
+            run_chaos(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -6462,6 +6567,196 @@ async fn run_swarm(cli: &Cli, sub: &SwarmSubCmd) -> anyhow::Result<()> {
                     }
                 );
                 println!("Simulation Duration:     {} ms", report.duration_ms);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_chaos(cli: &Cli, sub: &ChaosSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        ChaosSubCmd::Status { json } => {
+            let mut config = velcrux_core::ChaosConfig::default();
+            config.enabled = cli.chaos;
+            config.loss_rate = cli.chaos_loss;
+            config.delay_ms = cli.chaos_delay_ms;
+            config.jitter_ms = cli.chaos_jitter_ms;
+            config.corrupt_rate = cli.chaos_corrupt_rate;
+
+            let engine = velcrux_core::ChaosEngine::new(config, 42);
+            let report = engine.status();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Velcrux Chaos Fault Injection Status ===");
+                println!(
+                    "Engine Status:       {}",
+                    if report.enabled {
+                        "ACTIVE (Enabled)"
+                    } else {
+                        "INACTIVE (Disabled)"
+                    }
+                );
+                println!("Active Profile:      {}", report.active_profile);
+                println!("Packets Processed:   {}", report.packets_processed);
+                println!("Packets Passed:      {}", report.packets_passed);
+                println!(
+                    "Packets Dropped:     {} ({:.2}%)",
+                    report.packets_dropped, report.loss_percentage
+                );
+                println!("Packets Delayed:     {}", report.packets_delayed);
+                println!("Packets Reordered:   {}", report.packets_reordered);
+                println!("Packets Duplicated:  {}", report.packets_duplicated);
+                println!("Bytes Corrupted:     {}", report.bytes_corrupted);
+                println!(
+                    "Partition Blackhole: {}",
+                    if report.blackhole_active {
+                        "ACTIVE"
+                    } else {
+                        "INACTIVE"
+                    }
+                );
+            }
+            Ok(())
+        }
+        ChaosSubCmd::Profile { name, json } => {
+            #[derive(Serialize)]
+            struct ProfileInfo {
+                name: String,
+                kind: String,
+                loss_rate_pct: f64,
+                delay_ms: u64,
+                jitter_ms: u64,
+                reorder_rate_pct: f64,
+                duplicate_rate_pct: f64,
+                corrupt_rate_pct: f64,
+                blackhole: bool,
+            }
+
+            let kinds = match name {
+                Some(ref n) => {
+                    let k = velcrux_core::ChaosProfileKind::from_name(n).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unknown chaos profile '{n}'. Available: clean, subsea, satellite, cellular, byzantine, partition"
+                        )
+                    })?;
+                    vec![k]
+                }
+                None => vec![
+                    velcrux_core::ChaosProfileKind::Clean,
+                    velcrux_core::ChaosProfileKind::Subsea,
+                    velcrux_core::ChaosProfileKind::Satellite,
+                    velcrux_core::ChaosProfileKind::Cellular,
+                    velcrux_core::ChaosProfileKind::Byzantine,
+                    velcrux_core::ChaosProfileKind::Partition,
+                ],
+            };
+
+            let profiles: Vec<ProfileInfo> = kinds
+                .into_iter()
+                .map(|k| {
+                    let cfg = velcrux_core::ChaosConfig::from_profile(k);
+                    ProfileInfo {
+                        name: k.as_str().to_string(),
+                        kind: format!("{:?}", k),
+                        loss_rate_pct: cfg.loss_rate * 100.0,
+                        delay_ms: cfg.delay_ms,
+                        jitter_ms: cfg.jitter_ms,
+                        reorder_rate_pct: cfg.reorder_rate * 100.0,
+                        duplicate_rate_pct: cfg.duplicate_rate * 100.0,
+                        corrupt_rate_pct: cfg.corrupt_rate * 100.0,
+                        blackhole: cfg.blackhole,
+                    }
+                })
+                .collect();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&profiles)?);
+            } else {
+                println!("=== Preconfigured WAN Impairment Profiles ===");
+                for p in profiles {
+                    println!("\nProfile: {}", p.name);
+                    println!("  Loss Rate:      {:.2}%", p.loss_rate_pct);
+                    println!(
+                        "  One-Way Delay:  {} ms (±{} ms jitter)",
+                        p.delay_ms, p.jitter_ms
+                    );
+                    println!("  Reorder Rate:   {:.2}%", p.reorder_rate_pct);
+                    println!("  Duplicate Rate: {:.2}%", p.duplicate_rate_pct);
+                    println!("  Byzantine Rot:  {:.2}%", p.corrupt_rate_pct);
+                    println!("  Blackhole:      {}", p.blackhole);
+                }
+            }
+            Ok(())
+        }
+        ChaosSubCmd::Benchmark {
+            profile,
+            packets,
+            json,
+        } => {
+            let report = velcrux_core::run_chaos_benchmark(profile, *packets);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Velcrux Chaos Fault Injection Benchmark ===");
+                println!("Target Profile:      {}", report.profile_name);
+                println!("Simulated Packets:   {}", report.total_packets);
+                println!("Delivered Packets:   {}", report.delivered_packets);
+                println!(
+                    "Dropped Packets:     {} ({:.2}% loss)",
+                    report.dropped_packets, report.measured_loss_pct
+                );
+                println!("Reordered Packets:   {}", report.reordered_packets);
+                println!("Duplicated Packets:  {}", report.duplicated_packets);
+                println!("Corrupted Payloads:  {}", report.corrupted_payloads);
+                println!("Average Latency:     {:.2} ms", report.avg_delay_ms);
+                println!("Benchmark Duration:  {} ms", report.duration_ms);
+            }
+            Ok(())
+        }
+        ChaosSubCmd::Inject {
+            loss,
+            delay_ms,
+            jitter_ms,
+            reorder,
+            duplicate,
+            corrupt,
+            partition,
+            json,
+        } => {
+            let config = velcrux_core::ChaosConfig {
+                enabled: true,
+                loss_rate: *loss,
+                burst_loss: None,
+                delay_ms: *delay_ms,
+                jitter_ms: *jitter_ms,
+                reorder_rate: *reorder,
+                reorder_delay_ms: 20,
+                duplicate_rate: *duplicate,
+                corrupt_rate: *corrupt,
+                blackhole: *partition,
+            };
+
+            let engine = velcrux_core::ChaosEngine::new(config, 1337);
+            let report = engine.status();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Chaos Impairment Fault Injected ===");
+                println!("Loss Rate:        {:.2}%", loss * 100.0);
+                println!(
+                    "Latency Delay:    {} ms (±{} ms jitter)",
+                    delay_ms, jitter_ms
+                );
+                println!("Reordering:       {:.2}%", reorder * 100.0);
+                println!("Duplication:      {:.2}%", duplicate * 100.0);
+                println!("Byzantine Rot:    {:.2}%", corrupt * 100.0);
+                println!("Partition Active: {}", partition);
             }
             Ok(())
         }

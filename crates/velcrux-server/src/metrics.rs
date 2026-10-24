@@ -165,6 +165,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let swarm_bytes_outbound = stats.swarm_bytes_p2p_outbound.load(Ordering::Relaxed);
     let swarm_bytes_offloaded = stats.swarm_bytes_offloaded.load(Ordering::Relaxed);
     let swarm_chunks_poisoned = stats.swarm_chunks_poisoned.load(Ordering::Relaxed);
+    let chaos_dropped = stats.chaos_packets_dropped_total.load(Ordering::Relaxed);
+    let chaos_delayed = stats.chaos_packets_delayed_total.load(Ordering::Relaxed);
+    let chaos_reordered = stats.chaos_packets_reordered_total.load(Ordering::Relaxed);
+    let chaos_duplicated = stats.chaos_packets_duplicated_total.load(Ordering::Relaxed);
+    let chaos_corrupted = stats.chaos_bytes_corrupted_total.load(Ordering::Relaxed);
+    let chaos_partitions = stats.chaos_partitions_active.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -366,6 +372,24 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_swarm_chunks_poisoned_rejected_total Total poisoned or corrupt chunks rejected and peers banned\n\
          # TYPE velcrux_swarm_chunks_poisoned_rejected_total counter\n\
          velcrux_swarm_chunks_poisoned_rejected_total {swarm_chunks_poisoned}\n\n\
+         # HELP velcrux_chaos_packets_dropped_total Total packets dropped via simulated chaos loss\n\
+         # TYPE velcrux_chaos_packets_dropped_total counter\n\
+         velcrux_chaos_packets_dropped_total {chaos_dropped}\n\n\
+         # HELP velcrux_chaos_packets_delayed_total Total packets delayed via latency and jitter injection\n\
+         # TYPE velcrux_chaos_packets_delayed_total counter\n\
+         velcrux_chaos_packets_delayed_total {chaos_delayed}\n\n\
+         # HELP velcrux_chaos_packets_reordered_total Total packets reordered via out-of-order queueing\n\
+         # TYPE velcrux_chaos_packets_reordered_total counter\n\
+         velcrux_chaos_packets_reordered_total {chaos_reordered}\n\n\
+         # HELP velcrux_chaos_packets_duplicated_total Total packets duplicated via transmission duplication\n\
+         # TYPE velcrux_chaos_packets_duplicated_total counter\n\
+         velcrux_chaos_packets_duplicated_total {chaos_duplicated}\n\n\
+         # HELP velcrux_chaos_bytes_corrupted_total Total payload bytes mutated by Byzantine fault injection\n\
+         # TYPE velcrux_chaos_bytes_corrupted_total counter\n\
+         velcrux_chaos_bytes_corrupted_total {chaos_corrupted}\n\n\
+         # HELP velcrux_chaos_partitions_active Total simulated network partitions actively enforced\n\
+         # TYPE velcrux_chaos_partitions_active gauge\n\
+         velcrux_chaos_partitions_active {chaos_partitions}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

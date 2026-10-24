@@ -547,4 +547,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-037](adr/ADR-037-hierarchical-token-bucket-qos-multiplexer.md) | Hierarchical Token-Bucket QoS & Flow Multiplexer | Accepted | Dual CIR/PIR bandwidth guarantees, capacity borrowing, and 4:2:1 DRR flow multiplexing |
 | [ADR-038](adr/ADR-038-cas-generational-gc-tombstoning-compaction.md) | CAS Generational GC, Tombstoning & Compaction Daemon | Accepted | Generational nursery lease, crash-safe tombstones, resurrection, and empty shard pruning |
 | [ADR-039](adr/ADR-039-distributed-gossip-swarm-p2p-engine.md) | Distributed Gossip-Based Swarm P2P Acceleration Engine | Accepted | SWIM-inspired epidemic gossip discovery, rarest-first chunk mesh, and Byzantine chunk poisoning defense |
+| [ADR-040](adr/ADR-040-automated-chaos-engineering-fault-injection.md) | Automated Continuous Chaos Engineering & Fault Injection Suite | Accepted | Gilbert-Elliott Markov burst loss, Byzantine bit-rot injection, and partition blackholing |
 
