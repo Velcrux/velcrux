@@ -3240,6 +3240,62 @@ Exposed under `/metrics`:
 - `velcrux_chaos_bytes_corrupted_total`: Total number of payload bytes subjected to Byzantine bit-rot mutations.
 - `velcrux_chaos_partitions_active`: Gauge indicating whether an active partition blackhole condition is currently in effect (0 or 1).
 
+## 46. Hierarchical Storage Tiering & Hybrid Lifecycle Reference (ADR-041, Option BY)
+
+### Operational Overview & Architecture
+Velcrux integrates an automated multi-tenant hierarchical storage tiering and hybrid lifecycle engine designed to optimize physical storage costs while preserving sub-millisecond retrieval performance for active synchronization workloads (`ADR-041`).
+
+Storage Tiers:
+- **Hot**: Uncompressed NVMe/SSD local staging store (`hot/chunks/`). Ingest target for all incoming transfer chunks.
+- **Warm**: Secondary bulk capacity disk or staging pool (`warm/chunks/`).
+- **Cold**: High-density Zstandard-compressed archive storage (`cold/chunks/<shard>/<hash>.zst`). Supports configurable compression levels (1–22, default 9) with streaming on-the-fly decompression and automatic promotion.
+
+### Operational CLI Tools (`velcrux tier`)
+
+```bash
+# Display inventory breakdown across Hot, Warm, and Cold tiers along with space savings ratio
+velcrux tier status
+
+# Machine-readable JSON status report for monitoring and capacity alerting
+velcrux tier status --json
+
+# Filter status for a specific tenant namespace
+velcrux tier status --tenant tenant_prod --json
+
+# Configure retention policy for a tenant (demote to Warm after 7 days, Cold after 30 days, purge after 365 days)
+velcrux tier policy set --tenant tenant_prod --hot-days 7 --warm-days 30 --cold-retention-days 365 --max-hot-bytes 107374182400
+
+# Inspect active tiering policy for a tenant
+velcrux tier policy get --tenant tenant_prod
+
+# List all registered tenant tiering policies
+velcrux tier policy list
+
+# Manually migrate a chunk to Cold tier
+velcrux tier migrate --hash a1b2c3d4... --target cold
+
+# Promote a cold chunk back to Hot tier
+velcrux tier migrate --hash a1b2c3d4... --target hot
+
+# Execute a dry-run lifecycle sweep simulating demotions and expirations
+velcrux tier sweep --tenant tenant_prod --dry-run
+
+# Execute an automated lifecycle sweep to enforce age and capacity quotas
+velcrux tier sweep --tenant tenant_prod
+
+# Run background cryptographic integrity scrub on all Cold tier archives
+velcrux tier scrub
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics`:
+- `velcrux_storage_tier_bytes{tier="hot|warm|cold"}`: Current physical bytes stored across each storage tier.
+- `velcrux_storage_tier_promotions_total`: Total number of chunks promoted to higher tiers.
+- `velcrux_storage_tier_demotions_total`: Total number of chunks demoted to lower tiers.
+- `velcrux_storage_tier_retrievals_total`: Total number of read accesses served across all tiers.
+
+
 
 
 

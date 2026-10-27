@@ -253,6 +253,18 @@ pub struct ServerStats {
     pub chaos_bytes_corrupted_total: AtomicU64,
     /// Total network partitions actively enforced by chaos engine (Option BX).
     pub chaos_partitions_active: AtomicU64,
+    /// Total bytes stored in Hot tier (Option BY).
+    pub storage_tier_hot_bytes: AtomicU64,
+    /// Total bytes stored in Warm tier (Option BY).
+    pub storage_tier_warm_bytes: AtomicU64,
+    /// Total bytes stored in Cold tier (Option BY).
+    pub storage_tier_cold_bytes: AtomicU64,
+    /// Total chunk promotions between tiers (Option BY).
+    pub storage_tier_promotions_total: AtomicU64,
+    /// Total chunk demotions between tiers (Option BY).
+    pub storage_tier_demotions_total: AtomicU64,
+    /// Total chunk read retrievals across tiers (Option BY).
+    pub storage_tier_retrievals_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -351,6 +363,12 @@ impl Default for ServerStats {
             chaos_packets_duplicated_total: AtomicU64::new(0),
             chaos_bytes_corrupted_total: AtomicU64::new(0),
             chaos_partitions_active: AtomicU64::new(0),
+            storage_tier_hot_bytes: AtomicU64::new(0),
+            storage_tier_warm_bytes: AtomicU64::new(0),
+            storage_tier_cold_bytes: AtomicU64::new(0),
+            storage_tier_promotions_total: AtomicU64::new(0),
+            storage_tier_demotions_total: AtomicU64::new(0),
+            storage_tier_retrievals_total: AtomicU64::new(0),
         }
     }
 }

@@ -171,6 +171,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let chaos_duplicated = stats.chaos_packets_duplicated_total.load(Ordering::Relaxed);
     let chaos_corrupted = stats.chaos_bytes_corrupted_total.load(Ordering::Relaxed);
     let chaos_partitions = stats.chaos_partitions_active.load(Ordering::Relaxed);
+    let tier_hot_bytes = stats.storage_tier_hot_bytes.load(Ordering::Relaxed);
+    let tier_warm_bytes = stats.storage_tier_warm_bytes.load(Ordering::Relaxed);
+    let tier_cold_bytes = stats.storage_tier_cold_bytes.load(Ordering::Relaxed);
+    let tier_promotions = stats.storage_tier_promotions_total.load(Ordering::Relaxed);
+    let tier_demotions = stats.storage_tier_demotions_total.load(Ordering::Relaxed);
+    let tier_retrievals = stats.storage_tier_retrievals_total.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -390,6 +396,20 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          # HELP velcrux_chaos_partitions_active Total simulated network partitions actively enforced\n\
          # TYPE velcrux_chaos_partitions_active gauge\n\
          velcrux_chaos_partitions_active {chaos_partitions}\n\n\
+         # HELP velcrux_storage_tier_bytes Current bytes stored by hierarchical tier\n\
+         # TYPE velcrux_storage_tier_bytes gauge\n\
+         velcrux_storage_tier_bytes{{tier=\"hot\"}} {tier_hot_bytes}\n\
+         velcrux_storage_tier_bytes{{tier=\"warm\"}} {tier_warm_bytes}\n\
+         velcrux_storage_tier_bytes{{tier=\"cold\"}} {tier_cold_bytes}\n\n\
+         # HELP velcrux_storage_tier_promotions_total Total chunk promotions to higher tiers\n\
+         # TYPE velcrux_storage_tier_promotions_total counter\n\
+         velcrux_storage_tier_promotions_total {tier_promotions}\n\n\
+         # HELP velcrux_storage_tier_demotions_total Total chunk demotions to lower tiers\n\
+         # TYPE velcrux_storage_tier_demotions_total counter\n\
+         velcrux_storage_tier_demotions_total {tier_demotions}\n\n\
+         # HELP velcrux_storage_tier_retrievals_total Total chunk read retrievals across all tiers\n\
+         # TYPE velcrux_storage_tier_retrievals_total counter\n\
+         velcrux_storage_tier_retrievals_total {tier_retrievals}\n\n\
          # HELP velcrux_resource_limit_hits_total Total resource limit enforcements\n\
          # TYPE velcrux_resource_limit_hits_total counter\n\
          velcrux_resource_limit_hits_total{{limit=\"bandwidth\"}} {bandwidth_hits}\n\

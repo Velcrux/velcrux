@@ -654,6 +654,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: ChaosSubCmd,
     },
+    /// Multi-tenant hierarchical storage tiering and hybrid lifecycle engine (Option BY).
+    Tier {
+        #[command(subcommand)]
+        sub: TierSubCmd,
+    },
     /// Manage whole-directory transactions, inspect journals, and rollback/recover (Option BM).
     Tx {
         #[command(subcommand)]
@@ -1192,6 +1197,124 @@ enum ChaosSubCmd {
         /// Enable complete network severance / partition blackhole.
         #[arg(long)]
         partition: bool,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TierSubCmd {
+    /// Inspect storage tier inventory, byte breakdown across Hot/Warm/Cold, and space efficiency.
+    Status {
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Filter inventory by tenant identity.
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage multi-tenant tiering policies (hot/warm/cold days, max capacity, compression).
+    Policy {
+        #[command(subcommand)]
+        sub: TierPolicySubCmd,
+    },
+    /// Manually migrate a chunk to a specific storage tier (hot, warm, cold).
+    Migrate {
+        /// Cryptographic BLAKE3 hex hash of the chunk to migrate.
+        #[arg(long)]
+        hash: String,
+        /// Target storage tier: hot, warm, or cold.
+        #[arg(long)]
+        target: String,
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute an automated lifecycle evaluation sweep to demote aged or excess chunks.
+    Sweep {
+        /// Target tenant for lifecycle sweep (or all if omitted).
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Simulate lifecycle sweep without modifying on-disk files.
+        #[arg(long)]
+        dry_run: bool,
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cryptographically scrub Cold tier archives to detect and report bit-rot early.
+    Scrub {
+        /// Target tenant for scrubbing (or all if omitted).
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TierPolicySubCmd {
+    /// Configure or update a tenant's lifecycle tiering rules.
+    Set {
+        /// Tenant identifier (use "default" for global fallback).
+        #[arg(long, default_value = "default")]
+        tenant: String,
+        /// Days without access before demoting Hot chunks to Warm (0 to disable).
+        #[arg(long)]
+        hot_days: Option<u32>,
+        /// Days without access before demoting Warm chunks to Cold (0 to disable).
+        #[arg(long)]
+        warm_days: Option<u32>,
+        /// Optional days before expired unreferenced Cold chunks are purged.
+        #[arg(long)]
+        cold_retention_days: Option<u32>,
+        /// Maximum capacity in bytes for Hot storage before LRU demotion triggers.
+        #[arg(long)]
+        max_hot_bytes: Option<u64>,
+        /// Whether reads on Cold/Warm chunks promote them back to Hot tier.
+        #[arg(long)]
+        auto_promote: Option<bool>,
+        /// Zstandard compression level for Cold archives (1 to 22).
+        #[arg(long)]
+        compression_level: Option<i32>,
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Display active lifecycle tiering policy for a tenant.
+    Get {
+        /// Tenant identifier.
+        #[arg(long, default_value = "default")]
+        tenant: String,
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
+        /// Output in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all registered tenant lifecycle policies.
+    List {
+        /// Path to tiered chunk store root directory.
+        #[arg(long)]
+        chunk_store: Option<PathBuf>,
         /// Output in JSON format.
         #[arg(long)]
         json: bool,
@@ -2875,6 +2998,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Chaos { sub } => {
             run_chaos(&cli, sub).await?;
+        }
+        Cmd::Tier { sub } => {
+            run_tier(&cli, sub).await?;
         }
         Cmd::Tx { sub } => {
             run_tx(&cli, sub).await?;
@@ -6757,6 +6883,294 @@ async fn run_chaos(cli: &Cli, sub: &ChaosSubCmd) -> anyhow::Result<()> {
                 println!("Duplication:      {:.2}%", duplicate * 100.0);
                 println!("Byzantine Rot:    {:.2}%", corrupt * 100.0);
                 println!("Partition Active: {}", partition);
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_tier(cli: &Cli, sub: &TierSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        TierSubCmd::Status {
+            chunk_store,
+            tenant,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+            let status = mgr.get_status(tenant.as_deref())?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Hierarchical Storage Tiering Status ===");
+                println!("Store Root:           {}", status.root_dir);
+                if let Some(ref t) = status.tenant_filter {
+                    println!("Tenant Filter:        {}", t);
+                }
+                println!(
+                    "Hot Tier (NVMe/SSD):  {} chunks ({})",
+                    status.hot_chunks,
+                    format_bytes(status.hot_bytes)
+                );
+                println!(
+                    "Warm Tier (Bulk):     {} chunks ({})",
+                    status.warm_chunks,
+                    format_bytes(status.warm_bytes)
+                );
+                println!(
+                    "Cold Tier (Archive):  {} chunks ({} compressed, {} raw)",
+                    status.cold_chunks,
+                    format_bytes(status.cold_bytes),
+                    format_bytes(status.cold_raw_bytes)
+                );
+                println!(
+                    "Total Inventory:      {} chunks ({} stored, {} raw)",
+                    status.total_chunks,
+                    format_bytes(status.total_stored_bytes),
+                    format_bytes(status.total_raw_bytes)
+                );
+                println!("Space Savings Ratio:  {:.2}x", status.space_savings_ratio);
+                println!("Total Promotions:     {}", status.promotions_total);
+                println!("Total Demotions:      {}", status.demotions_total);
+                println!("Total Retrievals:     {}", status.retrievals_total);
+            }
+            Ok(())
+        }
+        TierSubCmd::Policy { sub } => match sub {
+            TierPolicySubCmd::Set {
+                tenant,
+                hot_days,
+                warm_days,
+                cold_retention_days,
+                max_hot_bytes,
+                auto_promote,
+                compression_level,
+                chunk_store,
+                json,
+            } => {
+                let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+                let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+                let mut policy = mgr.get_tenant_policy(tenant).unwrap_or_else(|_| {
+                    velcrux_core::storage::TenantTierPolicy {
+                        tenant_id: tenant.clone(),
+                        ..Default::default()
+                    }
+                });
+                policy.tenant_id = tenant.clone();
+
+                if let Some(d) = hot_days {
+                    policy.hot_to_warm_days = *d;
+                }
+                if let Some(d) = warm_days {
+                    policy.warm_to_cold_days = *d;
+                }
+                if cold_retention_days.is_some() {
+                    policy.cold_retention_days = *cold_retention_days;
+                }
+                if max_hot_bytes.is_some() {
+                    policy.max_hot_bytes = *max_hot_bytes;
+                }
+                if let Some(p) = auto_promote {
+                    policy.auto_promote_on_read = *p;
+                }
+                if let Some(lvl) = compression_level {
+                    policy.cold_compression_level = *lvl;
+                }
+
+                mgr.set_tenant_policy(policy.clone())?;
+
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&policy)?);
+                } else {
+                    println!("=== Updated Tiering Policy for '{}' ===", tenant);
+                    println!("Hot to Warm Days:     {}", policy.hot_to_warm_days);
+                    println!("Warm to Cold Days:    {}", policy.warm_to_cold_days);
+                    println!(
+                        "Cold Retention Days:  {}",
+                        policy
+                            .cold_retention_days
+                            .map(|d| d.to_string())
+                            .unwrap_or_else(|| "indefinite".to_string())
+                    );
+                    println!(
+                        "Max Hot Capacity:     {}",
+                        policy
+                            .max_hot_bytes
+                            .map(format_bytes)
+                            .unwrap_or_else(|| "unlimited".to_string())
+                    );
+                    println!("Auto-promote on Read: {}", policy.auto_promote_on_read);
+                    println!("Cold Compression Lvl: {}", policy.cold_compression_level);
+                }
+                Ok(())
+            }
+            TierPolicySubCmd::Get {
+                tenant,
+                chunk_store,
+                json,
+            } => {
+                let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+                let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+                let policy = mgr.get_tenant_policy(tenant)?;
+
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&policy)?);
+                } else {
+                    println!("=== Tiering Policy for '{}' ===", tenant);
+                    println!("Hot to Warm Days:     {}", policy.hot_to_warm_days);
+                    println!("Warm to Cold Days:    {}", policy.warm_to_cold_days);
+                    println!(
+                        "Cold Retention Days:  {}",
+                        policy
+                            .cold_retention_days
+                            .map(|d| d.to_string())
+                            .unwrap_or_else(|| "indefinite".to_string())
+                    );
+                    println!(
+                        "Max Hot Capacity:     {}",
+                        policy
+                            .max_hot_bytes
+                            .map(format_bytes)
+                            .unwrap_or_else(|| "unlimited".to_string())
+                    );
+                    println!("Auto-promote on Read: {}", policy.auto_promote_on_read);
+                    println!("Cold Compression Lvl: {}", policy.cold_compression_level);
+                }
+                Ok(())
+            }
+            TierPolicySubCmd::List { chunk_store, json } => {
+                let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+                let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+                let policies = mgr.list_tenant_policies()?;
+
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&policies)?);
+                } else {
+                    println!("=== Registered Tenant Tiering Policies ===");
+                    println!(
+                        "{:<16} {:<12} {:<12} {:<16} {:<16}",
+                        "TENANT", "HOT->WARM", "WARM->COLD", "COLD RETENTION", "MAX HOT BYTES"
+                    );
+                    for p in &policies {
+                        println!(
+                            "{:<16} {:<12} {:<12} {:<16} {:<16}",
+                            p.tenant_id,
+                            format!("{} d", p.hot_to_warm_days),
+                            format!("{} d", p.warm_to_cold_days),
+                            p.cold_retention_days
+                                .map(|d| format!("{d} d"))
+                                .unwrap_or_else(|| "indefinite".to_string()),
+                            p.max_hot_bytes
+                                .map(format_bytes)
+                                .unwrap_or_else(|| "unlimited".to_string()),
+                        );
+                    }
+                }
+                Ok(())
+            }
+        },
+        TierSubCmd::Migrate {
+            hash,
+            target,
+            chunk_store,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+            let parsed_hash = velcrux_core::util::Hash::from_hex(hash)
+                .ok_or_else(|| anyhow::anyhow!("invalid BLAKE3 chunk hash hex: '{hash}'"))?;
+            let target_tier: velcrux_core::storage::StorageTier = target.parse()?;
+            let migrated = mgr.migrate_chunk(&parsed_hash, target_tier)?;
+
+            if *json || is_json {
+                let res = serde_json::json!({
+                    "hash": hash,
+                    "target_tier": target_tier.as_str(),
+                    "success": migrated,
+                });
+                println!("{}", serde_json::to_string_pretty(&res)?);
+            } else if migrated {
+                println!(
+                    "Successfully migrated chunk {} to {} tier.",
+                    hash,
+                    target_tier.as_str().to_uppercase()
+                );
+            } else {
+                println!("Chunk {} was not found in the tiered store.", hash);
+            }
+            Ok(())
+        }
+        TierSubCmd::Sweep {
+            tenant,
+            dry_run,
+            chunk_store,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+            let report = mgr.run_lifecycle_sweep(tenant.as_deref(), *dry_run)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Hierarchical Lifecycle Sweep ===");
+                println!("Target Tenant:       {}", report.tenant_id);
+                println!("Dry Run:             {}", report.dry_run);
+                println!("Chunks Scanned:      {}", report.chunks_scanned);
+                println!(
+                    "Hot -> Warm Demoted: {} ({})",
+                    report.hot_to_warm_migrated,
+                    format_bytes(report.hot_to_warm_bytes)
+                );
+                println!(
+                    "Warm -> Cold Demoted:{} ({} raw -> {} compressed)",
+                    report.warm_to_cold_migrated,
+                    format_bytes(report.warm_to_cold_raw_bytes),
+                    format_bytes(report.warm_to_cold_compressed_bytes)
+                );
+                println!(
+                    "Storage Reclaimed:   {}",
+                    format_bytes(report.warm_to_cold_bytes_saved)
+                );
+                println!(
+                    "Cold Expired Purged: {} ({})",
+                    report.cold_expired,
+                    format_bytes(report.cold_expired_bytes)
+                );
+                println!("Sweep Duration:      {} ms", report.duration_ms);
+            }
+            Ok(())
+        }
+        TierSubCmd::Scrub {
+            tenant,
+            chunk_store,
+            json,
+        } => {
+            let root = resolve_dedup_store_root(cli, chunk_store.as_ref());
+            let mgr = velcrux_core::storage::TieredStorageManager::new(root)?;
+            let report = mgr.scrub_cold_tier(tenant.as_deref())?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Cold Tier Cryptographic Scrub Report ===");
+                println!("Cold Chunks Scanned: {}", report.chunks_scanned);
+                println!("Valid Chunks:        {}", report.valid_chunks);
+                println!("Corrupted Chunks:    {}", report.corrupt_chunks.len());
+                println!(
+                    "Bytes Verified:      {}",
+                    format_bytes(report.bytes_verified)
+                );
+                println!("Scrub Duration:      {} ms", report.duration_ms);
+                if !report.corrupt_chunks.is_empty() {
+                    println!("\nCorrupted Chunks Detected:");
+                    for c in &report.corrupt_chunks {
+                        println!("  [!] {c}");
+                    }
+                }
             }
             Ok(())
         }

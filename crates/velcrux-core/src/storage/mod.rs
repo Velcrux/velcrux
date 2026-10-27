@@ -34,6 +34,7 @@ pub mod s3;
 pub mod scrub;
 pub mod snapshot;
 pub mod sparse;
+pub mod tiering;
 pub mod vfs;
 pub mod xattr;
 pub use azure::{
@@ -75,6 +76,10 @@ pub use snapshot::{
     SnapshotSummary, SNAPSHOT_CHUNK_SIZE,
 };
 pub use sparse::{detect_file_extents, detect_reader_extents, is_zero_slice, FileExtent};
+pub use tiering::{
+    ChunkTierMetadata, ColdScrubReport, LifecycleSweepReport, StorageTier, TenantTierPolicy,
+    TieredStorageManager, TieredStoreStatus,
+};
 pub use vfs::{
     MountConfig, MountManager, MountSessionInfo, VfsAttr, VfsCacheStats, VfsDirEntry, VfsError,
     VfsFileType, VfsStatFs, VirtualMountEngine, VFS_ROOT_INODE,
