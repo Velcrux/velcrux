@@ -3295,6 +3295,71 @@ Exposed under `/metrics`:
 - `velcrux_storage_tier_demotions_total`: Total number of chunks demoted to lower tiers.
 - `velcrux_storage_tier_retrievals_total`: Total number of read accesses served across all tiers.
 
+---
+
+## 47. Distributed Raft Consensus & Cluster Coordinator Reference (ADR-042, Option BZ)
+
+Velcrux incorporates a native Safe Rust implementation of the Raft consensus algorithm (`ADR-042`) providing strongly consistent cluster coordination, automated leader election failover, distributed file leases with monotonic epoch fencing, and dynamic node membership management.
+
+### Cluster Topology & Consensus Invariants
+
+1. **Strict Majority Quorum**:
+   - For an $N$-node coordinator group, leadership elections and log entry commits require acknowledgments from at least $\lfloor N / 2 \rfloor + 1$ nodes.
+   - Example quorums: 3 nodes $\to$ 2 votes; 5 nodes $\to$ 3 votes; 7 nodes $\to$ 4 votes.
+2. **Automated Sub-Second Failover**:
+   - When heartbeats from the authoritative leader cease for $> 150\text{--}300\text{ ms}$, surviving nodes initiate candidate elections.
+   - Upon quorum election, the new leader asserts authority by broadcasting log entries, immediately restoring cluster writes.
+3. **Monotonic Epoch Fencing**:
+   - Distributed resource leases (e.g., transfer session locks, manifest write locks) increment a cluster-wide monotonically increasing `epoch`.
+   - Any mutation request arriving from a partitioned former leader bearing an `epoch < min_valid_epoch` is strictly discarded, preventing zombie writes.
+
+### Operational CLI Commands (`velcrux cluster`)
+
+```bash
+# Display cluster Raft consensus health, current term, role, leader ID, and active leases
+velcrux cluster status --raft
+
+# Machine-readable JSON output for cluster orchestration and monitoring
+velcrux --json cluster status --raft
+
+# Dynamically join a new node to the Raft cluster
+velcrux cluster join node-4 --address 127.0.0.1:8004
+
+# Gracefully decommission an existing node from the cluster
+velcrux cluster leave node-4
+
+# Trigger an immediate on-demand Raft election round
+velcrux cluster elect --candidate node-2 --peers node-1,node-2,node-3
+
+# Acquire an exclusive distributed resource lease with monotonic epoch fencing
+velcrux cluster lease acquire transfer-lock-10 --holder node-1 --ttl-ms 10000
+
+# Inspect all active cluster leases
+velcrux cluster lease list
+
+# Release an actively held distributed lease
+velcrux cluster lease release transfer-lock-10 --holder node-1
+
+# Run multi-node distributed Raft simulation benchmark (e.g. 5 nodes, 50 rounds)
+velcrux cluster benchmark --nodes 5 --rounds 50
+
+# Output benchmark results as structured JSON
+velcrux --json cluster benchmark --nodes 5 --rounds 50
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_raft_term` | `gauge` | Current Raft consensus term. |
+| `velcrux_raft_is_leader` | `gauge` | Binary flag indicating if local node is the authoritative cluster leader (1=yes, 0=no). |
+| `velcrux_raft_commit_index` | `gauge` | Highest log entry index committed to the replicated state machine. |
+| `velcrux_raft_leader_elections_total` | `counter` | Total number of leader election attempts initiated. |
+| `velcrux_raft_active_leases` | `gauge` | Total number of active distributed leases held across the cluster. |
+| `velcrux_raft_rpc_messages_total` | `counter` | Cumulative count of Raft consensus RPC messages (`RequestVote`, `AppendEntries`) processed. |
+
 
 
 

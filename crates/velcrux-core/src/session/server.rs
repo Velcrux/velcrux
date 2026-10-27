@@ -265,6 +265,18 @@ pub struct ServerStats {
     pub storage_tier_demotions_total: AtomicU64,
     /// Total chunk read retrievals across tiers (Option BY).
     pub storage_tier_retrievals_total: AtomicU64,
+    /// Current Raft consensus term (Option BZ).
+    pub raft_current_term: AtomicU64,
+    /// Whether node is authoritative cluster leader (1 = leader, 0 = follower/candidate) (Option BZ).
+    pub raft_is_leader: AtomicU64,
+    /// Replicated log commit index (Option BZ).
+    pub raft_commit_index: AtomicU64,
+    /// Total leader election campaigns triggered (Option BZ).
+    pub raft_elections_total: AtomicU64,
+    /// Total active unexpired cluster resource leases (Option BZ).
+    pub raft_active_leases: AtomicU64,
+    /// Total Raft RPC messages exchanged (Option BZ).
+    pub raft_rpc_messages_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -369,6 +381,12 @@ impl Default for ServerStats {
             storage_tier_promotions_total: AtomicU64::new(0),
             storage_tier_demotions_total: AtomicU64::new(0),
             storage_tier_retrievals_total: AtomicU64::new(0),
+            raft_current_term: AtomicU64::new(0),
+            raft_is_leader: AtomicU64::new(0),
+            raft_commit_index: AtomicU64::new(0),
+            raft_elections_total: AtomicU64::new(0),
+            raft_active_leases: AtomicU64::new(0),
+            raft_rpc_messages_total: AtomicU64::new(0),
         }
     }
 }

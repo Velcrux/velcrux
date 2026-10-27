@@ -177,6 +177,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let tier_promotions = stats.storage_tier_promotions_total.load(Ordering::Relaxed);
     let tier_demotions = stats.storage_tier_demotions_total.load(Ordering::Relaxed);
     let tier_retrievals = stats.storage_tier_retrievals_total.load(Ordering::Relaxed);
+    let raft_term = stats.raft_current_term.load(Ordering::Relaxed);
+    let raft_is_leader = stats.raft_is_leader.load(Ordering::Relaxed);
+    let raft_commit = stats.raft_commit_index.load(Ordering::Relaxed);
+    let raft_elections = stats.raft_elections_total.load(Ordering::Relaxed);
+    let raft_leases = stats.raft_active_leases.load(Ordering::Relaxed);
+    let raft_rpc_msgs = stats.raft_rpc_messages_total.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -434,7 +440,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_process_cpu_seconds {cpu_seconds:.2}\n\n\
          # HELP velcrux_process_resident_bytes Resident memory size in bytes\n\
          # TYPE velcrux_process_resident_bytes gauge\n\
-         velcrux_process_resident_bytes {resident_bytes}\n"
+         velcrux_process_resident_bytes {resident_bytes}\n\n\
+         # HELP velcrux_raft_term Current Raft consensus term\n\
+         # TYPE velcrux_raft_term gauge\n\
+         velcrux_raft_term {raft_term}\n\n\
+         # HELP velcrux_raft_is_leader Whether this node is currently the cluster Raft leader (1=yes, 0=no)\n\
+         # TYPE velcrux_raft_is_leader gauge\n\
+         velcrux_raft_is_leader {raft_is_leader}\n\n\
+         # HELP velcrux_raft_commit_index Current Raft state machine commit index\n\
+         # TYPE velcrux_raft_commit_index gauge\n\
+         velcrux_raft_commit_index {raft_commit}\n\n\
+         # HELP velcrux_raft_leader_elections_total Total Raft leader election attempts initiated\n\
+         # TYPE velcrux_raft_leader_elections_total counter\n\
+         velcrux_raft_leader_elections_total {raft_elections}\n\n\
+         # HELP velcrux_raft_active_leases Number of active cluster metadata leases held\n\
+         # TYPE velcrux_raft_active_leases gauge\n\
+         velcrux_raft_active_leases {raft_leases}\n\n\
+         # HELP velcrux_raft_rpc_messages_total Total Raft consensus RPC messages processed\n\
+         # TYPE velcrux_raft_rpc_messages_total counter\n\
+         velcrux_raft_rpc_messages_total {raft_rpc_msgs}\n"
     )
 }
 

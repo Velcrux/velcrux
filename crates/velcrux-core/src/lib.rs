@@ -23,6 +23,7 @@
 pub mod auth;
 pub mod chaos;
 pub mod chunking;
+pub mod consensus;
 pub mod crypto;
 pub mod error;
 pub mod manifest;
@@ -55,6 +56,11 @@ pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
     Chunker, FastCdcChunker, FixedChunker, PipelinedChunk, PipelinedChunker, ReuseStats,
     RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
+};
+pub use consensus::{
+    run_raft_benchmark, AppendEntriesRequest, AppendEntriesResponse, ClusterLease,
+    ClusterMetadataStateMachine, RaftBenchmarkReport, RaftClusterStatus, RaftCommand,
+    RaftCoordinator, RaftLogEntry, RaftRole, RaftStats, RequestVoteRequest, RequestVoteResponse,
 };
 pub use crypto::{
     build_chunk_aad, derive_key_from_passphrase, derive_transfer_key, ChunkDecryptor,

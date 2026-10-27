@@ -549,4 +549,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-039](adr/ADR-039-distributed-gossip-swarm-p2p-engine.md) | Distributed Gossip-Based Swarm P2P Acceleration Engine | Accepted | SWIM-inspired epidemic gossip discovery, rarest-first chunk mesh, and Byzantine chunk poisoning defense |
 | [ADR-040](adr/ADR-040-automated-chaos-engineering-fault-injection.md) | Automated Continuous Chaos Engineering & Fault Injection Suite | Accepted | Gilbert-Elliott Markov burst loss, Byzantine bit-rot injection, and partition blackholing |
 | [ADR-041](adr/ADR-041-hierarchical-storage-tiering-lifecycle.md) | Multi-Tenant Hierarchical Storage Tiering & Hybrid Lifecycle Engine | Accepted | Hot NVMe, Warm bulk disk, Cold Zstd compressed archive, transparent reads, and bit-rot scrub |
+| [ADR-042](adr/ADR-042-distributed-raft-consensus-cluster-coordinator.md) | Distributed Raft Consensus & High-Availability Cluster Metadata Coordinator | Accepted | Linearizable Raft consensus, automated election failover, epoch-fenced resource leases |
 
