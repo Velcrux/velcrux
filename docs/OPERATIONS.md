@@ -3360,6 +3360,69 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_raft_active_leases` | `gauge` | Total number of active distributed leases held across the cluster. |
 | `velcrux_raft_rpc_messages_total` | `counter` | Cumulative count of Raft consensus RPC messages (`RequestVote`, `AppendEntries`) processed. |
 
+## 48. Cryptographic Zero-Knowledge Transfer Audit Proofs Reference (ADR-043, Option CA)
+
+Velcrux incorporates a native Safe Rust implementation of domain-separated BLAKE3 Merkle accumulator trees and cryptographic zero-knowledge transfer audit proofs (`ADR-043`). Transfer records are blinded using 256-bit secret salts, enabling third-party auditors and regulators (SOC 2, ISO 27001, HIPAA, SOX) to verify transfer execution and exclusion without exposing confidential payload data, tenant IDs, timestamps, or file paths.
+
+### Cryptographic Invariants & Workflow
+
+1. **Blinded Leaf Commitment**:
+   - Each transfer event produces an unblinded `AuditRecord` containing `{transfer_id, tenant_id, manifest_hash, total_bytes, completed_at_secs}`.
+   - The record is blinded using a 32-byte cryptographically secure salt:
+     $$C = \text{BLAKE3}\left(\text{"velcrux-audit-leaf:v1"} \parallel \text{transfer\_id} \parallel \text{tenant\_id} \parallel \text{manifest\_hash} \parallel \text{total\_bytes} \parallel \text{completed\_at\_secs} \parallel \text{salt}\right)$$
+   - Only the blinded leaf commitment $C$ is inserted into the accumulator tree.
+2. **Authoritative Merkle Accumulator Root**:
+   - Pairwise nodes are combined via domain-separated BLAKE3 hashing:
+     $$H_{\text{parent}} = \text{BLAKE3}\left(\text{"velcrux-audit-node:v1"} \parallel H_{\text{left}} \parallel H_{\text{right}}\right)$$
+   - The resulting 32-byte root hash for each epoch represents an immutable, tamper-evident cryptographic accumulator.
+3. **Inclusion Proofs ($O(\log N)$)**:
+   - Given leaf index $i$, the tree generates a compact vector of sibling hashes and direction flags (`Left` or `Right`).
+   - The auditor verifies $\text{hash\_path}(C, \text{siblings}) \stackrel{?}{=} \text{expected\_root}$ in under 5 microseconds.
+4. **Exclusion / Non-Membership Proofs**:
+   - For an uncommitted transfer hash $C_T$, the accumulator identifies adjacent lower ($C_L < C_T$) and upper ($C_R > C_T$) bounding leaves in its sorted index.
+   - Proving inclusion of both $C_L$ and $C_R$ mathematically demonstrates that $C_T$ does not exist in the accumulator.
+
+### Operational CLI Commands (`velcrux audit`)
+
+```bash
+# Display Merkle accumulator tree status and root hash for an epoch
+velcrux audit status --epoch 1
+
+# Output status in machine-readable JSON format
+velcrux --json audit status --epoch 1
+
+# Export the authoritative Merkle root hash for an epoch
+velcrux audit export-root --epoch 1
+
+# Generate a zero-knowledge inclusion proof for a transfer
+velcrux audit generate-proof 01J00000000000000000012345 --tenant tenant-prod --bytes 10485760 --out proof.json
+
+# Cryptographically verify an inclusion proof against expected root and leaf hashes
+velcrux audit verify-proof --root <root_hex> --leaf <leaf_hex> --proof-file proof.json
+
+# Verify inline JSON proof representation
+velcrux audit verify-proof --root <root_hex> --leaf <leaf_hex> --proof-json '{"leaf_index":0,"leaf_hash":"...","expected_root":"...","path":[],"transfer_id":"..."}'
+
+# Execute high-throughput accumulator accumulation and verification benchmark
+velcrux audit benchmark --records 100 --samples 20
+
+# Output benchmark metrics as structured JSON
+velcrux --json audit benchmark --records 100 --samples 20
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_audit_proofs_generated_total` | `counter` | Total zero-knowledge audit proofs generated. |
+| `velcrux_audit_proofs_verified_total` | `counter` | Total zero-knowledge audit proofs successfully verified. |
+| `velcrux_audit_proof_verification_failures_total` | `counter` | Total zero-knowledge audit proofs failing cryptographic verification. |
+| `velcrux_audit_tree_records_total` | `counter` | Total transfer records accumulated in active audit tree. |
+| `velcrux_audit_tree_height` | `gauge` | Current depth / height of active audit Merkle accumulator tree. |
+
+
 
 
 

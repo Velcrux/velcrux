@@ -183,6 +183,13 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let raft_elections = stats.raft_elections_total.load(Ordering::Relaxed);
     let raft_leases = stats.raft_active_leases.load(Ordering::Relaxed);
     let raft_rpc_msgs = stats.raft_rpc_messages_total.load(Ordering::Relaxed);
+    let audit_proofs_gen = stats.audit_proofs_generated_total.load(Ordering::Relaxed);
+    let audit_proofs_ver = stats.audit_proofs_verified_total.load(Ordering::Relaxed);
+    let audit_proof_fails = stats
+        .audit_proof_verification_failures_total
+        .load(Ordering::Relaxed);
+    let audit_tree_records = stats.audit_tree_records_total.load(Ordering::Relaxed);
+    let audit_tree_height = stats.audit_tree_height.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -458,7 +465,22 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_raft_active_leases {raft_leases}\n\n\
          # HELP velcrux_raft_rpc_messages_total Total Raft consensus RPC messages processed\n\
          # TYPE velcrux_raft_rpc_messages_total counter\n\
-         velcrux_raft_rpc_messages_total {raft_rpc_msgs}\n"
+         velcrux_raft_rpc_messages_total {raft_rpc_msgs}\n\n\
+         # HELP velcrux_audit_proofs_generated_total Total zero-knowledge audit proofs generated\n\
+         # TYPE velcrux_audit_proofs_generated_total counter\n\
+         velcrux_audit_proofs_generated_total {audit_proofs_gen}\n\n\
+         # HELP velcrux_audit_proofs_verified_total Total zero-knowledge audit proofs verified successfully\n\
+         # TYPE velcrux_audit_proofs_verified_total counter\n\
+         velcrux_audit_proofs_verified_total {audit_proofs_ver}\n\n\
+         # HELP velcrux_audit_proof_verification_failures_total Total zero-knowledge audit proofs failing verification\n\
+         # TYPE velcrux_audit_proof_verification_failures_total counter\n\
+         velcrux_audit_proof_verification_failures_total {audit_proof_fails}\n\n\
+         # HELP velcrux_audit_tree_records_total Total records committed to active audit Merkle tree accumulator\n\
+         # TYPE velcrux_audit_tree_records_total counter\n\
+         velcrux_audit_tree_records_total {audit_tree_records}\n\n\
+         # HELP velcrux_audit_tree_height Current depth of active audit Merkle tree accumulator\n\
+         # TYPE velcrux_audit_tree_height gauge\n\
+         velcrux_audit_tree_height {audit_tree_height}\n"
     )
 }
 

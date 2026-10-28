@@ -277,6 +277,16 @@ pub struct ServerStats {
     pub raft_active_leases: AtomicU64,
     /// Total Raft RPC messages exchanged (Option BZ).
     pub raft_rpc_messages_total: AtomicU64,
+    /// Total zero-knowledge audit proofs generated (Option CA).
+    pub audit_proofs_generated_total: AtomicU64,
+    /// Total zero-knowledge audit proofs verified successfully (Option CA).
+    pub audit_proofs_verified_total: AtomicU64,
+    /// Total zero-knowledge audit proofs failing verification (Option CA).
+    pub audit_proof_verification_failures_total: AtomicU64,
+    /// Total records committed to active audit Merkle tree accumulator (Option CA).
+    pub audit_tree_records_total: AtomicU64,
+    /// Current depth/height of active audit Merkle tree accumulator (Option CA).
+    pub audit_tree_height: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -387,6 +397,11 @@ impl Default for ServerStats {
             raft_elections_total: AtomicU64::new(0),
             raft_active_leases: AtomicU64::new(0),
             raft_rpc_messages_total: AtomicU64::new(0),
+            audit_proofs_generated_total: AtomicU64::new(0),
+            audit_proofs_verified_total: AtomicU64::new(0),
+            audit_proof_verification_failures_total: AtomicU64::new(0),
+            audit_tree_records_total: AtomicU64::new(0),
+            audit_tree_height: AtomicU64::new(0),
         }
     }
 }

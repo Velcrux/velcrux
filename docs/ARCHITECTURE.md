@@ -550,4 +550,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-040](adr/ADR-040-automated-chaos-engineering-fault-injection.md) | Automated Continuous Chaos Engineering & Fault Injection Suite | Accepted | Gilbert-Elliott Markov burst loss, Byzantine bit-rot injection, and partition blackholing |
 | [ADR-041](adr/ADR-041-hierarchical-storage-tiering-lifecycle.md) | Multi-Tenant Hierarchical Storage Tiering & Hybrid Lifecycle Engine | Accepted | Hot NVMe, Warm bulk disk, Cold Zstd compressed archive, transparent reads, and bit-rot scrub |
 | [ADR-042](adr/ADR-042-distributed-raft-consensus-cluster-coordinator.md) | Distributed Raft Consensus & High-Availability Cluster Metadata Coordinator | Accepted | Linearizable Raft consensus, automated election failover, epoch-fenced resource leases |
+| [ADR-043](adr/ADR-043-zero-knowledge-transfer-audit-proofs.md) | Cryptographic Zero-Knowledge Transfer Audit Proofs & Merkle Tree Accumulator | Accepted | Blinded BLAKE3 leaf commitments, logarithmic inclusion proofs, adjacent non-membership exclusion proofs |
 

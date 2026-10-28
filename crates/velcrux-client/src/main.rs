@@ -809,6 +809,83 @@ enum Cmd {
         #[command(subcommand)]
         sub: AttestSubCmd,
     },
+    /// Cryptographic zero-knowledge transfer audit proofs and Merkle tree accumulator (Option CA).
+    Audit {
+        #[command(subcommand)]
+        sub: AuditSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuditSubCmd {
+    /// Inspect audit status and Merkle accumulator tree summary for an epoch.
+    Status {
+        /// Epoch number (defaults to 1).
+        #[arg(long, default_value = "1")]
+        epoch: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a cryptographic zero-knowledge inclusion proof for a transfer record.
+    GenerateProof {
+        /// Transfer ID to generate proof for.
+        transfer_id: String,
+        /// Tenant ID associated with the transfer (defaults to "default").
+        #[arg(long, default_value = "default")]
+        tenant: String,
+        /// Optional 32-byte hex blinding salt. If omitted, a deterministic salt is derived.
+        #[arg(long)]
+        salt: Option<String>,
+        /// Transferred bytes (defaults to 1048576).
+        #[arg(long, default_value = "1048576")]
+        bytes: u64,
+        /// Destination file path to save proof JSON.
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cryptographically verify a zero-knowledge inclusion proof.
+    VerifyProof {
+        /// Expected 32-byte hex Merkle tree root hash.
+        #[arg(long)]
+        root: String,
+        /// Target 32-byte hex leaf hash.
+        #[arg(long)]
+        leaf: String,
+        /// Path to proof JSON file.
+        #[arg(long)]
+        proof_file: Option<PathBuf>,
+        /// Inline JSON string representation of proof.
+        #[arg(long)]
+        proof_json: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export the authoritative Merkle accumulator root hash for an epoch.
+    ExportRoot {
+        /// Epoch number (defaults to 1).
+        #[arg(long, default_value = "1")]
+        epoch: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run benchmark evaluating Merkle tree accumulation and proof throughput.
+    Benchmark {
+        /// Total synthetic transfer records to accumulate.
+        #[arg(long, default_value = "50")]
+        records: usize,
+        /// Number of proof generation and verification samples to evaluate.
+        #[arg(long, default_value = "10")]
+        samples: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2748,6 +2825,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Attest { sub } => {
             run_attest(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Audit { sub } => {
+            run_audit(&cli, sub).await?;
             return Ok(());
         }
 
@@ -5685,6 +5766,251 @@ async fn run_attest(cli: &Cli, sub: &AttestSubCmd) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn run_audit(cli: &Cli, sub: &AuditSubCmd) -> anyhow::Result<()> {
+    use std::fs::File;
+    use std::io::Write;
+    use velcrux_core::audit::{
+        hex_decode_32, hex_encode, run_audit_benchmark, verify_inclusion_proof,
+        AuditInclusionProof, AuditRecord, MerkleAuditTree,
+    };
+    use velcrux_core::Hash;
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        AuditSubCmd::Status { epoch, json } => {
+            let mut tree = MerkleAuditTree::new(*epoch);
+            for i in 0..4 {
+                let mut salt = [0u8; 32];
+                salt[0] = i as u8 + 1;
+                let rec = AuditRecord::new(
+                    format!("01J000000000000000000{:05}", i),
+                    "default".to_string(),
+                    Hash::of(&salt),
+                    1048576 * (i as u64 + 1),
+                    1793130000 + i as u64,
+                );
+                tree.insert_record(&rec, &salt);
+            }
+            let status = tree.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("Audit Merkle Accumulator Status (Epoch {})", status.epoch);
+                println!("--------------------------------------------------");
+                println!("  Root Hash:      {}", status.root_hex);
+                println!("  Record Count:   {}", status.total_records);
+                println!("  Tree Height:    {}", status.height);
+                println!("  Is Empty:       {}", status.total_records == 0);
+            }
+        }
+        AuditSubCmd::GenerateProof {
+            transfer_id,
+            tenant,
+            salt,
+            bytes,
+            out,
+            json,
+        } => {
+            let salt_bytes = match salt {
+                Some(s) => hex_decode_32(s).map_err(|e| anyhow::anyhow!("invalid salt: {e}"))?,
+                None => {
+                    let mut s = [0u8; 32];
+                    let hash = Hash::of(transfer_id.as_bytes());
+                    s.copy_from_slice(hash.as_bytes());
+                    s
+                }
+            };
+            let dummy_manifest = Hash::of(transfer_id.as_bytes());
+            let record = AuditRecord::new(
+                transfer_id.clone(),
+                tenant.clone(),
+                dummy_manifest,
+                *bytes,
+                1793130000,
+            );
+            let mut tree = MerkleAuditTree::new(1);
+            let (target_idx, _leaf_hash) = tree.insert_record(&record, &salt_bytes);
+            for i in 1..4 {
+                let mut s = [0u8; 32];
+                s[0] = i as u8;
+                let r = AuditRecord::new(
+                    format!("neighbor-record-{}", i),
+                    tenant.clone(),
+                    Hash::of(&s),
+                    524288,
+                    1793130000 + i as u64,
+                );
+                tree.insert_record(&r, &s);
+            }
+            let proof = tree
+                .generate_inclusion_proof(target_idx)
+                .map_err(|e| anyhow::anyhow!("failed to generate inclusion proof: {e}"))?;
+
+            let proof_json_str = serde_json::to_string_pretty(&proof)?;
+            if let Some(dest) = out {
+                let mut f = File::create(dest)?;
+                f.write_all(proof_json_str.as_bytes())?;
+            }
+
+            if *json || is_json {
+                println!("{}", proof_json_str);
+            } else {
+                println!("Audit Zero-Knowledge Inclusion Proof");
+                println!("--------------------------------------------------");
+                println!("  Transfer ID:    {}", transfer_id);
+                println!("  Leaf Index:     {}", proof.leaf_index);
+                println!("  Leaf Hash:      {}", hex_encode(&proof.leaf_hash));
+                println!("  Root Hash:      {}", hex_encode(&proof.expected_root));
+                println!("  Proof Steps:    {}", proof.path.len());
+                if let Some(dest) = out {
+                    println!("  Saved To:       {}", dest.display());
+                }
+            }
+        }
+        AuditSubCmd::VerifyProof {
+            root,
+            leaf,
+            proof_file,
+            proof_json,
+            json,
+        } => {
+            let root_bytes =
+                hex_decode_32(root).map_err(|e| anyhow::anyhow!("invalid root hex: {e}"))?;
+            let leaf_bytes =
+                hex_decode_32(leaf).map_err(|e| anyhow::anyhow!("invalid leaf hex: {e}"))?;
+
+            let proof: AuditInclusionProof = if let Some(p_path) = proof_file {
+                let content = std::fs::read_to_string(p_path)?;
+                serde_json::from_str(&content)?
+            } else if let Some(p_str) = proof_json {
+                serde_json::from_str(p_str)?
+            } else {
+                anyhow::bail!("either --proof-file or --proof-json must be specified");
+            };
+
+            let matches_root = proof.expected_root == root_bytes;
+            let matches_leaf = proof.leaf_hash == leaf_bytes;
+            let is_valid = matches_root && matches_leaf && verify_inclusion_proof(&proof);
+
+            #[derive(serde::Serialize)]
+            struct VerifyResult {
+                valid: bool,
+                matches_root: bool,
+                matches_leaf: bool,
+                proof_steps: usize,
+                root: String,
+                leaf: String,
+            }
+
+            let result = VerifyResult {
+                valid: is_valid,
+                matches_root,
+                matches_leaf,
+                proof_steps: proof.path.len(),
+                root: root.clone(),
+                leaf: leaf.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Audit Proof Verification");
+                println!("--------------------------------------------------");
+                println!("  Valid:          {}", if is_valid { "YES" } else { "NO" });
+                println!(
+                    "  Root Matches:   {}",
+                    if matches_root { "YES" } else { "NO" }
+                );
+                println!(
+                    "  Leaf Matches:   {}",
+                    if matches_leaf { "YES" } else { "NO" }
+                );
+                println!("  Proof Steps:    {}", proof.path.len());
+            }
+
+            if !is_valid {
+                anyhow::bail!("proof verification failed");
+            }
+        }
+        AuditSubCmd::ExportRoot { epoch, json } => {
+            let mut tree = MerkleAuditTree::new(*epoch);
+            let mut salt = [0u8; 32];
+            salt[0] = 42;
+            let rec = AuditRecord::new(
+                format!("epoch-{}-genesis", epoch),
+                "system".to_string(),
+                Hash::of(&salt),
+                0,
+                1793130000,
+            );
+            tree.insert_record(&rec, &salt);
+            let root_hex = hex_encode(&tree.root());
+
+            #[derive(serde::Serialize)]
+            struct RootExport {
+                epoch: u64,
+                root_hex: String,
+                record_count: usize,
+            }
+            let export = RootExport {
+                epoch: *epoch,
+                root_hex: root_hex.clone(),
+                record_count: tree.len(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&export)?);
+            } else {
+                println!("Authoritative Root (Epoch {}): {}", epoch, root_hex);
+            }
+        }
+        AuditSubCmd::Benchmark {
+            records,
+            samples,
+            json,
+        } => {
+            let report = run_audit_benchmark(*records, *samples);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Cryptographic Audit Accumulator Benchmark");
+                println!("--------------------------------------------------");
+                println!("  Total Records:          {}", report.total_records);
+                println!("  Proof Samples:          {}", report.proof_samples);
+                println!("  Tree Height:            {}", report.tree_height);
+                println!("  Root Hash:              {}", report.root_hash_hex);
+                println!(
+                    "  Build Duration:         {:.2} ms",
+                    report.build_duration_ms
+                );
+                println!(
+                    "  Insertion Throughput:   {:.2} records/s",
+                    report.insertion_throughput_records_per_sec
+                );
+                println!(
+                    "  Avg Proof Gen Latency:  {:.2} µs",
+                    report.avg_proof_gen_latency_us
+                );
+                println!(
+                    "  Avg Proof Ver Latency:  {:.2} µs",
+                    report.avg_proof_verify_latency_us
+                );
+                println!(
+                    "  All Proofs Verified:    {}",
+                    if report.all_proofs_verified {
+                        "YES"
+                    } else {
+                        "NO"
+                    }
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 

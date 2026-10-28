@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
 #[allow(missing_docs)]
+pub mod audit;
 pub mod auth;
 pub mod chaos;
 pub mod chunking;
@@ -39,6 +40,12 @@ pub mod transfer;
 pub mod transport;
 pub mod util;
 
+pub use audit::{
+    combine_hashes, hex_decode_32, hex_encode, run_audit_benchmark, verify_exclusion_proof,
+    verify_inclusion_proof, AuditBenchmarkReport, AuditExclusionProof, AuditInclusionProof,
+    AuditProofDirection, AuditProofStep, AuditRecord, AuditTreeStatus, BlindedAuditLeaf,
+    MerkleAuditTree, AUDIT_LEAF_DOMAIN_TAG, AUDIT_NODE_DOMAIN_TAG,
+};
 pub use auth::{
     compute_signed_payload, create_pubkey_auth_token, generate_target_attestation,
     verify_pubkey_auth_token, verify_target_attestation, AttestationEnvelope, AttestationError,
