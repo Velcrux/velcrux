@@ -297,6 +297,16 @@ pub struct ServerStats {
     pub router_session_migration_failures_total: AtomicU64,
     /// Latest observed session migration handover latency in microseconds (Option CB).
     pub router_handover_latency_us: AtomicU64,
+    /// Total packets processed by hardware-accelerated eBPF/XDP kernel bypass (Option CC).
+    pub xdp_packets_processed_total: AtomicU64,
+    /// Total packets redirected into AF_XDP zero-copy ring buffers (Option CC).
+    pub xdp_packets_redirected_total: AtomicU64,
+    /// Total packets dropped wire-speed at XDP layer (Option CC).
+    pub xdp_packets_dropped_total: AtomicU64,
+    /// Current active/allocated frames in AF_XDP UMEM memory pool (Option CC).
+    pub xdp_umem_frames_active: AtomicU64,
+    /// Latest observed per-packet XDP processing latency in nanoseconds (Option CC).
+    pub xdp_processing_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -417,6 +427,11 @@ impl Default for ServerStats {
             router_session_migrations_total: AtomicU64::new(0),
             router_session_migration_failures_total: AtomicU64::new(0),
             router_handover_latency_us: AtomicU64::new(0),
+            xdp_packets_processed_total: AtomicU64::new(0),
+            xdp_packets_redirected_total: AtomicU64::new(0),
+            xdp_packets_dropped_total: AtomicU64::new(0),
+            xdp_umem_frames_active: AtomicU64::new(0),
+            xdp_processing_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }

@@ -40,6 +40,7 @@ pub mod telemetry;
 pub mod transfer;
 pub mod transport;
 pub mod util;
+pub mod xdp;
 
 pub use audit::{
     combine_hashes, hex_decode_32, hex_encode, run_audit_benchmark, verify_exclusion_proof,
@@ -197,4 +198,8 @@ pub use transport::{
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,
     VectorizedScanner,
+};
+pub use xdp::{
+    parse_packet_headers, run_xdp_benchmark, PacketHeaderSummary, UmemConfig, UmemPool, XdpAction,
+    XdpBenchmarkReport, XdpDescriptor, XdpDriverMode, XdpEngine, XdpFilterRule, XdpStatus,
 };

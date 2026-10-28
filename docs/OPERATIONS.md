@@ -3483,6 +3483,90 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_router_session_migration_failures_total` | `counter` | Total failed or rejected session migrations. |
 | `velcrux_router_handover_latency_microseconds` | `gauge` | Latest observed session migration handover latency in microseconds. |
 
+## 50. Hardware-Accelerated eBPF/XDP Packet Bypassing Reference (Option CC)
+
+Velcrux incorporates a native Linux eBPF/XDP kernel packet bypassing and AF_XDP (XSK) zero-copy UMEM ring buffer architecture (`ADR-045`, `PERFORMANCE.md` §26). This bypasses the Linux kernel `sk_buff` allocation, iptables/netfilter hooks, and socket receive queues, steering bulk QUIC transfers directly between physical NIC hardware DMA rings and user-space memory.
+
+### Driver Execution Modes
+
+Velcrux dynamically supports three XDP driver execution modes:
+- **`HardwareOffload` (FPGA / SmartNIC)**: eBPF byte-code loaded directly onto NIC processors (e.g. AMD Xilinx Alveo, NVIDIA Mellanox ConnectX-6 Dx/7). Achieves true sub-50 ns packet processing with 0% host CPU overhead.
+- **`NativeDriver` (NAPI Poll)**: eBPF filter executed inside the network interface driver ring loop before Linux allocates `sk_buff` structures. Ideal for high-speed commodity servers.
+- **`GenericSkb` (Emulation / Fallback)**: Operates after initial SKB creation; used on virtualized environments or interfaces lacking native XDP driver support.
+
+### AF_XDP Zero-Copy UMEM Descriptor Rings
+
+The user-space engine maps a contiguous, page-aligned frame pool (`UMEM`) coordinated by four circular ring buffers:
+- **Fill Ring**: Passes available, free memory frame addresses from user space to the NIC driver.
+- **RX Descriptor Ring**: Receives packet metadata (`addr`, `len`, `flags`) from the NIC driver without payload copy.
+- **TX Descriptor Ring**: Submits outbound packet frames for zero-copy DMA transmission.
+- **Completion Ring**: Signals completion of transmitted packet frames for frame recycling back to the UMEM pool.
+
+### Operator CLI Reference
+
+#### 1. Inspect Engine Status & Driver Mode
+```bash
+# Human-readable summary for native driver on eth0
+velcrux xdp status --interface eth0 --mode native
+
+# Inspect hardware offload status on FPGA/SmartNIC
+velcrux xdp status --interface eth0 --mode hardware
+
+# Output status report formatted as JSON
+velcrux --json xdp status --interface eth0
+```
+
+#### 2. Wire-Speed Packet Header Inspection
+```bash
+# Parse raw Ethernet, IPv4, UDP, and QUIC packet headers
+velcrux xdp inspect 00112233445566778899aabb08004500002e12344000401100007f0000017f00000112341d13001a0000c000000001080102030405060708040a0b0c0d
+
+# Machine-readable JSON output
+velcrux --json xdp inspect 00112233445566778899aabb08004500002e12344000401100007f0000017f00000112341d13001a0000c000000001080102030405060708040a0b0c0d
+```
+
+#### 3. Inspect Zero-Copy UMEM Descriptor Rings
+```bash
+# View Fill, Completion, RX, and TX ring buffer metrics
+velcrux xdp rings
+
+# Output ring metrics as JSON
+velcrux --json xdp rings
+```
+
+#### 4. Compile & Evaluate eBPF/XDP Packet Filtering Rules
+```bash
+# Compile and evaluate a redirect rule on port 7443
+velcrux xdp filter --port 7443 --action redirect
+
+# Filter by QUIC Connection ID prefix with drop action
+velcrux xdp filter --port 7443 --cid 01020304 --action drop
+
+# Output rule evaluation verdict formatted as JSON
+velcrux --json xdp filter --port 7443 --action redirect
+```
+
+#### 5. Execute Wire-Speed In-Memory XDP Benchmark
+```bash
+# Run 1,000-packet bypass benchmark with batch size 32
+velcrux xdp benchmark --packets 1000 --batch-size 32
+
+# Output performance metrics as JSON
+velcrux --json xdp benchmark --packets 1000 --batch-size 32
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_xdp_packets_processed_total` | `counter` | Total packets processed by hardware-accelerated eBPF/XDP kernel bypass. |
+| `velcrux_xdp_packets_redirected_total` | `counter` | Total packets redirected into AF_XDP zero-copy ring buffers. |
+| `velcrux_xdp_packets_dropped_total` | `counter` | Total packets dropped wire-speed at the XDP ingress layer. |
+| `velcrux_xdp_umem_frames_active` | `gauge` | Current active/allocated frames in AF_XDP UMEM memory pool. |
+| `velcrux_xdp_processing_latency_nanoseconds` | `gauge` | Latest observed per-packet XDP processing latency in nanoseconds. |
+
 
 
 

@@ -199,6 +199,13 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .router_session_migration_failures_total
         .load(Ordering::Relaxed);
     let router_handover_us = stats.router_handover_latency_us.load(Ordering::Relaxed);
+    let xdp_processed = stats.xdp_packets_processed_total.load(Ordering::Relaxed);
+    let xdp_redirected = stats.xdp_packets_redirected_total.load(Ordering::Relaxed);
+    let xdp_dropped = stats.xdp_packets_dropped_total.load(Ordering::Relaxed);
+    let xdp_umem_active = stats.xdp_umem_frames_active.load(Ordering::Relaxed);
+    let xdp_latency_ns = stats
+        .xdp_processing_latency_nanoseconds
+        .load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -504,7 +511,22 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_router_session_migration_failures_total {router_migration_fails}\n\n\
          # HELP velcrux_router_handover_latency_microseconds Latest observed session migration handover latency in microseconds\n\
          # TYPE velcrux_router_handover_latency_microseconds gauge\n\
-         velcrux_router_handover_latency_microseconds {router_handover_us}\n"
+         velcrux_router_handover_latency_microseconds {router_handover_us}\n\n\
+         # HELP velcrux_xdp_packets_processed_total Total packets processed by hardware-accelerated eBPF/XDP kernel bypass\n\
+         # TYPE velcrux_xdp_packets_processed_total counter\n\
+         velcrux_xdp_packets_processed_total {xdp_processed}\n\n\
+         # HELP velcrux_xdp_packets_redirected_total Total packets redirected into AF_XDP zero-copy ring buffers\n\
+         # TYPE velcrux_xdp_packets_redirected_total counter\n\
+         velcrux_xdp_packets_redirected_total {xdp_redirected}\n\n\
+         # HELP velcrux_xdp_packets_dropped_total Total packets dropped wire-speed at XDP layer\n\
+         # TYPE velcrux_xdp_packets_dropped_total counter\n\
+         velcrux_xdp_packets_dropped_total {xdp_dropped}\n\n\
+         # HELP velcrux_xdp_umem_frames_active Current active/allocated frames in AF_XDP UMEM memory pool\n\
+         # TYPE velcrux_xdp_umem_frames_active gauge\n\
+         velcrux_xdp_umem_frames_active {xdp_umem_active}\n\n\
+         # HELP velcrux_xdp_processing_latency_nanoseconds Latest observed per-packet XDP processing latency in nanoseconds\n\
+         # TYPE velcrux_xdp_processing_latency_nanoseconds gauge\n\
+         velcrux_xdp_processing_latency_nanoseconds {xdp_latency_ns}\n"
     )
 }
 

@@ -552,4 +552,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-042](adr/ADR-042-distributed-raft-consensus-cluster-coordinator.md) | Distributed Raft Consensus & High-Availability Cluster Metadata Coordinator | Accepted | Linearizable Raft consensus, automated election failover, epoch-fenced resource leases |
 | [ADR-043](adr/ADR-043-zero-knowledge-transfer-audit-proofs.md) | Cryptographic Zero-Knowledge Transfer Audit Proofs & Merkle Tree Accumulator | Accepted | Blinded BLAKE3 leaf commitments, logarithmic inclusion proofs, adjacent non-membership exclusion proofs |
 | [ADR-044](adr/ADR-044-distributed-dynamic-content-router-anycast-migration.md) | Distributed Dynamic Content Router & Anycast Session Migration | Accepted | Multi-PoP topology, latency/load-aware anycast steering, and keyed BLAKE3 session migration |
+| [ADR-045](adr/ADR-045-hardware-accelerated-ebpf-xdp-packet-bypass.md) | Hardware-Accelerated FPGA/eBPF Kernel XDP Packet Bypassing & UMEM Zero-Copy Rings | Accepted | Wire-speed packet header parsing, eBPF filter maps, AF_XDP UMEM descriptor rings, and FPGA offload |
 

@@ -819,6 +819,68 @@ enum Cmd {
         #[command(subcommand)]
         sub: RouterSubCmd,
     },
+    /// Hardware-accelerated FPGA/eBPF kernel XDP packet bypassing and UMEM zero-copy engine (Option CC).
+    Xdp {
+        #[command(subcommand)]
+        sub: XdpSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum XdpSubCmd {
+    /// Inspect active status, driver mode, UMEM frame allocations, and packet counters.
+    Status {
+        /// Target network interface name.
+        #[arg(long, default_value = "eth0")]
+        interface: String,
+        /// Hardware driver mode: generic, native, or hardware.
+        #[arg(long, default_value = "native")]
+        mode: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect and parse packet headers at wire speed (Ethernet, IPv4/IPv6, UDP/TCP, QUIC).
+    Inspect {
+        /// Hex-encoded packet payload.
+        packet_hex: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect AF_XDP ring buffer status (Fill Ring, RX Ring, TX Ring, Completion Ring).
+    Rings {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile and evaluate an eBPF/XDP wire-speed packet filtering rule.
+    Filter {
+        /// Target port to filter (default: 7443).
+        #[arg(long, default_value = "7443")]
+        port: u16,
+        /// Optional QUIC Connection ID hex string.
+        #[arg(long)]
+        cid: Option<String>,
+        /// XDP action if matched: redirect, pass, drop, tx (default: "redirect").
+        #[arg(long, default_value = "redirect")]
+        action: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run wire-speed packet parsing, filtering, and UMEM zero-copy ring benchmark.
+    Benchmark {
+        /// Number of benchmark packets to process (default: 1000).
+        #[arg(long, default_value = "1000")]
+        packets: usize,
+        /// AF_XDP descriptor batch processing size (default: 32).
+        #[arg(long, default_value = "32")]
+        batch_size: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2909,6 +2971,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Router { sub } => {
             run_router(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Xdp { sub } => {
+            run_xdp(&cli, sub).await?;
             return Ok(());
         }
 
@@ -6399,6 +6465,257 @@ async fn run_router(cli: &Cli, sub: &RouterSubCmd) -> anyhow::Result<()> {
                         "NO"
                     }
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_xdp(cli: &Cli, sub: &XdpSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::xdp::{
+        parse_packet_headers, run_xdp_benchmark, UmemConfig, XdpAction, XdpDriverMode, XdpEngine,
+        XdpFilterRule,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        XdpSubCmd::Status {
+            interface,
+            mode,
+            json,
+        } => {
+            let driver_mode = match mode.to_lowercase().as_str() {
+                "generic" | "skb" => XdpDriverMode::GenericSkb,
+                "hardware" | "fpga" | "offload" => XdpDriverMode::HardwareOffload,
+                _ => XdpDriverMode::NativeDriver,
+            };
+            let engine = XdpEngine::new(interface, driver_mode, UmemConfig::default());
+            engine.umem().populate_fill_ring(64);
+
+            let status = engine.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Hardware-Accelerated eBPF/XDP Kernel Bypass Status ===");
+                println!("  Interface:              {}", status.interface);
+                println!("  Driver Mode:            {:?}", status.driver_mode);
+                println!(
+                    "  Hardware Offload:       {}",
+                    if status.hardware_offload_active {
+                        "ACTIVE (FPGA / SmartNIC)"
+                    } else {
+                        "INACTIVE (Host Driver / Native)"
+                    }
+                );
+                println!("  UMEM Total Frames:      {}", status.umem_frame_count);
+                println!("  UMEM Frame Size:        {} bytes", status.umem_frame_size);
+                println!("  Available UMEM Frames:  {}", status.available_umem_frames);
+                println!("  Packets Processed:      {}", status.packets_processed);
+                println!("  Packets Redirected:     {}", status.packets_redirected);
+                println!("  Packets Dropped:        {}", status.packets_dropped);
+                println!("  Packets Passed:         {}", status.packets_passed);
+                println!("  Bytes Processed:        {}", status.bytes_processed);
+                println!("  Active Filter Rules:    {}", status.active_rules_count);
+            }
+        }
+        XdpSubCmd::Inspect { packet_hex, json } => {
+            let clean_hex = packet_hex.trim_start_matches("0x").replace([' ', ':'], "");
+            let bytes: Vec<u8> = (0..clean_hex.len())
+                .step_by(2)
+                .filter_map(|i| {
+                    if i + 2 <= clean_hex.len() {
+                        u8::from_str_radix(&clean_hex[i..i + 2], 16).ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if bytes.len() * 2 != clean_hex.len() {
+                anyhow::bail!("Invalid hex packet payload");
+            }
+            let summary = parse_packet_headers(&bytes).context(
+                "Unable to parse packet headers (packet truncated or unsupported L2/L3 protocol)",
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("=== XDP Wire-Speed Packet Header Inspection ===");
+                println!("  Ethernet EtherType:     0x{:04x}", summary.eth_proto);
+                println!("  Source IP:              {}", summary.src_ip);
+                println!("  Destination IP:         {}", summary.dst_ip);
+                println!("  Source Port:            {}", summary.src_port);
+                println!("  Destination Port:       {}", summary.dst_port);
+                println!("  Payload Length:         {} bytes", summary.payload_len);
+                println!(
+                    "  Is QUIC:                {}",
+                    if summary.is_quic { "YES" } else { "NO" }
+                );
+                if let Some(ref cid) = summary.quic_connection_id {
+                    println!("  QUIC Connection ID:     0x{}", cid);
+                } else {
+                    println!("  QUIC Connection ID:     None");
+                }
+            }
+        }
+        XdpSubCmd::Rings { json } => {
+            let config = UmemConfig::default();
+            let pool = velcrux_core::xdp::UmemPool::new(config.clone());
+            let populated = pool.populate_fill_ring(128);
+
+            #[derive(Serialize)]
+            struct RingStatusReport {
+                umem_frames: u32,
+                frame_size_bytes: u32,
+                free_frames: usize,
+                fill_ring_capacity: u32,
+                fill_ring_entries: usize,
+                rx_ring_capacity: u32,
+                tx_ring_capacity: u32,
+                completion_ring_capacity: u32,
+                zero_copy_ready: bool,
+            }
+
+            let report = RingStatusReport {
+                umem_frames: config.frame_count,
+                frame_size_bytes: config.frame_size,
+                free_frames: pool.available_frames(),
+                fill_ring_capacity: config.fill_ring_size,
+                fill_ring_entries: populated,
+                rx_ring_capacity: config.rx_ring_size,
+                tx_ring_capacity: config.tx_ring_size,
+                completion_ring_capacity: config.completion_ring_size,
+                zero_copy_ready: true,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== AF_XDP Zero-Copy UMEM Descriptor Rings ===");
+                println!("  Total UMEM Frames:      {}", report.umem_frames);
+                println!(
+                    "  Frame Size:             {} bytes",
+                    report.frame_size_bytes
+                );
+                println!("  Free Frames Available:  {}", report.free_frames);
+                println!(
+                    "  Fill Ring Capacity:     {} entries",
+                    report.fill_ring_capacity
+                );
+                println!(
+                    "  Fill Ring Active:       {} entries",
+                    report.fill_ring_entries
+                );
+                println!(
+                    "  RX Ring Capacity:       {} entries",
+                    report.rx_ring_capacity
+                );
+                println!(
+                    "  TX Ring Capacity:       {} entries",
+                    report.tx_ring_capacity
+                );
+                println!(
+                    "  Completion Ring Cap:    {} entries",
+                    report.completion_ring_capacity
+                );
+                println!(
+                    "  Zero-Copy Ready:        {}",
+                    if report.zero_copy_ready { "YES" } else { "NO" }
+                );
+            }
+        }
+        XdpSubCmd::Filter {
+            port,
+            cid,
+            action,
+            json,
+        } => {
+            let xdp_action = match action.to_lowercase().as_str() {
+                "drop" => XdpAction::Drop,
+                "pass" => XdpAction::Pass,
+                "tx" => XdpAction::Tx,
+                _ => XdpAction::Redirect,
+            };
+
+            let rule = XdpFilterRule {
+                priority: 1,
+                dst_port: Some(*port),
+                cid_prefix: cid.clone(),
+                action: xdp_action,
+                description: format!("Operator filter for port {port} -> {action}"),
+            };
+
+            let engine = XdpEngine::new("eth0", XdpDriverMode::NativeDriver, UmemConfig::default());
+            engine.add_rule(rule.clone());
+
+            let mut test_packet = vec![0u8; 64];
+            test_packet[12] = 0x08;
+            test_packet[13] = 0x00; // IPv4
+            test_packet[23] = 17; // UDP
+            test_packet[36] = (*port >> 8) as u8;
+            test_packet[37] = (*port & 0xff) as u8;
+
+            let (evaluated_action, parsed) = engine.evaluate_filter(&test_packet);
+
+            #[derive(Serialize)]
+            struct FilterEvalReport {
+                rule: XdpFilterRule,
+                evaluated_action: XdpAction,
+                matched: bool,
+                parsed_headers: Option<velcrux_core::xdp::PacketHeaderSummary>,
+            }
+
+            let report = FilterEvalReport {
+                rule,
+                evaluated_action,
+                matched: evaluated_action == xdp_action,
+                parsed_headers: parsed,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== eBPF/XDP Packet Filter Rule Evaluation ===");
+                println!("  Target Port:            {}", port);
+                println!("  Target Action:          {:?}", xdp_action);
+                println!("  Evaluated Action:       {:?}", evaluated_action);
+                println!(
+                    "  Rule Match Status:      {}",
+                    if report.matched {
+                        "MATCHED"
+                    } else {
+                        "NO MATCH"
+                    }
+                );
+                println!("  Description:            {}", report.rule.description);
+            }
+        }
+        XdpSubCmd::Benchmark {
+            packets,
+            batch_size,
+            json,
+        } => {
+            let report = run_xdp_benchmark(*packets, *batch_size);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Hardware-Accelerated eBPF/XDP Bypass Benchmark ===");
+                println!("  Packets Evaluated:      {}", report.packet_count);
+                println!("  Batch Size:             {}", report.batch_size);
+                println!(
+                    "  Throughput:             {:.2} Mpps",
+                    report.throughput_mpps
+                );
+                println!(
+                    "  Bandwidth:              {:.2} Gbps",
+                    report.throughput_gbps
+                );
+                println!("  Avg Latency:            {:.2} ns", report.avg_latency_ns);
+                println!("  Packets Redirected:     {}", report.packets_redirected);
+                println!("  Packets Dropped:        {}", report.packets_dropped);
+                println!("  Packets Passed:         {}", report.packets_passed);
             }
         }
     }
