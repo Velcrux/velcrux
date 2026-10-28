@@ -190,6 +190,15 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .load(Ordering::Relaxed);
     let audit_tree_records = stats.audit_tree_records_total.load(Ordering::Relaxed);
     let audit_tree_height = stats.audit_tree_height.load(Ordering::Relaxed);
+    let router_pops = stats.router_pops_active.load(Ordering::Relaxed);
+    let router_routes = stats.router_routes_computed_total.load(Ordering::Relaxed);
+    let router_migrations = stats
+        .router_session_migrations_total
+        .load(Ordering::Relaxed);
+    let router_migration_fails = stats
+        .router_session_migration_failures_total
+        .load(Ordering::Relaxed);
+    let router_handover_us = stats.router_handover_latency_us.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -480,7 +489,22 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_audit_tree_records_total {audit_tree_records}\n\n\
          # HELP velcrux_audit_tree_height Current depth of active audit Merkle tree accumulator\n\
          # TYPE velcrux_audit_tree_height gauge\n\
-         velcrux_audit_tree_height {audit_tree_height}\n"
+         velcrux_audit_tree_height {audit_tree_height}\n\n\
+         # HELP velcrux_router_pops_active Total active and healthy edge PoP nodes\n\
+         # TYPE velcrux_router_pops_active gauge\n\
+         velcrux_router_pops_active {router_pops}\n\n\
+         # HELP velcrux_router_routes_computed_total Total routing decisions computed by anycast router\n\
+         # TYPE velcrux_router_routes_computed_total counter\n\
+         velcrux_router_routes_computed_total {router_routes}\n\n\
+         # HELP velcrux_router_session_migrations_total Total successful session migrations completed across PoPs\n\
+         # TYPE velcrux_router_session_migrations_total counter\n\
+         velcrux_router_session_migrations_total {router_migrations}\n\n\
+         # HELP velcrux_router_session_migration_failures_total Total failed session migrations across PoPs\n\
+         # TYPE velcrux_router_session_migration_failures_total counter\n\
+         velcrux_router_session_migration_failures_total {router_migration_fails}\n\n\
+         # HELP velcrux_router_handover_latency_microseconds Latest observed session migration handover latency in microseconds\n\
+         # TYPE velcrux_router_handover_latency_microseconds gauge\n\
+         velcrux_router_handover_latency_microseconds {router_handover_us}\n"
     )
 }
 

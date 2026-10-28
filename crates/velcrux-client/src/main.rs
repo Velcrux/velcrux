@@ -814,6 +814,82 @@ enum Cmd {
         #[command(subcommand)]
         sub: AuditSubCmd,
     },
+    /// Distributed dynamic content router, anycast steering, and live session migration (Option CB).
+    Router {
+        #[command(subcommand)]
+        sub: RouterSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum RouterSubCmd {
+    /// Inspect overall router health, registered PoPs, and active session migrations.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all registered edge Point-of-Presence (PoP) nodes and their health metrics.
+    Pops {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compute optimal anycast route for a client transfer based on latency and load.
+    Route {
+        /// Client identifier or IP address.
+        client_id: String,
+        /// Client geographic latitude.
+        #[arg(long, default_value = "37.7749", allow_hyphen_values = true)]
+        lat: f64,
+        /// Client geographic longitude.
+        #[arg(long, default_value = "-122.4194", allow_hyphen_values = true)]
+        lon: f64,
+        /// Optional preferred region hint.
+        #[arg(long)]
+        region: Option<String>,
+        /// Required transfer bandwidth in bits per second (default: 50 Mbps).
+        #[arg(long, default_value = "50000000")]
+        bandwidth: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Issue a cryptographic migration ticket and execute live session handover across PoPs.
+    Migrate {
+        /// Active transfer session identifier.
+        session_id: String,
+        /// Source PoP identifier (default: "pop-iad").
+        #[arg(long, default_value = "pop-iad")]
+        source: String,
+        /// Target PoP identifier (default: "pop-sfo").
+        #[arg(long, default_value = "pop-sfo")]
+        target: String,
+        /// Transfer identifier (default: "transfer-01").
+        #[arg(long, default_value = "transfer-01")]
+        transfer_id: String,
+        /// Current acknowledged byte offset (default: 5242880).
+        #[arg(long, default_value = "5242880")]
+        offset: u64,
+        /// Total transfer bytes (default: 10485760).
+        #[arg(long, default_value = "10485760")]
+        total: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run benchmark evaluating anycast routing throughput, failover, and migration latency.
+    Benchmark {
+        /// Number of simulated edge PoPs.
+        #[arg(long, default_value = "5")]
+        pops: usize,
+        /// Number of iterations.
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2829,6 +2905,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Audit { sub } => {
             run_audit(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Router { sub } => {
+            run_router(&cli, sub).await?;
             return Ok(());
         }
 
@@ -6002,6 +6082,318 @@ async fn run_audit(cli: &Cli, sub: &AuditSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  All Proofs Verified:    {}",
                     if report.all_proofs_verified {
+                        "YES"
+                    } else {
+                        "NO"
+                    }
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_sample_router() -> velcrux_core::router::AnycastRouter {
+    use velcrux_core::router::{AnycastRouter, PopHealthMetrics, PopNode, PopStatus};
+
+    let router = AnycastRouter::new([0x33; 32]);
+    let pops = vec![
+        PopNode {
+            id: "pop-iad".to_string(),
+            name: "US East (Ashburn)".to_string(),
+            region: "us-east".to_string(),
+            latitude: 39.0438,
+            longitude: -77.4874,
+            address: "198.51.100.1:7443".parse().unwrap(),
+            status: PopStatus::Healthy,
+            capacity_bps: 10_000_000_000,
+            current_load_bps: 2_400_000_000,
+            metrics: PopHealthMetrics {
+                rtt_ms: 8.5,
+                jitter_ms: 0.9,
+                packet_loss_ratio: 0.0001,
+                cpu_utilization: 0.28,
+                bandwidth_utilization: 0.24,
+                active_connections: 142,
+            },
+            cost_multiplier: 1.0,
+        },
+        PopNode {
+            id: "pop-sfo".to_string(),
+            name: "US West (San Francisco)".to_string(),
+            region: "us-west".to_string(),
+            latitude: 37.7749,
+            longitude: -122.4194,
+            address: "198.51.100.2:7443".parse().unwrap(),
+            status: PopStatus::Healthy,
+            capacity_bps: 10_000_000_000,
+            current_load_bps: 3_100_000_000,
+            metrics: PopHealthMetrics {
+                rtt_ms: 11.2,
+                jitter_ms: 1.1,
+                packet_loss_ratio: 0.0001,
+                cpu_utilization: 0.35,
+                bandwidth_utilization: 0.31,
+                active_connections: 189,
+            },
+            cost_multiplier: 1.0,
+        },
+        PopNode {
+            id: "pop-lhr".to_string(),
+            name: "Europe West (London)".to_string(),
+            region: "eu-west".to_string(),
+            latitude: 51.5074,
+            longitude: -0.1278,
+            address: "198.51.100.3:7443".parse().unwrap(),
+            status: PopStatus::Healthy,
+            capacity_bps: 10_000_000_000,
+            current_load_bps: 1_800_000_000,
+            metrics: PopHealthMetrics {
+                rtt_ms: 14.0,
+                jitter_ms: 1.4,
+                packet_loss_ratio: 0.0002,
+                cpu_utilization: 0.22,
+                bandwidth_utilization: 0.18,
+                active_connections: 96,
+            },
+            cost_multiplier: 1.05,
+        },
+        PopNode {
+            id: "pop-nrt".to_string(),
+            name: "Asia Pacific (Tokyo)".to_string(),
+            region: "ap-northeast".to_string(),
+            latitude: 35.6762,
+            longitude: 139.6503,
+            address: "198.51.100.4:7443".parse().unwrap(),
+            status: PopStatus::Healthy,
+            capacity_bps: 10_000_000_000,
+            current_load_bps: 4_200_000_000,
+            metrics: PopHealthMetrics {
+                rtt_ms: 18.5,
+                jitter_ms: 1.8,
+                packet_loss_ratio: 0.0003,
+                cpu_utilization: 0.42,
+                bandwidth_utilization: 0.42,
+                active_connections: 215,
+            },
+            cost_multiplier: 1.10,
+        },
+    ];
+
+    for pop in pops {
+        router.register_pop(pop);
+    }
+
+    router
+}
+
+async fn run_router(cli: &Cli, sub: &RouterSubCmd) -> anyhow::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use velcrux_core::router::{run_router_benchmark, RouteRequest};
+
+    let is_json = cli_log_json(cli);
+    let router = build_sample_router();
+
+    match sub {
+        RouterSubCmd::Status { json } => {
+            let status = router.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Distributed Anycast Content Router Status ===");
+                println!("  Total Edge PoPs:        {}", status.total_pops);
+                println!("  Healthy PoPs:           {}", status.healthy_pops);
+                println!("  Degraded PoPs:          {}", status.degraded_pops);
+                println!("  Draining PoPs:          {}", status.draining_pops);
+                println!("  Offline PoPs:           {}", status.offline_pops);
+                println!("  Routes Computed:        {}", status.total_routes_computed);
+                println!(
+                    "  Migrations Committed:   {}",
+                    status.total_migrations_committed
+                );
+                println!("  Active Migrations:      {}", status.active_migrations);
+            }
+        }
+        RouterSubCmd::Pops { json } => {
+            let pops = router.list_pops();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&pops)?);
+            } else {
+                println!("=== Registered Edge Points-of-Presence (PoPs) ===");
+                println!(
+                    "{:<10} {:<16} {:<24} {:<10} {:<10} {:<10}",
+                    "POP ID", "REGION", "ADDRESS", "STATUS", "RTT (ms)", "LOAD (%)"
+                );
+                println!("{:-<84}", "");
+                for p in &pops {
+                    let load_pct =
+                        (p.current_load_bps as f64 / p.capacity_bps.max(1) as f64) * 100.0;
+                    println!(
+                        "{:<10} {:<16} {:<24} {:<10} {:<10.1} {:<10.1}",
+                        p.id,
+                        p.region,
+                        p.address.to_string(),
+                        p.status.to_string(),
+                        p.metrics.rtt_ms,
+                        load_pct
+                    );
+                }
+            }
+        }
+        RouterSubCmd::Route {
+            client_id,
+            lat,
+            lon,
+            region,
+            bandwidth,
+            json,
+        } => {
+            let req = RouteRequest {
+                client_id: client_id.clone(),
+                latitude: *lat,
+                longitude: *lon,
+                preferred_region: region.clone(),
+                required_bandwidth_bps: *bandwidth,
+                affinity_token: None,
+            };
+
+            let decision = router
+                .compute_route(&req)
+                .map_err(|e| anyhow::anyhow!("routing calculation failed: {e}"))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&decision)?);
+            } else {
+                println!("=== Optimal Anycast Content Route Decision ===");
+                println!("  Client ID:              {}", decision.client_id);
+                println!("  Selected Edge PoP:      {}", decision.selected_pop_id);
+                println!("  Target QUIC Address:    {}", decision.pop_address);
+                println!("  PoP Region:             {}", decision.pop_region);
+                println!(
+                    "  Estimated RTT:          {:.1} ms",
+                    decision.estimated_rtt_ms
+                );
+                println!("  Distance:               {:.1} km", decision.distance_km);
+                println!("  Composite Score:        {:.2}", decision.composite_score);
+                println!("  Failovers Evaluated:    {}", decision.failover_count);
+                println!(
+                    "  Migration Recommended:  {}",
+                    if decision.migration_recommended {
+                        "YES"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!("  Rationale:              {}", decision.reason);
+            }
+        }
+        RouterSubCmd::Migrate {
+            session_id,
+            source,
+            target,
+            transfer_id,
+            offset,
+            total,
+            json,
+        } => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let chunk_idx = offset / 1048576;
+            let ticket = router
+                .issue_migration_ticket(
+                    session_id,
+                    transfer_id,
+                    source,
+                    target,
+                    *offset,
+                    *total,
+                    chunk_idx,
+                    300,
+                    now,
+                )
+                .map_err(|e| anyhow::anyhow!("failed to issue migration ticket: {e}"))?;
+
+            let record = router
+                .execute_migration_handover(&ticket, now + 1)
+                .map_err(|e| anyhow::anyhow!("failed to execute handover: {e}"))?;
+
+            #[derive(serde::Serialize)]
+            struct MigrateOutput {
+                ticket: velcrux_core::router::MigrationTicket,
+                record: velcrux_core::router::SessionMigrationRecord,
+            }
+
+            let output = MigrateOutput {
+                ticket: ticket.clone(),
+                record: record.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("=== Live Anycast Session Migration Handover ===");
+                println!("  Session ID:             {}", record.session_id);
+                println!("  Transfer ID:            {}", record.transfer_id);
+                println!("  Source PoP:             {}", record.source_pop_id);
+                println!("  Target PoP:             {}", record.target_pop_id);
+                println!("  Target Address:         {}", ticket.target_address);
+                println!("  Handover State:         {}", record.state);
+                println!(
+                    "  Resumed Offset:         {} bytes (chunk #{})",
+                    record.resumed_offset * 1048576,
+                    record.resumed_offset
+                );
+                println!("  Total Bytes:            {}", record.total_bytes);
+                println!(
+                    "  Handover Latency:       {} µs",
+                    record.handover_latency_us
+                );
+                println!("  Ticket ID:              {}", ticket.ticket_id);
+            }
+        }
+        RouterSubCmd::Benchmark {
+            pops,
+            iterations,
+            json,
+        } => {
+            let report = run_router_benchmark(*pops, *iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Anycast Router & Session Migration Benchmark ===");
+                println!("  Simulated Edge PoPs:    {}", report.pop_count);
+                println!("  Routes Evaluated:       {}", report.routes_evaluated);
+                println!(
+                    "  Routing Throughput:     {:.2} routes/s",
+                    report.routing_throughput_routes_per_sec
+                );
+                println!(
+                    "  Avg Route Latency:      {:.2} µs",
+                    report.avg_route_latency_us
+                );
+                println!(
+                    "  Failover Convergence:   {:.2} ms",
+                    report.failover_convergence_latency_ms
+                );
+                println!(
+                    "  Migration Cycles:       {}",
+                    report.migration_cycles_evaluated
+                );
+                println!(
+                    "  Migration Throughput:   {:.2} handovers/s",
+                    report.migration_throughput_per_sec
+                );
+                println!(
+                    "  Avg Handover Latency:   {:.2} µs",
+                    report.avg_migration_handover_latency_us
+                );
+                println!(
+                    "  All Migrations Valid:   {}",
+                    if report.all_migrations_verified {
                         "YES"
                     } else {
                         "NO"

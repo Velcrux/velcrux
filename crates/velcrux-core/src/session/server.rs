@@ -287,6 +287,16 @@ pub struct ServerStats {
     pub audit_tree_records_total: AtomicU64,
     /// Current depth/height of active audit Merkle tree accumulator (Option CA).
     pub audit_tree_height: AtomicU64,
+    /// Total active and healthy edge PoP nodes (Option CB).
+    pub router_pops_active: AtomicU64,
+    /// Total routing decisions computed by anycast router (Option CB).
+    pub router_routes_computed_total: AtomicU64,
+    /// Total successful session migrations completed across PoPs (Option CB).
+    pub router_session_migrations_total: AtomicU64,
+    /// Total failed session migrations across PoPs (Option CB).
+    pub router_session_migration_failures_total: AtomicU64,
+    /// Latest observed session migration handover latency in microseconds (Option CB).
+    pub router_handover_latency_us: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -402,6 +412,11 @@ impl Default for ServerStats {
             audit_proof_verification_failures_total: AtomicU64::new(0),
             audit_tree_records_total: AtomicU64::new(0),
             audit_tree_height: AtomicU64::new(0),
+            router_pops_active: AtomicU64::new(0),
+            router_routes_computed_total: AtomicU64::new(0),
+            router_session_migrations_total: AtomicU64::new(0),
+            router_session_migration_failures_total: AtomicU64::new(0),
+            router_handover_latency_us: AtomicU64::new(0),
         }
     }
 }

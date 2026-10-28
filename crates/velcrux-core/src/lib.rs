@@ -29,6 +29,7 @@ pub mod crypto;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
+pub mod router;
 pub mod scheduler;
 pub mod session;
 pub mod state;
@@ -91,6 +92,12 @@ pub use state::{
     JournalRecovery, LedgerEntry, MockStateStore, Role, SqliteStateStore, StateStore,
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
     WalCheckpointMode, WalCheckpointReport, MAX_WIRE_CHUNKS,
+};
+
+pub use router::{
+    haversine_distance_km, run_router_benchmark, AnycastRouter, MigrationState, MigrationTicket,
+    PopHealthMetrics, PopNode, PopStatus, RouteDecision, RouteRequest, RouterBenchmarkReport,
+    RouterStatus, SessionMigrationRecord, MIGRATION_TICKET_DOMAIN_TAG,
 };
 
 pub use scheduler::{

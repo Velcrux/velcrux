@@ -551,4 +551,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-041](adr/ADR-041-hierarchical-storage-tiering-lifecycle.md) | Multi-Tenant Hierarchical Storage Tiering & Hybrid Lifecycle Engine | Accepted | Hot NVMe, Warm bulk disk, Cold Zstd compressed archive, transparent reads, and bit-rot scrub |
 | [ADR-042](adr/ADR-042-distributed-raft-consensus-cluster-coordinator.md) | Distributed Raft Consensus & High-Availability Cluster Metadata Coordinator | Accepted | Linearizable Raft consensus, automated election failover, epoch-fenced resource leases |
 | [ADR-043](adr/ADR-043-zero-knowledge-transfer-audit-proofs.md) | Cryptographic Zero-Knowledge Transfer Audit Proofs & Merkle Tree Accumulator | Accepted | Blinded BLAKE3 leaf commitments, logarithmic inclusion proofs, adjacent non-membership exclusion proofs |
+| [ADR-044](adr/ADR-044-distributed-dynamic-content-router-anycast-migration.md) | Distributed Dynamic Content Router & Anycast Session Migration | Accepted | Multi-PoP topology, latency/load-aware anycast steering, and keyed BLAKE3 session migration |
 
