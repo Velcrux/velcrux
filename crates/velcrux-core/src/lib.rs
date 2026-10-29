@@ -179,6 +179,14 @@ pub use transfer::{
     TransferResumeCoordinator,
 };
 
+pub use crypto::pqc::{
+    ml_dsa_65_keygen_from_seed, ml_dsa_65_sign, ml_dsa_65_verify, ml_kem_768_decapsulate,
+    ml_kem_768_encapsulate, ml_kem_768_keygen_from_seed, run_pqc_benchmark, HybridCiphertext,
+    HybridKemEngine, HybridKemKeyPair, HybridKemPrivateKey, HybridKemPublicKey, HybridSharedSecret,
+    HybridSignature, HybridSignatureEngine, HybridSigningPrivateKey, HybridSigningPublicKey,
+    MlDsaPrivateKey, MlDsaPublicKey, MlDsaSignature, MlKemCiphertext, MlKemPrivateKey,
+    MlKemPublicKey, PqcAlgorithm, PqcBenchmarkReport, PqcStatusReport,
+};
 pub use transport::{
     simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController, BaselineComparator,
     BdpAutoTuner, BdpEstimator, BdpTier, BdpTuningDirection, BdpTuningPolicy, BdpTuningReport,

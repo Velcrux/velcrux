@@ -553,4 +553,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-043](adr/ADR-043-zero-knowledge-transfer-audit-proofs.md) | Cryptographic Zero-Knowledge Transfer Audit Proofs & Merkle Tree Accumulator | Accepted | Blinded BLAKE3 leaf commitments, logarithmic inclusion proofs, adjacent non-membership exclusion proofs |
 | [ADR-044](adr/ADR-044-distributed-dynamic-content-router-anycast-migration.md) | Distributed Dynamic Content Router & Anycast Session Migration | Accepted | Multi-PoP topology, latency/load-aware anycast steering, and keyed BLAKE3 session migration |
 | [ADR-045](adr/ADR-045-hardware-accelerated-ebpf-xdp-packet-bypass.md) | Hardware-Accelerated FPGA/eBPF Kernel XDP Packet Bypassing & UMEM Zero-Copy Rings | Accepted | Wire-speed packet header parsing, eBPF filter maps, AF_XDP UMEM descriptor rings, and FPGA offload |
+| [ADR-046](adr/ADR-046-quantum-resilient-post-quantum-hybrid-cryptography.md) | Quantum-Resilient Post-Quantum Hybrid Cryptography (ML-KEM-768 & ML-DSA-65) | Accepted | FIPS 203 ML-KEM-768, FIPS 204 ML-DSA-65, dual-hybrid BLAKE3 KDF combiner, pure safe Rust |
 

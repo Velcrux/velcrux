@@ -307,6 +307,18 @@ pub struct ServerStats {
     pub xdp_umem_frames_active: AtomicU64,
     /// Latest observed per-packet XDP processing latency in nanoseconds (Option CC).
     pub xdp_processing_latency_nanoseconds: AtomicU64,
+    /// Total completed post-quantum hybrid handshakes (Option CD).
+    pub pqc_handshakes_total: AtomicU64,
+    /// Total hybrid post-quantum key encapsulations performed (Option CD).
+    pub pqc_encapsulations_total: AtomicU64,
+    /// Total hybrid post-quantum key decapsulations performed (Option CD).
+    pub pqc_decapsulations_total: AtomicU64,
+    /// Total hybrid post-quantum digital signatures verified (Option CD).
+    pub pqc_signatures_verified_total: AtomicU64,
+    /// Total hybrid post-quantum signature verification failures (Option CD).
+    pub pqc_signature_failures_total: AtomicU64,
+    /// Latest observed hybrid post-quantum handshake latency in microseconds (Option CD).
+    pub pqc_handshake_latency_us: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -432,6 +444,12 @@ impl Default for ServerStats {
             xdp_packets_dropped_total: AtomicU64::new(0),
             xdp_umem_frames_active: AtomicU64::new(0),
             xdp_processing_latency_nanoseconds: AtomicU64::new(0),
+            pqc_handshakes_total: AtomicU64::new(0),
+            pqc_encapsulations_total: AtomicU64::new(0),
+            pqc_decapsulations_total: AtomicU64::new(0),
+            pqc_signatures_verified_total: AtomicU64::new(0),
+            pqc_signature_failures_total: AtomicU64::new(0),
+            pqc_handshake_latency_us: AtomicU64::new(0),
         }
     }
 }

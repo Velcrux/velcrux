@@ -31,6 +31,7 @@ url.workspace        = true
 rand.workspace       = true
 serde_json.workspace = true
 serde.workspace      = true
+blake3.workspace     = true
 toml.workspace       = true
 tempfile             = "3"
 

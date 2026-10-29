@@ -824,6 +824,85 @@ enum Cmd {
         #[command(subcommand)]
         sub: XdpSubCmd,
     },
+    /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
+    Pqc {
+        #[command(subcommand)]
+        sub: PqcSubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum PqcSubCmd {
+    /// Show active post-quantum cryptography suite status and NIST FIPS standards compliance.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate quantum-resilient hybrid or post-quantum keypairs.
+    Keygen {
+        /// Key generation mode: "hybrid" (default), "kem", or "sig".
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+        /// Optional directory to save key files.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Encapsulate a quantum-resilient hybrid shared secret using peer public key.
+    Encap {
+        /// Peer public key (hex-encoded).
+        public_key_hex: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Decapsulate a quantum-resilient hybrid shared secret using private key and ciphertext.
+    Decap {
+        /// Recipient private key (hex-encoded).
+        private_key_hex: String,
+        /// Encapsulated ciphertext (hex-encoded).
+        ciphertext_hex: String,
+        /// Peer classical public key (32 bytes hex, optional).
+        #[arg(long)]
+        peer_pk_hex: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Sign a payload or manifest file using dual-hybrid Ed25519 + ML-DSA-65 signatures.
+    Sign {
+        /// Path to the file or manifest to sign.
+        manifest_path: PathBuf,
+        /// Hybrid private key (hex-encoded).
+        private_key_hex: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a dual-hybrid Ed25519 + ML-DSA-65 signature over a payload or manifest file.
+    Verify {
+        /// Path to the file or manifest to verify.
+        manifest_path: PathBuf,
+        /// Hybrid public key (hex-encoded).
+        public_key_hex: String,
+        /// Hybrid signature (hex-encoded).
+        signature_hex: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark quantum-resilient key generation, encapsulation, decapsulation, signing, and verification.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2975,6 +3054,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Xdp { sub } => {
             run_xdp(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Pqc { sub } => {
+            run_pqc(&cli, sub).await?;
             return Ok(());
         }
 
@@ -6716,6 +6799,401 @@ async fn run_xdp(cli: &Cli, sub: &XdpSubCmd) -> anyhow::Result<()> {
                 println!("  Packets Redirected:     {}", report.packets_redirected);
                 println!("  Packets Dropped:        {}", report.packets_dropped);
                 println!("  Packets Passed:         {}", report.packets_passed);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_pqc(cli: &Cli, sub: &PqcSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::crypto::pqc::{
+        hex_decode, hex_encode, run_pqc_benchmark, HybridCiphertext, HybridKemEngine,
+        HybridKemPrivateKey, HybridKemPublicKey, HybridSignature, HybridSignatureEngine,
+        HybridSigningPrivateKey, HybridSigningPublicKey, PqcStatusReport,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        PqcSubCmd::Status { json } => {
+            let status = PqcStatusReport::default();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Quantum-Resilient Post-Quantum Hybrid Cryptography ===");
+                println!("  KEM Algorithm:          {}", status.kem_algorithm);
+                println!("  Signature Algorithm:    {}", status.signature_algorithm);
+                println!("  Classical KEM:          {}", status.classical_kem);
+                println!("  Post-Quantum KEM:       {}", status.quantum_kem);
+                println!("  Classical Signature:    {}", status.classical_sig);
+                println!("  Post-Quantum Signature: {}", status.quantum_sig);
+                println!(
+                    "  KEM Public Key Size:    {} bytes",
+                    status.kem_public_key_bytes
+                );
+                println!(
+                    "  KEM Ciphertext Size:    {} bytes",
+                    status.kem_ciphertext_bytes
+                );
+                println!(
+                    "  Signature Key Size:     {} bytes",
+                    status.sig_public_key_bytes
+                );
+                println!("  Signature Size:         {} bytes", status.signature_bytes);
+                println!(
+                    "  NIST Security Level:    Level {} (AES-192 equivalent)",
+                    status.quantum_security_level
+                );
+                println!("  NIST FIPS Compliance:   {}", status.nist_fips_compliance);
+                println!(
+                    "  Dual Security Enforced: {}",
+                    status.hybrid_dual_security_enforced
+                );
+            }
+        }
+        PqcSubCmd::Keygen {
+            mode,
+            out_dir,
+            json,
+        } => {
+            let kem_pair = HybridKemEngine::generate_keypair()?;
+            let (sig_pk, sig_sk) = HybridSignatureEngine::generate_keypair()?;
+
+            let kem_pk_hex = hex_encode(&serde_json::to_vec(&kem_pair.public_key)?);
+            let kem_sk_hex = hex_encode(&serde_json::to_vec(&kem_pair.private_key)?);
+            let sig_pk_hex = hex_encode(&serde_json::to_vec(&sig_pk)?);
+            let sig_sk_hex = hex_encode(&serde_json::to_vec(&sig_sk)?);
+
+            if let Some(dir) = out_dir {
+                std::fs::create_dir_all(dir)?;
+                std::fs::write(dir.join("pqc_kem.pub"), &kem_pk_hex)?;
+                std::fs::write(dir.join("pqc_kem.key"), &kem_sk_hex)?;
+                std::fs::write(dir.join("pqc_sig.pub"), &sig_pk_hex)?;
+                std::fs::write(dir.join("pqc_sig.key"), &sig_sk_hex)?;
+            }
+
+            #[derive(Serialize)]
+            struct KeygenOutput {
+                mode: String,
+                kem_public_key_hex: String,
+                kem_private_key_hex: String,
+                sig_public_key_hex: String,
+                sig_private_key_hex: String,
+                saved_to_dir: Option<PathBuf>,
+            }
+
+            let output = KeygenOutput {
+                mode: mode.clone(),
+                kem_public_key_hex: kem_pk_hex.clone(),
+                kem_private_key_hex: kem_sk_hex.clone(),
+                sig_public_key_hex: sig_pk_hex.clone(),
+                sig_private_key_hex: sig_sk_hex.clone(),
+                saved_to_dir: out_dir.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("=== Generated Quantum-Resilient Keypairs ({}) ===", mode);
+                println!(
+                    "  KEM Public Key:         {}...",
+                    &kem_pk_hex[..48.min(kem_pk_hex.len())]
+                );
+                println!(
+                    "  KEM Private Key:        {}...",
+                    &kem_sk_hex[..48.min(kem_sk_hex.len())]
+                );
+                println!(
+                    "  Sig Public Key:         {}...",
+                    &sig_pk_hex[..48.min(sig_pk_hex.len())]
+                );
+                println!(
+                    "  Sig Private Key:        {}...",
+                    &sig_sk_hex[..48.min(sig_sk_hex.len())]
+                );
+                if let Some(d) = out_dir {
+                    println!("  Saved to Directory:     {}", d.display());
+                }
+            }
+        }
+        PqcSubCmd::Encap {
+            public_key_hex,
+            json,
+        } => {
+            let pk_bytes = hex_decode(public_key_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex public key"))?;
+            let pk: HybridKemPublicKey = serde_json::from_slice(&pk_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridKemPublicKey: {}", e))?;
+
+            let (ct, ss) = HybridKemEngine::encapsulate(&pk)?;
+            let ct_hex = hex_encode(&serde_json::to_vec(&ct)?);
+            let ss_hex = hex_encode(ss.as_bytes());
+
+            #[derive(Serialize)]
+            struct EncapOutput {
+                ciphertext_hex: String,
+                shared_secret_hex: String,
+                ciphertext_bytes: usize,
+                shared_secret_bytes: usize,
+            }
+
+            let ct_len = serde_json::to_vec(&ct)?.len();
+            let out = EncapOutput {
+                ciphertext_hex: ct_hex.clone(),
+                shared_secret_hex: ss_hex.clone(),
+                ciphertext_bytes: ct_len,
+                shared_secret_bytes: 32,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Hybrid KEM Encapsulation Successful ===");
+                println!(
+                    "  Ciphertext:             {}...",
+                    &ct_hex[..48.min(ct_hex.len())]
+                );
+                println!("  Shared Secret (BLAKE3): {}", ss_hex);
+            }
+        }
+        PqcSubCmd::Decap {
+            private_key_hex,
+            ciphertext_hex,
+            peer_pk_hex,
+            json,
+        } => {
+            let sk_bytes = hex_decode(private_key_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex private key"))?;
+            let sk: HybridKemPrivateKey = serde_json::from_slice(&sk_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridKemPrivateKey: {}", e))?;
+
+            let ct_bytes = hex_decode(ciphertext_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex ciphertext"))?;
+            let ct: HybridCiphertext = serde_json::from_slice(&ct_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridCiphertext: {}", e))?;
+
+            let ss = if let Some(hex_pk) = peer_pk_hex {
+                let bytes =
+                    hex_decode(hex_pk).ok_or_else(|| anyhow::anyhow!("Invalid peer_pk_hex"))?;
+                if bytes.len() != 32 {
+                    anyhow::bail!("peer_pk_hex must be 32 bytes");
+                }
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                HybridKemEngine::decapsulate(&sk, &ct, &arr)?
+            } else {
+                HybridKemEngine::decapsulate_self(&sk, &ct)?
+            };
+
+            let ss_hex = hex_encode(ss.as_bytes());
+
+            #[derive(Serialize)]
+            struct DecapOutput {
+                shared_secret_hex: String,
+                shared_secret_bytes: usize,
+            }
+
+            let out = DecapOutput {
+                shared_secret_hex: ss_hex.clone(),
+                shared_secret_bytes: 32,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Hybrid KEM Decapsulation Successful ===");
+                println!("  Shared Secret (BLAKE3): {}", ss_hex);
+            }
+        }
+        PqcSubCmd::Sign {
+            manifest_path,
+            private_key_hex,
+            json,
+        } => {
+            let sk_bytes = hex_decode(private_key_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex private key"))?;
+            let sk: HybridSigningPrivateKey = serde_json::from_slice(&sk_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridSigningPrivateKey: {}", e))?;
+
+            // Bounded memory streaming file hash using BLAKE3
+            let mut file = std::fs::File::open(manifest_path)?;
+            let mut hasher = blake3::Hasher::new();
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                use std::io::Read;
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            let file_hash = hasher.finalize();
+
+            let sig = HybridSignatureEngine::sign(&sk, file_hash.as_bytes())?;
+            let sig_hex = hex_encode(&serde_json::to_vec(&sig)?);
+
+            #[derive(Serialize)]
+            struct SignOutput {
+                manifest_path: String,
+                payload_hash_blake3: String,
+                signature_hex: String,
+                classical_sig_bytes: usize,
+                ml_dsa_sig_bytes: usize,
+            }
+
+            let out = SignOutput {
+                manifest_path: manifest_path.display().to_string(),
+                payload_hash_blake3: file_hash.to_hex().to_string(),
+                signature_hex: sig_hex.clone(),
+                classical_sig_bytes: 64,
+                ml_dsa_sig_bytes: sig.ml_dsa_signature.len(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Dual-Hybrid Post-Quantum Signature Computed ===");
+                println!("  Payload BLAKE3:         {}", file_hash.to_hex());
+                println!(
+                    "  Hybrid Signature:       {}...",
+                    &sig_hex[..48.min(sig_hex.len())]
+                );
+                println!(
+                    "  Signature Size:         {} bytes",
+                    serde_json::to_vec(&sig)?.len()
+                );
+            }
+        }
+        PqcSubCmd::Verify {
+            manifest_path,
+            public_key_hex,
+            signature_hex,
+            json,
+        } => {
+            let pk_bytes = hex_decode(public_key_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex public key"))?;
+            let pk: HybridSigningPublicKey = serde_json::from_slice(&pk_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridSigningPublicKey: {}", e))?;
+
+            let sig_bytes = hex_decode(signature_hex)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex signature"))?;
+            let sig: HybridSignature = serde_json::from_slice(&sig_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to parse HybridSignature: {}", e))?;
+
+            // Bounded memory streaming file hash using BLAKE3
+            let mut file = std::fs::File::open(manifest_path)?;
+            let mut hasher = blake3::Hasher::new();
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                use std::io::Read;
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            let file_hash = hasher.finalize();
+
+            let valid = HybridSignatureEngine::verify(&pk, file_hash.as_bytes(), &sig);
+
+            #[derive(Serialize)]
+            struct VerifyOutput {
+                manifest_path: String,
+                payload_hash_blake3: String,
+                valid: bool,
+                ed25519_verified: bool,
+                ml_dsa_65_verified: bool,
+            }
+
+            let out = VerifyOutput {
+                manifest_path: manifest_path.display().to_string(),
+                payload_hash_blake3: file_hash.to_hex().to_string(),
+                valid,
+                ed25519_verified: valid,
+                ml_dsa_65_verified: valid,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Dual-Hybrid Post-Quantum Signature Verification ===");
+                println!("  Payload BLAKE3:         {}", file_hash.to_hex());
+                println!(
+                    "  Result:                 {}",
+                    if valid {
+                        "VALID (VERIFIED)"
+                    } else {
+                        "INVALID / TAMPERED"
+                    }
+                );
+                println!(
+                    "  Ed25519 Check:          {}",
+                    if valid { "PASSED" } else { "FAILED" }
+                );
+                println!(
+                    "  ML-DSA-65 Check:        {}",
+                    if valid { "PASSED" } else { "FAILED" }
+                );
+            }
+
+            if !valid {
+                anyhow::bail!("PQC signature verification failed");
+            }
+        }
+        PqcSubCmd::Benchmark { iterations, json } => {
+            let report = run_pqc_benchmark(*iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Quantum-Resilient Cryptography Benchmark ({} iters) ===",
+                    report.iterations
+                );
+                println!(
+                    "  ML-KEM-768 Keygen:      {:.2} µs",
+                    report.ml_kem_keygen_latency_us
+                );
+                println!(
+                    "  ML-KEM-768 Encap:       {:.2} µs",
+                    report.ml_kem_encaps_latency_us
+                );
+                println!(
+                    "  ML-KEM-768 Decap:       {:.2} µs",
+                    report.ml_kem_decaps_latency_us
+                );
+                println!(
+                    "  ML-DSA-65 Keygen:       {:.2} µs",
+                    report.ml_dsa_keygen_latency_us
+                );
+                println!(
+                    "  ML-DSA-65 Sign:         {:.2} µs",
+                    report.ml_dsa_sign_latency_us
+                );
+                println!(
+                    "  ML-DSA-65 Verify:       {:.2} µs",
+                    report.ml_dsa_verify_latency_us
+                );
+                println!(
+                    "  Hybrid KEM Roundtrip:   {:.2} µs",
+                    report.hybrid_kem_roundtrip_latency_us
+                );
+                println!(
+                    "  Hybrid Sig Roundtrip:   {:.2} µs",
+                    report.hybrid_sig_roundtrip_latency_us
+                );
+                println!(
+                    "  Hybrid KEM Throughput:  {:.1} ops/sec",
+                    report.kem_ops_per_second
+                );
+                println!(
+                    "  Hybrid Sig Throughput:  {:.1} ops/sec",
+                    report.sig_ops_per_second
+                );
+                println!(
+                    "  All Ops Verified:       {}",
+                    report.all_operations_verified
+                );
             }
         }
     }

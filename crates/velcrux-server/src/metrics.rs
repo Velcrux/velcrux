@@ -206,6 +206,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let xdp_latency_ns = stats
         .xdp_processing_latency_nanoseconds
         .load(Ordering::Relaxed);
+    let pqc_handshakes = stats.pqc_handshakes_total.load(Ordering::Relaxed);
+    let pqc_encaps = stats.pqc_encapsulations_total.load(Ordering::Relaxed);
+    let pqc_decaps = stats.pqc_decapsulations_total.load(Ordering::Relaxed);
+    let pqc_sigs_verified = stats.pqc_signatures_verified_total.load(Ordering::Relaxed);
+    let pqc_sig_fails = stats.pqc_signature_failures_total.load(Ordering::Relaxed);
+    let pqc_latency_us = stats.pqc_handshake_latency_us.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -526,7 +532,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_xdp_umem_frames_active {xdp_umem_active}\n\n\
          # HELP velcrux_xdp_processing_latency_nanoseconds Latest observed per-packet XDP processing latency in nanoseconds\n\
          # TYPE velcrux_xdp_processing_latency_nanoseconds gauge\n\
-         velcrux_xdp_processing_latency_nanoseconds {xdp_latency_ns}\n"
+         velcrux_xdp_processing_latency_nanoseconds {xdp_latency_ns}\n\n\
+         # HELP velcrux_pqc_handshakes_total Total quantum-resilient hybrid KEM handshakes performed\n\
+         # TYPE velcrux_pqc_handshakes_total counter\n\
+         velcrux_pqc_handshakes_total {pqc_handshakes}\n\n\
+         # HELP velcrux_pqc_encapsulations_total Total ML-KEM-768 hybrid shared secret encapsulations\n\
+         # TYPE velcrux_pqc_encapsulations_total counter\n\
+         velcrux_pqc_encapsulations_total {pqc_encaps}\n\n\
+         # HELP velcrux_pqc_decapsulations_total Total ML-KEM-768 hybrid shared secret decapsulations\n\
+         # TYPE velcrux_pqc_decapsulations_total counter\n\
+         velcrux_pqc_decapsulations_total {pqc_decaps}\n\n\
+         # HELP velcrux_pqc_signatures_verified_total Total ML-DSA-65 / Ed25519 hybrid signatures verified\n\
+         # TYPE velcrux_pqc_signatures_verified_total counter\n\
+         velcrux_pqc_signatures_verified_total {pqc_sigs_verified}\n\n\
+         # HELP velcrux_pqc_signature_failures_total Total post-quantum signature verification failures\n\
+         # TYPE velcrux_pqc_signature_failures_total counter\n\
+         velcrux_pqc_signature_failures_total {pqc_sig_fails}\n\n\
+         # HELP velcrux_pqc_handshake_latency_microseconds Latest observed hybrid PQC handshake latency in microseconds\n\
+         # TYPE velcrux_pqc_handshake_latency_microseconds gauge\n\
+         velcrux_pqc_handshake_latency_microseconds {pqc_latency_us}\n"
     )
 }
 

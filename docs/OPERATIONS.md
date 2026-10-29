@@ -3567,6 +3567,92 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_xdp_umem_frames_active` | `gauge` | Current active/allocated frames in AF_XDP UMEM memory pool. |
 | `velcrux_xdp_processing_latency_nanoseconds` | `gauge` | Latest observed per-packet XDP processing latency in nanoseconds. |
 
+## 51. Post-Quantum Hybrid Cryptography Reference (Option CD)
+
+Velcrux incorporates a pure safe Rust post-quantum hybrid cryptographic engine (`ADR-046`) adhering to the finalized NIST FIPS 203 (ML-KEM-768 / Kyber) and FIPS 204 (ML-DSA-65 / Dilithium) standards combined with classical X25519 and Ed25519 primitives.
+
+### Operator CLI Reference (`velcrux pqc`)
+
+#### 1. Inspect Post-Quantum Suite Status
+```bash
+# Display active post-quantum cryptography suite and FIPS compliance status
+velcrux pqc status
+
+# Output status as JSON
+velcrux --json pqc status
+```
+
+#### 2. Generate Quantum-Resilient Keypairs
+```bash
+# Generate dual-hybrid KEM and signing keypairs
+velcrux pqc keygen
+
+# Save public and private keys to disk files
+velcrux pqc keygen --out-dir /etc/velcrux/pqc-keys/
+
+# Output generated keys as JSON
+velcrux --json pqc keygen
+```
+
+#### 3. Encapsulate Hybrid Shared Secret
+```bash
+# Encapsulate shared secret for a peer's public key
+velcrux pqc encap <PEER_PUBLIC_KEY_HEX>
+
+# Machine-readable JSON output
+velcrux --json pqc encap <PEER_PUBLIC_KEY_HEX>
+```
+
+#### 4. Decapsulate Hybrid Shared Secret
+```bash
+# Decapsulate shared secret using private key and ciphertext
+velcrux pqc decap <PRIVATE_KEY_HEX> <CIPHERTEXT_HEX>
+
+# Output derived 256-bit BLAKE3 shared secret as JSON
+velcrux --json pqc decap <PRIVATE_KEY_HEX> <CIPHERTEXT_HEX>
+```
+
+#### 5. Sign Payloads & Manifests (Ed25519 + ML-DSA-65)
+```bash
+# Compute dual-hybrid digital signature over file or manifest
+velcrux pqc sign /path/to/manifest.json <SIGNING_PRIVATE_KEY_HEX>
+
+# Output signature as JSON
+velcrux --json pqc sign /path/to/manifest.json <SIGNING_PRIVATE_KEY_HEX>
+```
+
+#### 6. Verify Dual-Hybrid Signatures
+```bash
+# Verify dual-hybrid signature over file or manifest
+velcrux pqc verify /path/to/manifest.json <SIGNING_PUBLIC_KEY_HEX> <SIGNATURE_HEX>
+
+# Output verification results as JSON
+velcrux --json pqc verify /path/to/manifest.json <SIGNING_PUBLIC_KEY_HEX> <SIGNATURE_HEX>
+```
+
+#### 7. Execute Cryptographic Performance Benchmark
+```bash
+# Run benchmark across 50 iterations evaluating KeyGen, Encap, Decap, Sign, and Verify
+velcrux pqc benchmark --iterations 50
+
+# Output benchmark results as JSON
+velcrux --json pqc benchmark --iterations 50
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_pqc_handshakes_total` | `counter` | Total quantum-resilient hybrid KEM handshakes performed. |
+| `velcrux_pqc_encapsulations_total` | `counter` | Total ML-KEM-768 hybrid shared secret encapsulations. |
+| `velcrux_pqc_decapsulations_total` | `counter` | Total ML-KEM-768 hybrid shared secret decapsulations. |
+| `velcrux_pqc_signatures_verified_total` | `counter` | Total ML-DSA-65 / Ed25519 hybrid signatures verified. |
+| `velcrux_pqc_signature_failures_total` | `counter` | Total post-quantum signature verification failures. |
+| `velcrux_pqc_handshake_latency_microseconds` | `gauge` | Latest observed hybrid PQC handshake latency in microseconds. |
+
+
 
 
 
