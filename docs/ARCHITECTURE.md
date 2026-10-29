@@ -554,4 +554,5 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-044](adr/ADR-044-distributed-dynamic-content-router-anycast-migration.md) | Distributed Dynamic Content Router & Anycast Session Migration | Accepted | Multi-PoP topology, latency/load-aware anycast steering, and keyed BLAKE3 session migration |
 | [ADR-045](adr/ADR-045-hardware-accelerated-ebpf-xdp-packet-bypass.md) | Hardware-Accelerated FPGA/eBPF Kernel XDP Packet Bypassing & UMEM Zero-Copy Rings | Accepted | Wire-speed packet header parsing, eBPF filter maps, AF_XDP UMEM descriptor rings, and FPGA offload |
 | [ADR-046](adr/ADR-046-quantum-resilient-post-quantum-hybrid-cryptography.md) | Quantum-Resilient Post-Quantum Hybrid Cryptography (ML-KEM-768 & ML-DSA-65) | Accepted | FIPS 203 ML-KEM-768, FIPS 204 ML-DSA-65, dual-hybrid BLAKE3 KDF combiner, pure safe Rust |
+| [ADR-047](adr/ADR-047-ebpf-programmable-l7-proxy-load-shedding.md) | eBPF-Driven Programmable L7 Proxying & Dynamic Layer-7 Load Shedding | Accepted | 5-tier QUIC stream classification, non-sheddable control streams, composite pressure cascade, microsecond rule engine |
 

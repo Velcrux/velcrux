@@ -3652,6 +3652,115 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_pqc_signature_failures_total` | `counter` | Total post-quantum signature verification failures. |
 | `velcrux_pqc_handshake_latency_microseconds` | `gauge` | Latest observed hybrid PQC handshake latency in microseconds. |
 
+## 52. Programmable L7 Proxying & Dynamic Load Shedding Reference (ADR-047, Option CE)
+
+Velcrux incorporates a programmable Layer-7 proxying and dynamic load shedding engine (`ADR-047`) that operates directly over QUIC multiplexed streams and datagrams. The engine protects server infrastructure against resource saturation (CPU, memory, queue depth, RTT inflation) by dynamically shedding or throttling lower-priority traffic while preserving critical control-plane streams and interactive manifest requests.
+
+### Priority Tiers & Shedding Invariants
+
+Ingress streams are classified into 5 discrete tiers:
+- **Tier 0 (`Control`)**: Session heartbeats (`PING`), authentication (`AUTH`, `HELLO`), cancellation (`CANCEL`), and error notifications. **Invariant: Strictly non-sheddable** under all pressure conditions ($0\text{--}100\%$).
+- **Tier 1 (`Interactive`)**: Manifest metadata sync, directory status listings, query probes.
+- **Tier 2 (`BulkHigh`)**: Transactional transfer chunks, primary sync workloads. Throttled when composite pressure $\ge 90\%$.
+- **Tier 3 (`BulkLow`)**: Routine large-file transfers, warm tier sync. Throttled at $\ge 75\%$, shed at $\ge 90\%$.
+- **Tier 4 (`Background`)**: Periodic storage scrubbing, epidemic gossip sync, speculative chunk prefetch. Throttled at $\ge 50\%$, shed at $\ge 75\%$.
+
+### Dynamic Composite Pressure Sensor
+
+The engine samples 4 telemetry vectors and computes a composite pressure score:
+$$\text{Pressure} = 0.35 \cdot \text{CPU} + 0.25 \cdot \text{Memory} + 0.25 \cdot \text{QueueDepth} + 0.15 \cdot \text{RTTInflation}$$
+
+When pressure exceeds configured thresholds, the engine cascades verdicts from `Admit` to `Throttle` or `Shed`.
+
+### Operator CLI Reference
+
+#### 1. Display Proxy Status & Simulated Pressure
+```bash
+# Query active proxy status, rule count, active flows, and pressure
+velcrux proxy status
+
+# Query status with simulated system pressure inputs
+velcrux proxy status --cpu 85.0 --mem 80.0 --queue 75.0 --rtt 60.0
+
+# Query status as structured JSON
+velcrux proxy status --json
+```
+
+#### 2. Manage Programmable Rules
+```bash
+# List all active L7 proxy rules
+velcrux proxy rules
+
+# Add a high-precedence rule admitting tenant VIP traffic
+velcrux proxy add-rule \
+  --id "rule-vip-admit" \
+  --desc "VIP tenant guaranteed admission" \
+  --precedence 10 \
+  --tenant-prefix "tenant-vip-" \
+  --action admit
+
+# Add a rule shedding speculative prefetch under moderate load
+velcrux proxy add-rule \
+  --id "rule-drop-prefetch" \
+  --desc "Shed prefetch streams under pressure" \
+  --precedence 20 \
+  --path-prefix "/prefetch/" \
+  --stream-type data \
+  --action shed
+```
+
+#### 3. Classify Streams & Test Verdicts
+```bash
+# Classify an ingress control stream (guaranteed admission even at 99% load)
+velcrux proxy classify \
+  --tenant "tenant-standard" \
+  --path "/control/cancel" \
+  --stream-type control \
+  --pressure 99.0
+
+# Classify a bulk data stream under high pressure (evaluates to Throttle or Shed)
+velcrux proxy classify \
+  --tenant "tenant-standard" \
+  --path "/data/bulk/video.mp4" \
+  --stream-type data \
+  --flow-priority 3 \
+  --pressure 88.0
+
+# Output classification verdict as JSON
+velcrux proxy classify --tenant "tenant-standard" --path "/data/shard-0" --pressure 92.0 --json
+```
+
+#### 4. Run Load Shedding Cascade Simulation
+```bash
+# Simulate shedding cascade across all 5 tiers at 85% composite pressure
+velcrux proxy shed --pressure 85.0
+
+# Run cascade simulation with JSON output
+velcrux proxy shed --pressure 95.0 --json
+```
+
+#### 5. Benchmark Engine Latency & Throughput
+```bash
+# Run classification benchmark across 1,000 iterations
+velcrux proxy benchmark --iterations 1000
+
+# Benchmark with JSON output
+velcrux proxy benchmark --iterations 500 --json
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_ebpf_l7_routed_total` | `counter` | Total ingress QUIC streams admitted and routed through L7 proxy. |
+| `velcrux_ebpf_l7_shed_total` | `counter` | Total streams dropped/shed due to dynamic load shedding or rules. |
+| `velcrux_ebpf_l7_throttled_total` | `counter` | Total streams throttled via token-bucket policing or pressure limits. |
+| `velcrux_ebpf_l7_active_flows` | `gauge` | Current number of active L7 multiplexed flows being tracked. |
+| `velcrux_ebpf_l7_dispatch_latency_nanoseconds` | `gauge` | Latest observed L7 classification and rule evaluation latency (ns). |
+| `velcrux_ebpf_l7_pressure_score_pct` | `gauge` | Current composite system pressure score percentage (0–100%). |
+
 
 
 

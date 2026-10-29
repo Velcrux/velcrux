@@ -29,6 +29,7 @@ pub mod crypto;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
+pub mod proxy;
 pub mod router;
 pub mod scheduler;
 pub mod session;
@@ -186,6 +187,10 @@ pub use crypto::pqc::{
     HybridSignature, HybridSignatureEngine, HybridSigningPrivateKey, HybridSigningPublicKey,
     MlDsaPrivateKey, MlDsaPublicKey, MlDsaSignature, MlKemCiphertext, MlKemPrivateKey,
     MlKemPublicKey, PqcAlgorithm, PqcBenchmarkReport, PqcStatusReport,
+};
+pub use proxy::{
+    run_l7_benchmark, FlowTier, L7Action, L7BenchmarkReport, L7ProxyEngine, L7ProxyStatus,
+    L7RequestInfo, L7Rule, L7StreamType, L7TokenBucket, PressureSensor,
 };
 pub use transport::{
     simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController, BaselineComparator,

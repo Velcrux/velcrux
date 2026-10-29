@@ -212,6 +212,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let pqc_sigs_verified = stats.pqc_signatures_verified_total.load(Ordering::Relaxed);
     let pqc_sig_fails = stats.pqc_signature_failures_total.load(Ordering::Relaxed);
     let pqc_latency_us = stats.pqc_handshake_latency_us.load(Ordering::Relaxed);
+    let l7_routed = stats.l7_flows_routed_total.load(Ordering::Relaxed);
+    let l7_shed = stats.l7_flows_shed_total.load(Ordering::Relaxed);
+    let l7_throttled = stats.l7_flows_throttled_total.load(Ordering::Relaxed);
+    let l7_active = stats.l7_active_flows.load(Ordering::Relaxed);
+    let l7_latency_ns = stats
+        .l7_dispatch_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let l7_pressure_pct = stats.l7_pressure_score_pct.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -550,7 +558,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_pqc_signature_failures_total {pqc_sig_fails}\n\n\
          # HELP velcrux_pqc_handshake_latency_microseconds Latest observed hybrid PQC handshake latency in microseconds\n\
          # TYPE velcrux_pqc_handshake_latency_microseconds gauge\n\
-         velcrux_pqc_handshake_latency_microseconds {pqc_latency_us}\n"
+         velcrux_pqc_handshake_latency_microseconds {pqc_latency_us}\n\n\
+         # HELP velcrux_ebpf_l7_routed_total Total flows routed by programmable L7 proxy\n\
+         # TYPE velcrux_ebpf_l7_routed_total counter\n\
+         velcrux_ebpf_l7_routed_total {l7_routed}\n\n\
+         # HELP velcrux_ebpf_l7_shed_total Total flows shed due to load shedding policies\n\
+         # TYPE velcrux_ebpf_l7_shed_total counter\n\
+         velcrux_ebpf_l7_shed_total {l7_shed}\n\n\
+         # HELP velcrux_ebpf_l7_throttled_total Total flows throttled under bandwidth policing\n\
+         # TYPE velcrux_ebpf_l7_throttled_total counter\n\
+         velcrux_ebpf_l7_throttled_total {l7_throttled}\n\n\
+         # HELP velcrux_ebpf_l7_active_flows Current active L7 transfer flows\n\
+         # TYPE velcrux_ebpf_l7_active_flows gauge\n\
+         velcrux_ebpf_l7_active_flows {l7_active}\n\n\
+         # HELP velcrux_ebpf_l7_dispatch_latency_nanoseconds Latest observed L7 dispatch latency in nanoseconds\n\
+         # TYPE velcrux_ebpf_l7_dispatch_latency_nanoseconds gauge\n\
+         velcrux_ebpf_l7_dispatch_latency_nanoseconds {l7_latency_ns}\n\n\
+         # HELP velcrux_ebpf_l7_pressure_score_pct Current composite system load pressure percentage (0-100)\n\
+         # TYPE velcrux_ebpf_l7_pressure_score_pct gauge\n\
+         velcrux_ebpf_l7_pressure_score_pct {l7_pressure_pct}\n"
     )
 }
 

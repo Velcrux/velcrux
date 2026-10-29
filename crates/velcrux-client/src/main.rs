@@ -829,6 +829,108 @@ enum Cmd {
         #[command(subcommand)]
         sub: PqcSubCmd,
     },
+    /// eBPF-driven programmable L7 proxying & dynamic layer-7 load shedding (Option CE).
+    Proxy {
+        #[command(subcommand)]
+        sub: ProxySubCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ProxySubCmd {
+    /// Show current proxy status, pressure metrics, flow counts, and active policy mode.
+    Status {
+        /// Optional simulated CPU utilization percentage (0-100).
+        #[arg(long)]
+        cpu: Option<f64>,
+        /// Optional simulated memory pressure percentage (0-100).
+        #[arg(long)]
+        mem: Option<f64>,
+        /// Optional simulated queue occupancy percentage (0-100).
+        #[arg(long)]
+        queue: Option<f64>,
+        /// Optional simulated RTT inflation percentage (0-100).
+        #[arg(long)]
+        rtt: Option<f64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List active programmable L7 classification and load shedding rules.
+    Rules {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add or update a programmable L7 proxy rule.
+    AddRule {
+        /// Unique rule identifier.
+        #[arg(long)]
+        id: String,
+        /// Rule description.
+        #[arg(long, default_value = "Operator custom rule")]
+        desc: String,
+        /// Execution precedence (lower = evaluated earlier, default: 50).
+        #[arg(long, default_value = "50")]
+        precedence: u32,
+        /// Matching tenant prefix filter.
+        #[arg(long)]
+        tenant_prefix: Option<String>,
+        /// Matching path prefix filter.
+        #[arg(long)]
+        path_prefix: Option<String>,
+        /// Matching stream type: control, data, metadata, datagram.
+        #[arg(long)]
+        stream_type: Option<String>,
+        /// Action to execute: admit, throttle, shed, reroute.
+        #[arg(long, default_value = "admit")]
+        action: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Classify an ingress stream and evaluate load shedding action under given pressure.
+    Classify {
+        /// Ingress tenant ID.
+        #[arg(long, default_value = "tenant-prod-1")]
+        tenant: String,
+        /// Ingress transfer path.
+        #[arg(long, default_value = "/data/shards/part-001")]
+        path: String,
+        /// Stream type: control, data, metadata, datagram.
+        #[arg(long, default_value = "data")]
+        stream_type: String,
+        /// Stream priority hint (0=highest/interactive, 4=lowest/background).
+        #[arg(long = "flow-priority")]
+        flow_priority: Option<u8>,
+        /// Ingress payload byte size.
+        #[arg(long, default_value = "65536")]
+        payload_bytes: usize,
+        /// Simulated system pressure percentage (0-100).
+        #[arg(long, default_value = "25.0")]
+        pressure: f64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Simulate dynamic load shedding cascade across flow tiers under increasing pressure.
+    Shed {
+        /// Target pressure percentage (0-100).
+        #[arg(long, default_value = "85.0")]
+        pressure: f64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark programmable L7 classification, rule evaluation, and load shedding latency.
+    Benchmark {
+        /// Number of benchmark iterations (default: 500).
+        #[arg(long, default_value = "500")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -3058,6 +3160,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Pqc { sub } => {
             run_pqc(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Proxy { sub } => {
+            run_proxy(&cli, sub).await?;
             return Ok(());
         }
 
@@ -7194,6 +7300,376 @@ async fn run_pqc(cli: &Cli, sub: &PqcSubCmd) -> anyhow::Result<()> {
                     "  All Ops Verified:       {}",
                     report.all_operations_verified
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_proxy(cli: &Cli, sub: &ProxySubCmd) -> anyhow::Result<()> {
+    use velcrux_core::proxy::{
+        run_l7_benchmark, FlowTier, L7Action, L7ProxyEngine, L7RequestInfo, L7Rule, L7StreamType,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        ProxySubCmd::Status {
+            cpu,
+            mem,
+            queue,
+            rtt,
+            json,
+        } => {
+            let engine = L7ProxyEngine::default();
+            if cpu.is_some() || mem.is_some() || queue.is_some() || rtt.is_some() {
+                let q = queue.unwrap_or(10.0);
+                engine.set_pressure(
+                    cpu.unwrap_or(20.0),
+                    mem.unwrap_or(20.0),
+                    q,
+                    rtt.unwrap_or(q),
+                );
+            }
+            let status = engine.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Programmable L7 Proxy & Load Shedder Status ===");
+                println!(
+                    "  Pressure Score:         {:.1}%",
+                    status.pressure_score_pct
+                );
+                println!("  Policy Mode:            {}", status.default_policy_mode);
+                println!("  Active Flows:           {}", status.active_flows);
+                println!("  Active Rules:           {}", status.rules_count);
+                println!("  Classified Flows:       {}", status.total_classified);
+                println!("  Admitted Flows:         {}", status.total_admitted);
+                println!("  Throttled Flows:        {}", status.total_throttled);
+                println!("  Shed Flows:             {}", status.total_shed);
+                println!("  Rerouted Flows:         {}", status.total_rerouted);
+                println!(
+                    "  Avg Dispatch Latency:   {:.2} ns",
+                    status.avg_dispatch_latency_ns
+                );
+            }
+        }
+        ProxySubCmd::Rules { json } => {
+            let r1 = L7Rule {
+                id: "default-control-admit".to_string(),
+                description: "Strict non-sheddable priority admission for control streams"
+                    .to_string(),
+                precedence: 10,
+                tenant_prefix: None,
+                path_prefix: None,
+                stream_type: Some(L7StreamType::Control),
+                min_pressure_pct: None,
+                action: L7Action::Admit {
+                    worker_id: 0,
+                    priority: 0,
+                },
+            };
+            let r2 = L7Rule {
+                id: "premium-tier-fastpath".to_string(),
+                description: "Priority SLA fast-path routing for premium tenants".to_string(),
+                precedence: 20,
+                tenant_prefix: Some("premium-".to_string()),
+                path_prefix: None,
+                stream_type: None,
+                min_pressure_pct: None,
+                action: L7Action::Admit {
+                    worker_id: 1,
+                    priority: 1,
+                },
+            };
+            let r3 = L7Rule {
+                id: "cold-archive-reroute".to_string(),
+                description: "Reroute cold archive bulk uploads to secondary PoP".to_string(),
+                precedence: 30,
+                tenant_prefix: None,
+                path_prefix: Some("/archive/cold".to_string()),
+                stream_type: None,
+                min_pressure_pct: None,
+                action: L7Action::Reroute {
+                    target_pop: "pop-cold-iad".to_string(),
+                },
+            };
+            let all_rules = vec![r1, r2, r3];
+
+            #[derive(Serialize)]
+            struct RulesOutput {
+                count: usize,
+                rules: Vec<L7Rule>,
+            }
+
+            if *json || is_json {
+                let out = RulesOutput {
+                    count: all_rules.len(),
+                    rules: all_rules,
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Active Programmable L7 Proxy Rules ===");
+                println!(
+                    "{:<4} {:<24} {:<12} {:<16} {:<20} ACTION",
+                    "#", "RULE ID", "PRECEDENCE", "TENANT FILTER", "PATH FILTER"
+                );
+                for (idx, r) in all_rules.iter().enumerate() {
+                    println!(
+                        "{:<4} {:<24} {:<12} {:<16} {:<20} {}",
+                        idx + 1,
+                        r.id,
+                        r.precedence,
+                        r.tenant_prefix.as_deref().unwrap_or("*"),
+                        r.path_prefix.as_deref().unwrap_or("*"),
+                        r.action
+                    );
+                }
+            }
+        }
+        ProxySubCmd::AddRule {
+            id,
+            desc,
+            precedence,
+            tenant_prefix,
+            path_prefix,
+            stream_type,
+            action,
+            json,
+        } => {
+            let st = stream_type
+                .as_deref()
+                .map(|s| match s.to_lowercase().as_str() {
+                    "control" => L7StreamType::Control,
+                    "metadata" => L7StreamType::Metadata,
+                    "datagram" => L7StreamType::Datagram,
+                    _ => L7StreamType::Data,
+                });
+
+            let act = match action.to_lowercase().as_str() {
+                "shed" => L7Action::Shed {
+                    reason: "operator configured rule".to_string(),
+                    retry_after_ms: 1000,
+                },
+                "throttle" => L7Action::Throttle {
+                    allowed_rate_bps: 10_000_000,
+                    delay_ms: 50,
+                },
+                "reroute" => L7Action::Reroute {
+                    target_pop: "pop-secondary".to_string(),
+                },
+                _ => L7Action::Admit {
+                    worker_id: 1,
+                    priority: 2,
+                },
+            };
+
+            let rule = L7Rule {
+                id: id.clone(),
+                description: desc.clone(),
+                precedence: *precedence,
+                tenant_prefix: tenant_prefix.clone(),
+                path_prefix: path_prefix.clone(),
+                stream_type: st,
+                min_pressure_pct: None,
+                action: act,
+            };
+
+            #[derive(Serialize)]
+            struct AddRuleOutput {
+                success: bool,
+                rule: L7Rule,
+            }
+
+            let out = AddRuleOutput {
+                success: true,
+                rule,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Programmable L7 Rule Registered ===");
+                println!("  ID:                     {}", id);
+                println!("  Description:            {}", desc);
+                println!("  Precedence:             {}", precedence);
+                println!(
+                    "  Tenant Prefix:          {}",
+                    tenant_prefix.as_deref().unwrap_or("*")
+                );
+                println!(
+                    "  Path Prefix:            {}",
+                    path_prefix.as_deref().unwrap_or("*")
+                );
+                println!("  Action:                 {}", action);
+            }
+        }
+        ProxySubCmd::Classify {
+            tenant,
+            path,
+            stream_type,
+            flow_priority,
+            payload_bytes,
+            pressure,
+            json,
+        } => {
+            let engine = L7ProxyEngine::default();
+            engine.set_pressure(*pressure, *pressure, *pressure, *pressure);
+
+            let st = match stream_type.to_lowercase().as_str() {
+                "control" => L7StreamType::Control,
+                "metadata" => L7StreamType::Metadata,
+                "datagram" => L7StreamType::Datagram,
+                _ => L7StreamType::Data,
+            };
+
+            let req = L7RequestInfo {
+                flow_id: "flow-probe-1".to_string(),
+                tenant_id: tenant.clone(),
+                path: path.clone(),
+                stream_type: st,
+                payload_bytes: *payload_bytes,
+                client_ip: "10.0.0.1".to_string(),
+                priority_hint: *flow_priority,
+            };
+
+            let (tier, action) = engine.classify(&req);
+
+            #[derive(Serialize)]
+            struct ClassifyOutput {
+                tenant_id: String,
+                path: String,
+                stream_type: String,
+                flow_tier: FlowTier,
+                pressure_score_pct: f64,
+                decision_action: L7Action,
+            }
+
+            let out = ClassifyOutput {
+                tenant_id: tenant.clone(),
+                path: path.clone(),
+                stream_type: stream_type.clone(),
+                flow_tier: tier,
+                pressure_score_pct: *pressure,
+                decision_action: action.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Ingress Stream L7 Classification Verdict ===");
+                println!("  Tenant ID:              {}", tenant);
+                println!("  Transfer Path:          {}", path);
+                println!("  Stream Category:        {}", stream_type);
+                println!(
+                    "  Classified Tier:        {:?} (Level {})",
+                    tier, tier as u8
+                );
+                println!("  System Pressure:        {:.1}%", pressure);
+                println!("  Decision Action:        {}", action);
+            }
+        }
+        ProxySubCmd::Shed { pressure, json } => {
+            let engine = L7ProxyEngine::default();
+            engine.set_pressure(*pressure, *pressure, *pressure, *pressure);
+
+            let tiers = vec![
+                ("Control", L7StreamType::Control, None),
+                ("Interactive", L7StreamType::Metadata, None),
+                ("BulkHigh", L7StreamType::Data, Some(2u8)),
+                ("BulkLow", L7StreamType::Data, Some(5u8)),
+                ("Background", L7StreamType::Data, Some(8u8)),
+            ];
+
+            #[derive(Serialize)]
+            struct TierResult {
+                tier: String,
+                action: L7Action,
+                verdict: String,
+            }
+
+            let mut results = Vec::new();
+            for (name, st, prio) in tiers {
+                let req = L7RequestInfo {
+                    flow_id: format!("sim-{}", name),
+                    tenant_id: "tenant-sim".to_string(),
+                    path: format!("/sim/{}", name.to_lowercase()),
+                    stream_type: st,
+                    payload_bytes: 65536,
+                    client_ip: "127.0.0.1".to_string(),
+                    priority_hint: prio,
+                };
+                let (_, action) = engine.classify(&req);
+                let verdict = match &action {
+                    L7Action::Admit { .. } => "ADMITTED",
+                    L7Action::Throttle { .. } => "THROTTLED",
+                    L7Action::Shed { .. } => "SHED",
+                    L7Action::Reroute { .. } => "REROUTED",
+                };
+                results.push(TierResult {
+                    tier: name.to_string(),
+                    action,
+                    verdict: verdict.to_string(),
+                });
+            }
+
+            #[derive(Serialize)]
+            struct ShedOutput {
+                pressure_score_pct: f64,
+                policy_mode: String,
+                tiers: Vec<TierResult>,
+            }
+
+            let out = ShedOutput {
+                pressure_score_pct: *pressure,
+                policy_mode: engine.status().default_policy_mode,
+                tiers: results,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "=== Dynamic L7 Load Shedding Cascade (Pressure: {:.1}%) ===",
+                    pressure
+                );
+                println!("  Policy Active:          {}", out.policy_mode);
+                println!("{:<14} {:<12} DETAILS", "FLOW TIER", "VERDICT");
+                for r in &out.tiers {
+                    println!("{:<14} {:<12} {}", r.tier, r.verdict, r.action);
+                }
+            }
+        }
+        ProxySubCmd::Benchmark { iterations, json } => {
+            let report = run_l7_benchmark(*iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Programmable L7 Proxy Benchmark ({} iters) ===",
+                    report.iterations
+                );
+                println!(
+                    "  Classification Latency: {:.2} ns",
+                    report.classification_latency_ns
+                );
+                println!(
+                    "  Rule Eval Latency:      {:.2} ns",
+                    report.rule_eval_latency_ns
+                );
+                println!(
+                    "  Load Shedding Latency:  {:.2} ns",
+                    report.shedding_latency_ns
+                );
+                println!(
+                    "  Throughput:             {:.1} ops/sec",
+                    report.throughput_ops_per_second
+                );
+                println!("  Flows Admitted:         {}", report.flows_admitted);
+                println!("  Flows Throttled:        {}", report.flows_throttled);
+                println!("  Flows Shed:             {}", report.flows_shed);
+                println!("  All Verdicts Valid:     {}", report.all_verdicts_correct);
             }
         }
     }

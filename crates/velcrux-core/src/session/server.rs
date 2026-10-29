@@ -319,6 +319,18 @@ pub struct ServerStats {
     pub pqc_signature_failures_total: AtomicU64,
     /// Latest observed hybrid post-quantum handshake latency in microseconds (Option CD).
     pub pqc_handshake_latency_us: AtomicU64,
+    /// Total L7 flows routed / admitted by the proxy engine (Option CE).
+    pub l7_flows_routed_total: AtomicU64,
+    /// Total L7 flows shed due to load pressure (Option CE).
+    pub l7_flows_shed_total: AtomicU64,
+    /// Total L7 flows throttled due to rate limiting or pressure (Option CE).
+    pub l7_flows_throttled_total: AtomicU64,
+    /// Current active L7 transfer flows (Option CE).
+    pub l7_active_flows: AtomicU64,
+    /// Latest observed per-request L7 dispatch latency in nanoseconds (Option CE).
+    pub l7_dispatch_latency_nanoseconds: AtomicU64,
+    /// Current composite load pressure percentage (0–100%) (Option CE).
+    pub l7_pressure_score_pct: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -450,6 +462,12 @@ impl Default for ServerStats {
             pqc_signatures_verified_total: AtomicU64::new(0),
             pqc_signature_failures_total: AtomicU64::new(0),
             pqc_handshake_latency_us: AtomicU64::new(0),
+            l7_flows_routed_total: AtomicU64::new(0),
+            l7_flows_shed_total: AtomicU64::new(0),
+            l7_flows_throttled_total: AtomicU64::new(0),
+            l7_active_flows: AtomicU64::new(0),
+            l7_dispatch_latency_nanoseconds: AtomicU64::new(0),
+            l7_pressure_score_pct: AtomicU64::new(0),
         }
     }
 }
