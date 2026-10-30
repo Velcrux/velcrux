@@ -3849,6 +3849,95 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_wan_aggregation_throughput_bps` | `gauge` | Aggregated WAN bonding throughput in bits per second. |
 | `velcrux_wan_reordering_depth_chunks` | `gauge` | Current reordering depth of out-of-order sliced chunk frames. |
 
+---
+
+## 54. Zero-Trust Decentralized Identity (DID) & Verifiable Credential Reference (Option CG)
+
+Velcrux incorporates a pure safe Rust Zero-Trust Decentralized Identity (DID) and W3C Verifiable Credential attestation engine (`ADR-049`). Peer identities are self-certifying identifiers (`did:key`, `did:peer`) resolved deterministically without central CA or PKI dependencies. Transfer access control is governed through cryptographically signed Verifiable Credentials (`VelcruxTransferCapabilityCredential`) with capability delegation chains.
+
+### CLI Operational Commands
+
+The operator CLI exposes the `velcrux did` command family:
+
+#### 1. Inspect DID Engine Status
+```bash
+# Display human-readable attestation engine metrics
+velcrux did status
+
+# Output status metrics as JSON
+velcrux did status --json
+```
+
+#### 2. Generate Deterministic DID Keypair
+```bash
+# Generate did:key (default, W3C Ed25519)
+velcrux did generate
+
+# Generate did:peer (numalgo 0 inception key)
+velcrux did generate --peer
+
+# Output generated keys and DID document in JSON format
+velcrux did generate --peer --json
+```
+
+#### 3. Resolve DID into W3C Document
+```bash
+# Resolve a did:key identifier
+velcrux did resolve --did did:key:z6MkiwGL7iW61SnLvC3tVVsZhxB2m8oiAAT4KUNzr3CEG1Cs
+
+# Resolve DID with JSON output
+velcrux did resolve --did did:key:z6MkiwGL7iW61SnLvC3tVVsZhxB2m8oiAAT4KUNzr3CEG1Cs --json
+```
+
+#### 4. Issue Cryptographically Signed Verifiable Credential
+```bash
+# Issue capability credential granting upload and download access on /data/*
+velcrux did issue-vc \
+  --issuer-sk 3051020101300506032b65700422042079999ad3ba8857c57b1a184d0d0d181606a50f6729c2b675e144d05468a0d417812100429b551ffb299c20923e5d198d0974df6b52c992f41c570ae4957863aba7d8b8 \
+  --subject-did did:key:z6MkiwGL7iW61SnLvC3tVVsZhxB2m8oiAAT4KUNzr3CEG1Cs \
+  --tenant tenant-alpha \
+  --paths "/data/*,/logs/*" \
+  --ops "upload,download" \
+  --delegation-depth 2 \
+  --valid-hours 48 \
+  --json
+```
+
+#### 5. Verify Credential Attestation & Scoped Permissions
+```bash
+# Verify credential against requested path and operation
+velcrux did verify-vc \
+  --vc credential.json \
+  --requested-path /data/dataset.parquet \
+  --requested-op upload
+
+# Verify credential with JSON output
+velcrux did verify-vc --vc credential.json --requested-path /data/dataset.parquet --requested-op upload --json
+```
+
+#### 6. Benchmark Resolution, Issuance, and Verification
+```bash
+# Execute 100 benchmark iterations
+velcrux did benchmark --iterations 100
+
+# Benchmark with JSON output
+velcrux did benchmark --iterations 500 --json
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_did_resolutions_total` | `counter` | Total decentralized identifier (DID) resolutions executed. |
+| `velcrux_did_vc_issued_total` | `counter` | Total W3C Verifiable Credentials cryptographically issued. |
+| `velcrux_did_vc_verified_total` | `counter` | Total W3C Verifiable Credentials successfully verified. |
+| `velcrux_did_vc_verification_failures_total` | `counter` | Total credential verification failures (tampering, expiration, unauthorized scope). |
+| `velcrux_did_verification_latency_nanoseconds` | `gauge` | Latency of the most recent Verifiable Credential attestation in nanoseconds. |
+| `velcrux_did_active_delegations` | `gauge` | Current number of active delegated capability chains verified. |
+
+
 
 
 

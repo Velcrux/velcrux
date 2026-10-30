@@ -343,6 +343,18 @@ pub struct ServerStats {
     pub wan_aggregation_throughput_bps: AtomicU64,
     /// Reordering depth of out-of-order sliced chunk frames (Option CF).
     pub wan_reordering_depth_chunks: AtomicU64,
+    /// Total decentralized identity (did:key / did:peer) resolutions performed (Option CG).
+    pub did_resolutions_total: AtomicU64,
+    /// Total verifiable credentials issued for capability attestation (Option CG).
+    pub did_vc_issued_total: AtomicU64,
+    /// Total verifiable credentials verified during session authorization (Option CG).
+    pub did_vc_verified_total: AtomicU64,
+    /// Total verifiable credential verification failures (Option CG).
+    pub did_vc_verification_failures_total: AtomicU64,
+    /// Latest observed verifiable credential verification latency in nanoseconds (Option CG).
+    pub did_verification_latency_nanoseconds: AtomicU64,
+    /// Current active delegated capability chains (Option CG).
+    pub did_active_delegations: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -486,6 +498,12 @@ impl Default for ServerStats {
             wan_path_loss_ratio_basis_points: AtomicU64::new(0),
             wan_aggregation_throughput_bps: AtomicU64::new(0),
             wan_reordering_depth_chunks: AtomicU64::new(0),
+            did_resolutions_total: AtomicU64::new(0),
+            did_vc_issued_total: AtomicU64::new(0),
+            did_vc_verified_total: AtomicU64::new(0),
+            did_vc_verification_failures_total: AtomicU64::new(0),
+            did_verification_latency_nanoseconds: AtomicU64::new(0),
+            did_active_delegations: AtomicU64::new(0),
         }
     }
 }

@@ -839,6 +839,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: WanSubCmd,
     },
+    /// Zero-trust decentralized identity (DID) & verifiable credential attestation mesh (Option CG).
+    Did {
+        #[command(subcommand)]
+        sub: DidSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -996,6 +1001,91 @@ enum WanSubCmd {
         /// Chunk payload size in bytes per iteration (default: 65536 = 64 KiB).
         #[arg(long, default_value = "65536")]
         chunk_size: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DidSubCmd {
+    /// Show active DID attestation engine status and telemetry counters.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a new Ed25519 decentralized identifier (did:key or did:peer).
+    Generate {
+        /// Generate a did:peer (numalgo 0 inception key) instead of did:key.
+        #[arg(long)]
+        peer: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve a did:key or did:peer identifier into its W3C DID Document.
+    Resolve {
+        /// Target DID string (e.g. did:key:z6M... or did:peer:0z6M...).
+        #[arg(long)]
+        did: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Issue a cryptographically signed W3C Verifiable Credential for transfer capability.
+    IssueVc {
+        /// Issuer Ed25519 PKCS#8 private key (hex-encoded).
+        #[arg(long)]
+        issuer_sk: String,
+        /// Subject DID granted the capability.
+        #[arg(long)]
+        subject_did: String,
+        /// Organization / tenant ID.
+        #[arg(long, default_value = "tenant-default")]
+        tenant: String,
+        /// Comma-separated list of permitted transfer path patterns.
+        #[arg(long, default_value = "/*")]
+        paths: String,
+        /// Comma-separated list of permitted operations (upload, download, sync, admin).
+        #[arg(long, default_value = "upload,download,sync")]
+        ops: String,
+        /// Maximum allowed transfer bandwidth in bits per second (0 = unlimited).
+        #[arg(long, default_value = "0")]
+        max_bandwidth: u64,
+        /// Credential validity period in hours.
+        #[arg(long, default_value = "24")]
+        valid_hours: u64,
+        /// Delegation depth allowed for sub-agents (0 = non-delegatable).
+        #[arg(long, default_value = "1")]
+        delegation_depth: u32,
+        /// Optional path or JSON string of parent credential to chain delegation.
+        #[arg(long)]
+        parent_vc: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a W3C Verifiable Credential against requested path, operation, and delegation chain.
+    VerifyVc {
+        /// Verifiable Credential JSON string or path to file.
+        #[arg(long)]
+        vc: String,
+        /// Optional requested transfer path to check against allowedPaths.
+        #[arg(long)]
+        requested_path: Option<String>,
+        /// Optional requested operation to check against allowedOperations.
+        #[arg(long)]
+        requested_op: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark DID resolution, VC issuance, and VC verification latency and throughput.
+    Benchmark {
+        /// Number of benchmark iterations (default: 500).
+        #[arg(long, default_value = "500")]
+        iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -3237,6 +3327,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Wan { sub } => {
             run_wan(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Did { sub } => {
+            run_did(&cli, sub).await?;
             return Ok(());
         }
 
@@ -8018,6 +8112,307 @@ async fn run_wan(cli: &Cli, sub: &WanSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Avg Reassembly Latency: {:.2} us",
                     report.avg_reassembly_latency_micros
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_did(cli: &Cli, sub: &DidSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::audit::hex_encode;
+    use velcrux_core::did::{
+        did_from_ed25519_pubkey, generate_ed25519_keypair, hex_decode, parse_ed25519_keypair,
+        resolve_did, DidAttestationEngine, DidMethod, VerifiableCredential,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        DidSubCmd::Status { json } => {
+            let engine = DidAttestationEngine::new();
+            let (res_total, vc_issued, vc_verified, vc_fails, last_latency_ns, active_delegs) =
+                engine.stats();
+
+            #[derive(Serialize)]
+            struct DidStatusOutput {
+                did_resolutions_total: u64,
+                did_vc_issued_total: u64,
+                did_vc_verified_total: u64,
+                did_vc_verification_failures_total: u64,
+                did_verification_latency_nanoseconds: u64,
+                did_active_delegations: u64,
+            }
+
+            let out = DidStatusOutput {
+                did_resolutions_total: res_total,
+                did_vc_issued_total: vc_issued,
+                did_vc_verified_total: vc_verified,
+                did_vc_verification_failures_total: vc_fails,
+                did_verification_latency_nanoseconds: last_latency_ns,
+                did_active_delegations: active_delegs,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Zero-Trust DID & Verifiable Credential Engine Status ===");
+                println!("  DID Resolutions:        {}", out.did_resolutions_total);
+                println!("  VCs Issued:             {}", out.did_vc_issued_total);
+                println!("  VCs Verified:           {}", out.did_vc_verified_total);
+                println!(
+                    "  VC Verification Fails:  {}",
+                    out.did_vc_verification_failures_total
+                );
+                println!("  Active Delegations:     {}", out.did_active_delegations);
+                println!(
+                    "  Last Latency:           {} ns ({:.2} µs)",
+                    out.did_verification_latency_nanoseconds,
+                    (out.did_verification_latency_nanoseconds as f64) / 1000.0
+                );
+            }
+        }
+        DidSubCmd::Generate { peer, json } => {
+            let (pkcs8_bytes, pk_bytes) = generate_ed25519_keypair()?;
+
+            let method = if *peer {
+                DidMethod::Peer
+            } else {
+                DidMethod::Key
+            };
+            let did = did_from_ed25519_pubkey(&pk_bytes, method);
+            let (_, doc) = resolve_did(&did)?;
+
+            #[derive(Serialize)]
+            struct GenerateOutput {
+                did: String,
+                did_method: String,
+                public_key_hex: String,
+                private_key_pkcs8_hex: String,
+                did_document: velcrux_core::did::DidDocument,
+            }
+
+            let out = GenerateOutput {
+                did: did.clone(),
+                did_method: if *peer {
+                    "did:peer".to_string()
+                } else {
+                    "did:key".to_string()
+                },
+                public_key_hex: hex_encode(&pk_bytes),
+                private_key_pkcs8_hex: hex_encode(&pkcs8_bytes),
+                did_document: doc,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Generated Decentralized Identifier (DID) ===");
+                println!("  DID:                    {}", out.did);
+                println!("  Method:                 {}", out.did_method);
+                println!("  Public Key (Hex):       {}", out.public_key_hex);
+                println!("  Private Key PKCS#8:     {}", out.private_key_pkcs8_hex);
+                println!();
+                println!("DID Document:");
+                println!("{}", serde_json::to_string_pretty(&out.did_document)?);
+            }
+        }
+        DidSubCmd::Resolve { did, json } => {
+            let (pk, doc) = resolve_did(did)?;
+
+            #[derive(Serialize)]
+            struct ResolveOutput {
+                did: String,
+                public_key_hex: String,
+                did_document: velcrux_core::did::DidDocument,
+            }
+
+            let out = ResolveOutput {
+                did: did.clone(),
+                public_key_hex: hex_encode(&pk),
+                did_document: doc,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Resolved W3C Decentralized Identifier ===");
+                println!("  DID:                    {}", out.did);
+                println!("  Public Key (Hex):       {}", out.public_key_hex);
+                println!();
+                println!("DID Document:");
+                println!("{}", serde_json::to_string_pretty(&out.did_document)?);
+            }
+        }
+        DidSubCmd::IssueVc {
+            issuer_sk,
+            subject_did,
+            tenant,
+            paths,
+            ops,
+            max_bandwidth,
+            valid_hours,
+            delegation_depth,
+            parent_vc,
+            json,
+        } => {
+            let engine = DidAttestationEngine::new();
+            let sk_bytes = hex_decode(issuer_sk)
+                .ok_or_else(|| anyhow::anyhow!("Invalid hex encoding for issuer_sk"))?;
+            let (keypair, pk_bytes) = parse_ed25519_keypair(&sk_bytes)?;
+            let issuer_did = did_from_ed25519_pubkey(&pk_bytes, DidMethod::Key);
+
+            let path_list: Vec<String> = paths
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let op_list: Vec<String> = ops
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let parent: Option<VerifiableCredential> = if let Some(p) = parent_vc {
+                let content = if std::path::Path::new(p).exists() {
+                    std::fs::read_to_string(p)?
+                } else {
+                    p.clone()
+                };
+                Some(serde_json::from_str(&content)?)
+            } else {
+                None
+            };
+
+            let vc = engine.issue_credential(
+                &keypair,
+                &issuer_did,
+                subject_did,
+                tenant,
+                path_list,
+                op_list,
+                *max_bandwidth,
+                valid_hours * 3600,
+                *delegation_depth,
+                parent,
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&vc)?);
+            } else {
+                println!("=== Issued W3C Verifiable Credential ===");
+                println!("  VC ID:                  {}", vc.id);
+                println!("  Issuer DID:             {}", vc.issuer);
+                println!("  Subject DID:            {}", vc.credential_subject.id);
+                println!(
+                    "  Tenant ID:              {}",
+                    vc.credential_subject.tenant_id
+                );
+                println!(
+                    "  Allowed Paths:          {:?}",
+                    vc.credential_subject.allowed_paths
+                );
+                println!(
+                    "  Allowed Operations:     {:?}",
+                    vc.credential_subject.allowed_operations
+                );
+                println!(
+                    "  Max Bandwidth:          {} bps",
+                    vc.credential_subject.max_bandwidth_bps
+                );
+                println!(
+                    "  Delegation Depth:       {}",
+                    vc.credential_subject.delegation_depth
+                );
+                println!(
+                    "  Chained Delegation:     {}",
+                    vc.parent_credential.is_some()
+                );
+                println!(
+                    "  Proof Type:             {}",
+                    vc.proof.as_ref().unwrap().type_
+                );
+                println!(
+                    "  Signature Hex:          {}",
+                    vc.proof.as_ref().unwrap().proof_value
+                );
+                println!();
+                println!("Raw JSON:");
+                println!("{}", serde_json::to_string_pretty(&vc)?);
+            }
+        }
+        DidSubCmd::VerifyVc {
+            vc,
+            requested_path,
+            requested_op,
+            json,
+        } => {
+            let engine = DidAttestationEngine::new();
+            let content = if std::path::Path::new(vc).exists() {
+                std::fs::read_to_string(vc)?
+            } else {
+                vc.clone()
+            };
+
+            let cred: VerifiableCredential = serde_json::from_str(&content).map_err(|e| {
+                anyhow::anyhow!("Failed to parse Verifiable Credential JSON: {}", e)
+            })?;
+
+            let report = engine.verify_credential(
+                &cred,
+                requested_path.as_deref(),
+                requested_op.as_deref(),
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Verifiable Credential Attestation Validated ===");
+                println!("  Status:                 VALID");
+                println!("  Issuer DID:             {}", report.issuer_did);
+                println!("  Subject DID:            {}", report.subject_did);
+                println!("  Tenant ID:              {}", report.tenant_id);
+                println!("  Allowed Paths:          {:?}", report.allowed_paths);
+                println!("  Allowed Operations:     {:?}", report.allowed_operations);
+                println!("  Delegation Depth:       {}", report.delegation_depth);
+                println!(
+                    "  Delegation Chain Depth: {}",
+                    report.delegation_chain_depth
+                );
+                println!(
+                    "  Time to Expiry:         {} seconds",
+                    report.time_to_expiry_seconds
+                );
+                println!(
+                    "  Verification Latency:   {} ns ({:.2} µs)",
+                    report.verification_latency_nanoseconds,
+                    (report.verification_latency_nanoseconds as f64) / 1000.0
+                );
+            }
+        }
+        DidSubCmd::Benchmark { iterations, json } => {
+            let engine = DidAttestationEngine::new();
+            let report = engine.run_benchmark(*iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Zero-Trust DID & VC Benchmark ({} iters) ===",
+                    report.iterations
+                );
+                println!(
+                    "  Resolution Latency:     {:.2} ns ({:.2} ops/sec)",
+                    report.resolution_latency_nanoseconds, report.resolution_ops_per_second
+                );
+                println!(
+                    "  Issuance Latency:       {:.2} ns ({:.2} ops/sec)",
+                    report.issuance_latency_nanoseconds, report.issuance_ops_per_second
+                );
+                println!(
+                    "  Verification Latency:   {:.2} ns ({:.2} ops/sec)",
+                    report.verification_latency_nanoseconds, report.verification_ops_per_second
                 );
             }
         }

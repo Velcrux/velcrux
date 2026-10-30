@@ -104,3 +104,4 @@ When link quality degrades (e.g. packet loss $> 5\%$ or RTT inflates by $4\times
 ### Negative / Trade-offs
 - **Reordering Header Overhead**: Slices prepend small frame headers (sequence, offset, total slices, chunk hash), consuming $< 0.1\%$ wire overhead on 32 KiB slices.
 - **Reassembly Buffer Memory**: Reordering buffers temporarily hold out-of-order slices until missing slices arrive.
+

@@ -228,6 +228,16 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .load(Ordering::Relaxed);
     let wan_aggr_bps = stats.wan_aggregation_throughput_bps.load(Ordering::Relaxed);
     let wan_reorder_depth = stats.wan_reordering_depth_chunks.load(Ordering::Relaxed);
+    let did_resolutions = stats.did_resolutions_total.load(Ordering::Relaxed);
+    let did_vc_issued = stats.did_vc_issued_total.load(Ordering::Relaxed);
+    let did_vc_verified = stats.did_vc_verified_total.load(Ordering::Relaxed);
+    let did_vc_failures = stats
+        .did_vc_verification_failures_total
+        .load(Ordering::Relaxed);
+    let did_latency_ns = stats
+        .did_verification_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let did_active_delegs = stats.did_active_delegations.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -602,7 +612,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_wan_aggregation_throughput_bps {wan_aggr_bps}\n\n\
          # HELP velcrux_wan_reordering_depth_chunks Current reordering depth of out-of-order sliced chunk frames\n\
          # TYPE velcrux_wan_reordering_depth_chunks gauge\n\
-         velcrux_wan_reordering_depth_chunks {wan_reorder_depth}\n"
+         velcrux_wan_reordering_depth_chunks {wan_reorder_depth}\n\n\
+         # HELP velcrux_did_resolutions_total Total decentralized identity resolutions\n\
+         # TYPE velcrux_did_resolutions_total counter\n\
+         velcrux_did_resolutions_total {did_resolutions}\n\n\
+         # HELP velcrux_did_vc_issued_total Total verifiable credentials issued for capability attestation\n\
+         # TYPE velcrux_did_vc_issued_total counter\n\
+         velcrux_did_vc_issued_total {did_vc_issued}\n\n\
+         # HELP velcrux_did_vc_verified_total Total verifiable credentials verified during authorization\n\
+         # TYPE velcrux_did_vc_verified_total counter\n\
+         velcrux_did_vc_verified_total {did_vc_verified}\n\n\
+         # HELP velcrux_did_vc_verification_failures_total Total verifiable credential verification failures\n\
+         # TYPE velcrux_did_vc_verification_failures_total counter\n\
+         velcrux_did_vc_verification_failures_total {did_vc_failures}\n\n\
+         # HELP velcrux_did_verification_latency_nanoseconds Latest observed verifiable credential verification latency in nanoseconds\n\
+         # TYPE velcrux_did_verification_latency_nanoseconds gauge\n\
+         velcrux_did_verification_latency_nanoseconds {did_latency_ns}\n\n\
+         # HELP velcrux_did_active_delegations Current active delegated capability chains\n\
+         # TYPE velcrux_did_active_delegations gauge\n\
+         velcrux_did_active_delegations {did_active_delegs}\n"
     )
 }
 

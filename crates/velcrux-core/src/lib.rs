@@ -26,6 +26,7 @@ pub mod chaos;
 pub mod chunking;
 pub mod consensus;
 pub mod crypto;
+pub mod did;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
@@ -78,6 +79,12 @@ pub use crypto::{
     ChunkEncryptor, CipherSuite, CryptoError, TransferKey, ENVELOPE_OVERHEAD, NONCE_LEN, TAG_LEN,
 };
 
+pub use did::{
+    base58_decode, base58_encode, did_from_ed25519_pubkey, generate_ed25519_keypair, hex_decode,
+    parse_ed25519_keypair, resolve_did, CredentialProof, DidAttestationEngine, DidBenchmarkReport,
+    DidDocument, DidMethod, TransferCapabilitySubject, VerifiableCredential, VerificationMethod,
+    VerificationReport,
+};
 pub use error::{Result, VelcruxError};
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
