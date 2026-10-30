@@ -3761,6 +3761,94 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_ebpf_l7_dispatch_latency_nanoseconds` | `gauge` | Latest observed L7 classification and rule evaluation latency (ns). |
 | `velcrux_ebpf_l7_pressure_score_pct` | `gauge` | Current composite system pressure score percentage (0–100%). |
 
+## 53. Autonomous Multi-Path WAN Slicing & Interface Bonding Reference (ADR-048, Option CF)
+
+Velcrux incorporates an autonomous multi-path WAN slicing engine and dynamic interface bonding aggregator (`ADR-048`). The engine enables simultaneous aggregation across heterogeneous network uplinks (such as 100GbE fiber, 10GbE enterprise Ethernet, Starlink LEO satellite, and 5G cellular) by slicing large payload chunks into discrete, MTU-aligned frames and dispatching them according to real-time link capacity and probe latencies, while executing zero Head-of-Line (Zero-HOL) out-of-order reassembly.
+
+### Heterogeneous Uplink Profiles
+
+| Link Type | Default ID | Nominal Capacity | Baseline SRTT | Jitter | Primary Use Case |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `Fiber100G` | `wan0-fiber100g` | 100 Gbps | 2.0 ms | 0.4 ms | Primary high-throughput data plane replication |
+| `Ethernet10G` | `wan1-eth10g` | 10 Gbps | 10.0 ms | 2.0 ms | Secondary enterprise failover / WAN backhaul |
+| `StarlinkLso` | `wan2-starlink` | 250 Mbps | 32.0 ms | 6.4 ms | Remote site / mobile station satellite uplink |
+| `Cellular5G` | `wan3-cellular5g` | 750 Mbps | 22.0 ms | 4.4 ms | Cellular backup / burst telemetry connection |
+
+### Dynamic Path Capacity & Quality Scoring
+
+For each bonded interface $i$:
+$$\text{CapacityEff}_i = \frac{\text{CapacityMbps}_i}{\max(1, \text{SRTT\_ms}_i)} \times \left(1 - \frac{\text{LossBasisPoints}_i}{1000.0}\right) \times \left(1 - \frac{\text{EcnBasisPoints}_i}{2000.0}\right)$$
+
+Interface slice weights update dynamically in response to sub-millisecond quality probes. If packet loss exceeds $500\,\text{bp}$ ($5\%$) or RTT surges by $> 4\times$, the link transitions to `Degraded` mode, throttling slice allocations until latency stabilizes.
+
+### Operator CLI Reference
+
+#### 1. Display WAN Bonding Status & Interface Table
+```bash
+# Query active bonded interfaces, dynamic weights, and throughput statistics
+velcrux wan status
+
+# Output status as structured JSON
+velcrux wan status --json
+```
+
+#### 2. Inspect Interface Telemetry & Probes
+```bash
+# Display detailed link telemetry and one-way delay metrics
+velcrux wan interfaces
+
+# Output interface telemetry as JSON
+velcrux wan interfaces --json
+```
+
+#### 3. Execute Dynamic Slicing & Zero-HOL Reassembly
+```bash
+# Slice a 128 KiB chunk into 32 KiB frames and reassemble in-order
+velcrux wan slice --size 131072 --slice-size 32768
+
+# Slice a 256 KiB chunk and simulate out-of-order multi-path arrival
+velcrux wan slice --size 262144 --slice-size 32768 --reorder
+
+# Output slicing and reassembly report as JSON
+velcrux wan slice --size 262144 --reorder --json
+```
+
+#### 4. Update Path Quality Probes & Simulate Link Degradation
+```bash
+# Update probe metrics for satellite uplink (simulate high latency & loss)
+velcrux wan probe \
+  --interface "wan2-starlink" \
+  --srtt-us 120000 \
+  --jitter-us 35000 \
+  --loss-bp 750 \
+  --ecn-bp 120
+
+# Update probe metrics with JSON output
+velcrux wan probe --interface "wan1-eth10g" --srtt-us 15000 --json
+```
+
+#### 5. Benchmark Slicing & Bonding Aggregation
+```bash
+# Run benchmark across 50 iterations with 64 KiB chunks
+velcrux wan benchmark --iterations 50 --chunk-size 65536
+
+# Benchmark with JSON output
+velcrux wan benchmark --iterations 100 --chunk-size 131072 --json
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_wan_sliced_bytes_total` | `counter` | Total bytes sliced across bonded WAN uplinks. |
+| `velcrux_wan_sliced_chunks_total` | `counter` | Total discrete chunks sliced across bonded WAN uplinks. |
+| `velcrux_wan_active_interfaces` | `gauge` | Current number of active bonded WAN interfaces. |
+| `velcrux_wan_path_loss_ratio_basis_points` | `gauge` | Aggregated WAN path loss ratio in basis points ($1\,\text{bp} = 0.01\%$). |
+| `velcrux_wan_aggregation_throughput_bps` | `gauge` | Aggregated WAN bonding throughput in bits per second. |
+| `velcrux_wan_reordering_depth_chunks` | `gauge` | Current reordering depth of out-of-order sliced chunk frames. |
+
 
 
 

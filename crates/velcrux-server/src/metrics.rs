@@ -220,6 +220,14 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .l7_dispatch_latency_nanoseconds
         .load(Ordering::Relaxed);
     let l7_pressure_pct = stats.l7_pressure_score_pct.load(Ordering::Relaxed);
+    let wan_sliced_bytes = stats.wan_sliced_bytes_total.load(Ordering::Relaxed);
+    let wan_sliced_chunks = stats.wan_sliced_chunks_total.load(Ordering::Relaxed);
+    let wan_active_ifaces = stats.wan_active_interfaces.load(Ordering::Relaxed);
+    let wan_loss_bp = stats
+        .wan_path_loss_ratio_basis_points
+        .load(Ordering::Relaxed);
+    let wan_aggr_bps = stats.wan_aggregation_throughput_bps.load(Ordering::Relaxed);
+    let wan_reorder_depth = stats.wan_reordering_depth_chunks.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -576,7 +584,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_ebpf_l7_dispatch_latency_nanoseconds {l7_latency_ns}\n\n\
          # HELP velcrux_ebpf_l7_pressure_score_pct Current composite system load pressure percentage (0-100)\n\
          # TYPE velcrux_ebpf_l7_pressure_score_pct gauge\n\
-         velcrux_ebpf_l7_pressure_score_pct {l7_pressure_pct}\n"
+         velcrux_ebpf_l7_pressure_score_pct {l7_pressure_pct}\n\n\
+         # HELP velcrux_wan_sliced_bytes_total Total bytes sliced across bonded WAN uplinks\n\
+         # TYPE velcrux_wan_sliced_bytes_total counter\n\
+         velcrux_wan_sliced_bytes_total {wan_sliced_bytes}\n\n\
+         # HELP velcrux_wan_sliced_chunks_total Total chunks sliced across bonded WAN uplinks\n\
+         # TYPE velcrux_wan_sliced_chunks_total counter\n\
+         velcrux_wan_sliced_chunks_total {wan_sliced_chunks}\n\n\
+         # HELP velcrux_wan_active_interfaces Current number of active bonded WAN interfaces\n\
+         # TYPE velcrux_wan_active_interfaces gauge\n\
+         velcrux_wan_active_interfaces {wan_active_ifaces}\n\n\
+         # HELP velcrux_wan_path_loss_ratio_basis_points Aggregated WAN path loss ratio in basis points\n\
+         # TYPE velcrux_wan_path_loss_ratio_basis_points gauge\n\
+         velcrux_wan_path_loss_ratio_basis_points {wan_loss_bp}\n\n\
+         # HELP velcrux_wan_aggregation_throughput_bps Aggregated WAN bonding throughput in bits per second\n\
+         # TYPE velcrux_wan_aggregation_throughput_bps gauge\n\
+         velcrux_wan_aggregation_throughput_bps {wan_aggr_bps}\n\n\
+         # HELP velcrux_wan_reordering_depth_chunks Current reordering depth of out-of-order sliced chunk frames\n\
+         # TYPE velcrux_wan_reordering_depth_chunks gauge\n\
+         velcrux_wan_reordering_depth_chunks {wan_reorder_depth}\n"
     )
 }
 

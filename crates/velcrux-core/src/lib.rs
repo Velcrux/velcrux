@@ -41,6 +41,7 @@ pub mod telemetry;
 pub mod transfer;
 pub mod transport;
 pub mod util;
+pub mod wan;
 pub mod xdp;
 
 pub use audit::{
@@ -211,6 +212,10 @@ pub use transport::{
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,
     VectorizedScanner,
+};
+pub use wan::{
+    ReassembledChunk, WanBenchmarkResult, WanBondingEngine, WanInterface, WanInterfaceInfo,
+    WanLinkType, WanPathState, WanSlice,
 };
 pub use xdp::{
     parse_packet_headers, run_xdp_benchmark, PacketHeaderSummary, UmemConfig, UmemPool, XdpAction,

@@ -331,6 +331,18 @@ pub struct ServerStats {
     pub l7_dispatch_latency_nanoseconds: AtomicU64,
     /// Current composite load pressure percentage (0–100%) (Option CE).
     pub l7_pressure_score_pct: AtomicU64,
+    /// Total bytes sliced and distributed across bonded WAN interfaces (Option CF).
+    pub wan_sliced_bytes_total: AtomicU64,
+    /// Total discrete chunks sliced across bonded WAN interfaces (Option CF).
+    pub wan_sliced_chunks_total: AtomicU64,
+    /// Current number of active bonded WAN interfaces (Option CF).
+    pub wan_active_interfaces: AtomicU64,
+    /// Path loss ratio across bonded WAN interfaces in basis points (Option CF).
+    pub wan_path_loss_ratio_basis_points: AtomicU64,
+    /// Current measured WAN bonding aggregation throughput in bits per second (Option CF).
+    pub wan_aggregation_throughput_bps: AtomicU64,
+    /// Reordering depth of out-of-order sliced chunk frames (Option CF).
+    pub wan_reordering_depth_chunks: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -468,6 +480,12 @@ impl Default for ServerStats {
             l7_active_flows: AtomicU64::new(0),
             l7_dispatch_latency_nanoseconds: AtomicU64::new(0),
             l7_pressure_score_pct: AtomicU64::new(0),
+            wan_sliced_bytes_total: AtomicU64::new(0),
+            wan_sliced_chunks_total: AtomicU64::new(0),
+            wan_active_interfaces: AtomicU64::new(0),
+            wan_path_loss_ratio_basis_points: AtomicU64::new(0),
+            wan_aggregation_throughput_bps: AtomicU64::new(0),
+            wan_reordering_depth_chunks: AtomicU64::new(0),
         }
     }
 }

@@ -834,6 +834,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: ProxySubCmd,
     },
+    /// Autonomous multi-path WAN slicing & sub-millisecond dynamic interface bonding (Option CF).
+    Wan {
+        #[command(subcommand)]
+        sub: WanSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -927,6 +932,70 @@ enum ProxySubCmd {
         /// Number of benchmark iterations (default: 500).
         #[arg(long, default_value = "500")]
         iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum WanSubCmd {
+    /// Show current bonded WAN interfaces, link types, capacity weights, and probe telemetry.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List active bonded WAN interfaces.
+    Interfaces {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Slice a chunk or test payload across bonded WAN uplinks and execute zero-HOL reassembly.
+    Slice {
+        /// Size of synthetic payload in bytes to slice (default: 131072 = 128 KiB).
+        #[arg(long, default_value = "131072")]
+        size: usize,
+        /// Maximum slice frame size in bytes (default: 32768 = 32 KiB).
+        #[arg(long, default_value = "32768")]
+        slice_size: usize,
+        /// Simulate out-of-order slice arrival during reassembly.
+        #[arg(long)]
+        reorder: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update path quality probe metrics (SRTT, jitter, loss, ECN) for an interface.
+    Probe {
+        /// Interface ID to probe (e.g. wan0-fiber100g, wan1-eth10g, wan2-starlink, wan3-cellular5g).
+        #[arg(long, default_value = "wan2-starlink")]
+        interface: String,
+        /// Smoothed RTT in microseconds.
+        #[arg(long, default_value = "45000")]
+        srtt_us: u64,
+        /// RTT variance / jitter in microseconds.
+        #[arg(long, default_value = "12000")]
+        jitter_us: u64,
+        /// Packet loss in basis points (1 bp = 0.01%).
+        #[arg(long, default_value = "150")]
+        loss_bp: u64,
+        /// ECN CE marks in basis points (1 bp = 0.01%).
+        #[arg(long, default_value = "50")]
+        ecn_bp: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark WAN slicing, probe recalculation, and zero-HOL reassembly throughput.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Chunk payload size in bytes per iteration (default: 65536 = 64 KiB).
+        #[arg(long, default_value = "65536")]
+        chunk_size: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -3164,6 +3233,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Proxy { sub } => {
             run_proxy(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Wan { sub } => {
+            run_wan(&cli, sub).await?;
             return Ok(());
         }
 
@@ -7670,6 +7743,282 @@ async fn run_proxy(cli: &Cli, sub: &ProxySubCmd) -> anyhow::Result<()> {
                 println!("  Flows Throttled:        {}", report.flows_throttled);
                 println!("  Flows Shed:             {}", report.flows_shed);
                 println!("  All Verdicts Valid:     {}", report.all_verdicts_correct);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_wan(cli: &Cli, sub: &WanSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::audit::hex_encode;
+    use velcrux_core::wan::{WanBondingEngine, WanInterfaceInfo, WanPathState};
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        WanSubCmd::Status { json } => {
+            let engine = WanBondingEngine::default();
+            let ifaces = engine.list_interfaces();
+            let (chunks, bytes, reordered) = engine.stats();
+
+            #[derive(Serialize)]
+            struct WanStatusOutput {
+                interfaces_bonded: usize,
+                total_sliced_chunks: u64,
+                total_sliced_bytes: u64,
+                total_reordered_slices: u64,
+                interfaces: Vec<WanInterfaceInfo>,
+            }
+
+            let out = WanStatusOutput {
+                interfaces_bonded: ifaces.len(),
+                total_sliced_chunks: chunks,
+                total_sliced_bytes: bytes,
+                total_reordered_slices: reordered,
+                interfaces: ifaces,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Autonomous Multi-Path WAN Slicing & Bonding Status ===");
+                println!("  Bonded Interfaces:      {}", out.interfaces_bonded);
+                println!("  Total Sliced Chunks:    {}", out.total_sliced_chunks);
+                println!("  Total Sliced Bytes:     {}", out.total_sliced_bytes);
+                println!("  Reordered Slices:       {}", out.total_reordered_slices);
+                println!();
+                println!(
+                    "{:<18} {:<14} {:<10} {:<12} {:<8} {:<10} {:<8}",
+                    "INTERFACE",
+                    "LINK TYPE",
+                    "STATE",
+                    "CAPACITY",
+                    "WEIGHT",
+                    "SRTT (ms)",
+                    "LOSS (%)"
+                );
+                println!(
+                    "{:-<18} {:-<14} {:-<10} {:-<12} {:-<8} {:-<10} {:-<8}",
+                    "", "", "", "", "", "", ""
+                );
+                for i in &out.interfaces {
+                    let cap_str = if i.capacity_mbps >= 1000 {
+                        format!("{} Gbps", i.capacity_mbps / 1000)
+                    } else {
+                        format!("{} Mbps", i.capacity_mbps)
+                    };
+                    let srtt_ms = (i.srtt_us as f64) / 1000.0;
+                    let loss_pct = (i.loss_basis_points as f64) / 100.0;
+                    let type_str = format!("{:?}", i.link_type);
+                    let state_str = format!("{:?}", i.state);
+                    println!(
+                        "{:<18} {:<14} {:<10} {:<12} {:<8} {:<10.2} {:<8.2}",
+                        i.id, type_str, state_str, cap_str, i.dynamic_weight, srtt_ms, loss_pct
+                    );
+                }
+            }
+        }
+        WanSubCmd::Interfaces { json } => {
+            let engine = WanBondingEngine::default();
+            let ifaces = engine.list_interfaces();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&ifaces)?);
+            } else {
+                println!("=== Active Bonded WAN Interfaces ===");
+                for i in &ifaces {
+                    println!("Interface: {}", i.id);
+                    println!("  Link Type:         {:?}", i.link_type);
+                    println!("  State:             {:?}", i.state);
+                    println!("  Nominal Capacity:  {} Mbps", i.capacity_mbps);
+                    println!("  Dynamic Weight:    {}", i.dynamic_weight);
+                    println!(
+                        "  Smoothed RTT:      {} us ({:.2} ms)",
+                        i.srtt_us,
+                        (i.srtt_us as f64) / 1000.0
+                    );
+                    println!("  RTT Variance:      {} us", i.rtt_var_us);
+                    println!("  One-Way Delay:     {} us", i.one_way_delay_us);
+                    println!(
+                        "  Loss Ratio:        {} bp ({:.2}%)",
+                        i.loss_basis_points,
+                        (i.loss_basis_points as f64) / 100.0
+                    );
+                    println!("  ECN CE Ratio:      {} bp", i.ecn_ce_basis_points);
+                    println!("  Tx Slices / Bytes: {} / {} B", i.tx_slices, i.tx_bytes);
+                    println!("  Rx Slices / Bytes: {} / {} B", i.rx_slices, i.rx_bytes);
+                    println!();
+                }
+            }
+        }
+        WanSubCmd::Slice {
+            size,
+            slice_size,
+            reorder,
+            json,
+        } => {
+            let engine = WanBondingEngine::default();
+            let mut test_payload = vec![0u8; *size];
+            for (idx, b) in test_payload.iter_mut().enumerate() {
+                *b = ((idx * 31 + 17) % 251) as u8;
+            }
+            let chunk_hash = *blake3::hash(&test_payload).as_bytes();
+
+            let slices = engine.slice_chunk(chunk_hash, &test_payload, *slice_size)?;
+            let total_slices = slices.len();
+
+            let mut arrival_slices = slices.clone();
+            if *reorder {
+                arrival_slices.reverse();
+            }
+
+            let mut reassembled_res = None;
+            for s in arrival_slices {
+                if let Some(res) = engine.reassemble_slice(s)? {
+                    reassembled_res = Some(res);
+                }
+            }
+
+            let res = reassembled_res.expect("All slices must reassemble completely");
+
+            #[derive(Serialize)]
+            struct SliceOutput {
+                chunk_hash: String,
+                total_bytes: usize,
+                total_slices: usize,
+                slice_size_bytes: usize,
+                reordered: bool,
+                max_reorder_gap: u32,
+                integrity_verified: bool,
+                slices_per_interface: std::collections::HashMap<String, u32>,
+            }
+
+            let out = SliceOutput {
+                chunk_hash: hex_encode(&chunk_hash),
+                total_bytes: res.total_bytes,
+                total_slices,
+                slice_size_bytes: *slice_size,
+                reordered: *reorder,
+                max_reorder_gap: res.max_reorder_gap,
+                integrity_verified: true,
+                slices_per_interface: res.slices_per_interface.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Multi-Path WAN Slicing & Reassembly Execution ===");
+                println!("  Chunk Hash:             {}", out.chunk_hash);
+                println!("  Total Payload:          {} bytes", out.total_bytes);
+                println!("  Total Slices:           {}", out.total_slices);
+                println!("  Slice Frame Size:       {} bytes", out.slice_size_bytes);
+                println!("  Reordered Arrival:      {}", out.reordered);
+                println!("  Max Reorder Gap:        {}", out.max_reorder_gap);
+                println!("  Integrity Verified:     {}", out.integrity_verified);
+                println!("  Interface Distribution:");
+                for (iface, count) in &res.slices_per_interface {
+                    println!("    - {}: {} slices", iface, count);
+                }
+            }
+        }
+        WanSubCmd::Probe {
+            interface,
+            srtt_us,
+            jitter_us,
+            loss_bp,
+            ecn_bp,
+            json,
+        } => {
+            let engine = WanBondingEngine::default();
+            engine.update_probe(interface, *srtt_us, *jitter_us, *loss_bp, *ecn_bp)?;
+            let updated = engine
+                .get_interface(interface)
+                .expect("Interface must exist");
+
+            #[derive(Serialize)]
+            struct ProbeOutput {
+                interface: String,
+                srtt_us: u64,
+                jitter_us: u64,
+                loss_basis_points: u64,
+                ecn_ce_basis_points: u64,
+                new_state: WanPathState,
+                new_dynamic_weight: usize,
+            }
+
+            let out = ProbeOutput {
+                interface: interface.clone(),
+                srtt_us: *srtt_us,
+                jitter_us: *jitter_us,
+                loss_basis_points: *loss_bp,
+                ecn_ce_basis_points: *ecn_bp,
+                new_state: updated.state,
+                new_dynamic_weight: updated.dynamic_weight,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== WAN Interface Path Quality Probe Updated ===");
+                println!("  Interface:              {}", out.interface);
+                println!(
+                    "  Smoothed RTT:           {} us ({:.2} ms)",
+                    out.srtt_us,
+                    (out.srtt_us as f64) / 1000.0
+                );
+                println!("  RTT Jitter:             {} us", out.jitter_us);
+                println!(
+                    "  Loss Ratio:             {} bp ({:.2}%)",
+                    out.loss_basis_points,
+                    (out.loss_basis_points as f64) / 100.0
+                );
+                println!("  ECN CE Ratio:           {} bp", out.ecn_ce_basis_points);
+                println!("  New Path State:         {:?}", out.new_state);
+                println!("  New Dynamic Weight:     {}", out.new_dynamic_weight);
+            }
+        }
+        WanSubCmd::Benchmark {
+            iterations,
+            chunk_size,
+            json,
+        } => {
+            let engine = WanBondingEngine::default();
+            let report = engine.run_benchmark(*iterations, *chunk_size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Multi-Path WAN Slicing & Bonding Benchmark ({} iters) ===",
+                    report.iterations
+                );
+                println!(
+                    "  Chunk Payload Size:     {} bytes",
+                    report.chunk_size_bytes
+                );
+                println!(
+                    "  Slice Frame Size:       {} bytes",
+                    report.slice_size_bytes
+                );
+                println!(
+                    "  Total Slices Handled:   {}",
+                    report.total_slices_processed
+                );
+                println!("  Bonded Interfaces:      {}", report.interfaces_bonded);
+                println!("  Elapsed Time:           {} us", report.elapsed_micros);
+                println!(
+                    "  Slicing Throughput:     {:.2} slices/sec",
+                    report.slicing_throughput_slices_sec
+                );
+                println!(
+                    "  Bonding Throughput:     {:.4} Gbps",
+                    report.aggregation_throughput_gbps
+                );
+                println!(
+                    "  Avg Reassembly Latency: {:.2} us",
+                    report.avg_reassembly_latency_micros
+                );
             }
         }
     }
