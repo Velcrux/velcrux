@@ -393,6 +393,22 @@ pub struct ServerStats {
     pub federation_replication_latency_nanoseconds: AtomicU64,
     /// Current number of active healthy federated cloud providers (Option CJ).
     pub federation_active_providers: AtomicU64,
+    /// Total tamper-evident provenance log entries recorded (Option CK).
+    pub provenance_entries_total: AtomicU64,
+    /// Total cryptographic witness cosignatures attached (Option CK).
+    pub provenance_witness_signatures_total: AtomicU64,
+    /// Total Merkle-DAG integrity verification passes completed (Option CK).
+    pub provenance_verification_passes_total: AtomicU64,
+    /// Total Merkle-DAG integrity verification failures or tamper alerts (Option CK).
+    pub provenance_verification_failures_total: AtomicU64,
+    /// Current depth of the Merkle-DAG audit trail (Option CK).
+    pub provenance_dag_depth: AtomicU64,
+    /// Current count of committed nodes in the Merkle-DAG (Option CK).
+    pub provenance_dag_nodes_count: AtomicU64,
+    /// Total cryptographic inclusion proofs generated and verified (Option CK).
+    pub provenance_inclusion_proofs_total: AtomicU64,
+    /// Latest observed Merkle-DAG verification latency in nanoseconds (Option CK).
+    pub provenance_verification_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -561,6 +577,14 @@ impl Default for ServerStats {
             federation_provider_failures_total: AtomicU64::new(0),
             federation_replication_latency_nanoseconds: AtomicU64::new(0),
             federation_active_providers: AtomicU64::new(4),
+            provenance_entries_total: AtomicU64::new(0),
+            provenance_witness_signatures_total: AtomicU64::new(0),
+            provenance_verification_passes_total: AtomicU64::new(0),
+            provenance_verification_failures_total: AtomicU64::new(0),
+            provenance_dag_depth: AtomicU64::new(0),
+            provenance_dag_nodes_count: AtomicU64::new(0),
+            provenance_inclusion_proofs_total: AtomicU64::new(0),
+            provenance_verification_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }

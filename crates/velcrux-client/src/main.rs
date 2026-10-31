@@ -859,6 +859,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: FederationSubCmd,
     },
+    /// Zero-trust cryptographic content provenance & tamper-evident Merkle-DAG audit log (Option CK).
+    Provenance {
+        #[command(subcommand)]
+        sub: ProvenanceSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1299,6 +1304,85 @@ enum FederationSubCmd {
         /// Payload size in bytes per iteration (default: 65536 = 64 KiB).
         #[arg(long, default_value = "65536")]
         size: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ProvenanceSubCmd {
+    /// Show Merkle-DAG audit log status, tip count, depth, and Merkle root hash.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record an immutable event in the Merkle-DAG audit log.
+    Record {
+        /// Identity of the actor committing the event (e.g. "spiffe://velcrux/operator/cli").
+        #[arg(long, default_value = "spiffe://velcrux/operator/cli")]
+        actor: String,
+        /// Action type (e.g. "cas_chunk_ingest", "file_mutation", "sync_reconciliation", "access_grant").
+        #[arg(long, default_value = "file_mutation")]
+        action: String,
+        /// Affected resource identifier (e.g. "vpath:/data.bin", "cas:8f2a...").
+        #[arg(long)]
+        resource: String,
+        /// Optional data payload or content string.
+        #[arg(long)]
+        data: Option<String>,
+        /// Explicit parent hashes (defaults to linking all current DAG tips).
+        #[arg(long)]
+        parent: Vec<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify cryptographic integrity, acyclic invariants, hashes, and witness cosignatures across the Merkle-DAG.
+    Verify {
+        /// Perform deep topological verification.
+        #[arg(long)]
+        deep: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate and verify a cryptographic inclusion proof for a specific node hash.
+    Prove {
+        /// 64-character hex node hash to prove.
+        #[arg(long)]
+        node_hash: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Attach a cryptographic witness cosignature to a Merkle-DAG node.
+    Witness {
+        /// 64-character hex node hash to cosign.
+        #[arg(long)]
+        node_hash: String,
+        /// Witness notary identifier.
+        #[arg(long, default_value = "witness-local-notary")]
+        witness_id: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export the tamper-evident Merkle-DAG audit log to JSON.
+    Export {
+        /// Optional output file destination path.
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond benchmark measuring node construction, DAG verification, proof generation, and witness signing latency.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -3556,6 +3640,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Federation { sub } => {
             run_federation(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Provenance { sub } => {
+            run_provenance(&cli, sub).await?;
             return Ok(());
         }
 
@@ -9428,6 +9516,300 @@ async fn run_federation(cli: &Cli, sub: &FederationSubCmd) -> anyhow::Result<()>
                 println!(
                     "  Failover Switch:        {:.2} ns",
                     report.failover_latency_nanoseconds
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_provenance(cli: &Cli, sub: &ProvenanceSubCmd) -> anyhow::Result<()> {
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
+    use velcrux_core::provenance::{
+        hex_decode_32, hex_encode_32, MerkleDagAuditLog, ProvenanceAction, ProvenanceConfig,
+    };
+
+    let is_json = cli_log_json(cli);
+    let mut log = MerkleDagAuditLog::new(ProvenanceConfig::default());
+
+    match sub {
+        ProvenanceSubCmd::Status { json } => {
+            let report = log.verify_dag();
+            let heads = log
+                .heads()
+                .into_iter()
+                .map(|h| hex_encode_32(&h))
+                .collect::<Vec<_>>();
+
+            #[derive(Serialize)]
+            struct StatusOutput {
+                total_nodes: usize,
+                total_heads: usize,
+                dag_depth: usize,
+                merkle_root: String,
+                heads: Vec<String>,
+                is_valid: bool,
+                witness_signatures_verified: usize,
+                timestamp_tokens_verified: usize,
+            }
+
+            let out = StatusOutput {
+                total_nodes: report.total_nodes,
+                total_heads: report.total_heads,
+                dag_depth: report.dag_depth,
+                merkle_root: report.root_hash_hex.clone(),
+                heads,
+                is_valid: report.is_valid,
+                witness_signatures_verified: report.witness_signatures_verified,
+                timestamp_tokens_verified: report.timestamp_tokens_verified,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Merkle-DAG Provenance Audit Log Status ===");
+                println!("  Total Nodes:            {}", out.total_nodes);
+                println!("  DAG Heads / Tips:       {}", out.total_heads);
+                println!("  DAG Depth:              {}", out.dag_depth);
+                println!("  Merkle Root:            {}", out.merkle_root);
+                println!("  Integrity Valid:        {}", out.is_valid);
+                println!(
+                    "  Witness Signatures:     {}",
+                    out.witness_signatures_verified
+                );
+                println!(
+                    "  Timestamp Tokens:       {}",
+                    out.timestamp_tokens_verified
+                );
+                if !out.heads.is_empty() {
+                    println!("  Tips:                   {}", out.heads.join(", "));
+                }
+            }
+        }
+        ProvenanceSubCmd::Record {
+            actor,
+            action,
+            resource,
+            data,
+            parent,
+            json,
+        } => {
+            let action_parsed =
+                ProvenanceAction::from_str(action).unwrap_or(ProvenanceAction::FileMutation);
+            let payload_bytes = data.as_ref().map(|s| s.as_bytes()).unwrap_or(b"");
+
+            let explicit_parents = if parent.is_empty() {
+                None
+            } else {
+                let mut parents = Vec::new();
+                for p in parent {
+                    let h = hex_decode_32(p)
+                        .map_err(|e| anyhow::anyhow!("Invalid parent hash '{p}': {e}"))?;
+                    parents.push(h);
+                }
+                Some(parents)
+            };
+
+            let node = log.record(
+                actor,
+                action_parsed,
+                resource,
+                payload_bytes,
+                explicit_parents,
+                BTreeMap::new(),
+            )?;
+
+            #[derive(Serialize)]
+            struct RecordOutput {
+                node_id: u64,
+                node_hash: String,
+                actor: String,
+                action: String,
+                resource_id: String,
+                payload_digest: String,
+                parent_hashes: Vec<String>,
+                timestamp_ns: u64,
+            }
+
+            let out = RecordOutput {
+                node_id: node.node_id,
+                node_hash: hex_encode_32(&node.node_hash),
+                actor: node.actor,
+                action: node.action.to_string(),
+                resource_id: node.resource_id,
+                payload_digest: hex_encode_32(&node.payload_digest),
+                parent_hashes: node
+                    .parent_hashes
+                    .into_iter()
+                    .map(|h| hex_encode_32(&h))
+                    .collect(),
+                timestamp_ns: node.timestamp_ns,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Merkle-DAG Provenance Event Recorded ===");
+                println!("  Node ID:                {}", out.node_id);
+                println!("  Node Hash:              {}", out.node_hash);
+                println!("  Actor:                  {}", out.actor);
+                println!("  Action:                 {}", out.action);
+                println!("  Resource:               {}", out.resource_id);
+                println!("  Payload Digest:         {}", out.payload_digest);
+                println!(
+                    "  Parents:                {}",
+                    if out.parent_hashes.is_empty() {
+                        "None (Genesis)".to_string()
+                    } else {
+                        out.parent_hashes.join(", ")
+                    }
+                );
+            }
+        }
+        ProvenanceSubCmd::Verify { deep: _, json } => {
+            let report = log.verify_dag();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Merkle-DAG Verification Report ===");
+                println!("  Integrity Valid:        {}", report.is_valid);
+                println!("  Total Nodes:            {}", report.total_nodes);
+                println!("  Total Heads:            {}", report.total_heads);
+                println!("  DAG Depth:              {}", report.dag_depth);
+                println!(
+                    "  Witness Sigs Verified:  {}",
+                    report.witness_signatures_verified
+                );
+                println!(
+                    "  Timestamp Tokens:       {}",
+                    report.timestamp_tokens_verified
+                );
+                println!("  Merkle Root:            {}", report.root_hash_hex);
+                if !report.violations.is_empty() {
+                    println!("  Violations ({}):", report.violations.len());
+                    for v in &report.violations {
+                        println!("    - {}", v);
+                    }
+                }
+            }
+        }
+        ProvenanceSubCmd::Prove { node_hash, json } => {
+            let target_hash = hex_decode_32(node_hash)
+                .map_err(|e| anyhow::anyhow!("Invalid node hash '{node_hash}': {e}"))?;
+            let proof = log.generate_inclusion_proof(&target_hash)?;
+            let verified = log.verify_inclusion_proof(&proof);
+
+            #[derive(Serialize)]
+            struct ProofOutput {
+                target_node_hash: String,
+                anchor_root_hash: String,
+                path_length: usize,
+                path_hashes: Vec<String>,
+                verified: bool,
+                target_resource: String,
+            }
+
+            let out = ProofOutput {
+                target_node_hash: hex_encode_32(&proof.target_node_hash),
+                anchor_root_hash: hex_encode_32(&proof.anchor_root_hash),
+                path_length: proof.path_hashes.len(),
+                path_hashes: proof
+                    .path_hashes
+                    .into_iter()
+                    .map(|h| hex_encode_32(&h))
+                    .collect(),
+                verified,
+                target_resource: proof.target_resource_id,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Cryptographic Inclusion Proof ===");
+                println!("  Target Node Hash:       {}", out.target_node_hash);
+                println!("  Anchor Root Hash:       {}", out.anchor_root_hash);
+                println!("  Path Length:            {} nodes", out.path_length);
+                println!(
+                    "  Verification Result:    {}",
+                    if out.verified {
+                        "VALID PROOF"
+                    } else {
+                        "INVALID PROOF"
+                    }
+                );
+                println!("  Resource:               {}", out.target_resource);
+            }
+        }
+        ProvenanceSubCmd::Witness {
+            node_hash,
+            witness_id,
+            json,
+        } => {
+            let target_hash = hex_decode_32(node_hash)
+                .map_err(|e| anyhow::anyhow!("Invalid node hash '{node_hash}': {e}"))?;
+            let cosig = log.cosign(&target_hash, witness_id, b"velcrux-cli-witness-cosign-seed")?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&cosig)?);
+            } else {
+                println!("=== Cryptographic Witness Cosignature Attached ===");
+                println!("  Witness ID:             {}", cosig.witness_id);
+                println!("  Timestamp (ns):         {}", cosig.timestamp_ns);
+                println!("  Public Key:             {}", cosig.public_key_hex);
+                println!("  Signature:              {}", cosig.signature_hex);
+            }
+        }
+        ProvenanceSubCmd::Export { out, json } => {
+            let json_data = log.export_json()?;
+            if let Some(ref path) = out {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(path, &json_data)
+                    .with_context(|| format!("Failed to write export to {}", path.display()))?;
+            }
+
+            if *json || is_json {
+                println!("{}", json_data);
+            } else {
+                println!("=== Merkle-DAG Audit Log Exported ===");
+                println!("  Total Nodes:            {}", log.len());
+                if let Some(ref path) = out {
+                    println!("  Export Destination:     {}", path.display());
+                } else {
+                    println!("{}", json_data);
+                }
+            }
+        }
+        ProvenanceSubCmd::Benchmark { iterations, json } => {
+            let report = MerkleDagAuditLog::run_benchmark(*iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Merkle-DAG Provenance Benchmark ({} iterations) ===",
+                    report.iterations
+                );
+                println!(
+                    "  Node Append:            {:.2} ns/op ({:.0} ops/sec)",
+                    report.append_latency_nanoseconds, report.append_throughput_ops_sec
+                );
+                println!(
+                    "  DAG Verification:       {:.2} ns/node ({:.0} nodes/sec)",
+                    report.verification_latency_nanoseconds,
+                    report.verification_throughput_nodes_sec
+                );
+                println!(
+                    "  Inclusion Proof:        {:.2} ns",
+                    report.proof_latency_nanoseconds
+                );
+                println!(
+                    "  Witness Cosigning:      {:.2} ns",
+                    report.witness_cosign_latency_nanoseconds
                 );
             }
         }

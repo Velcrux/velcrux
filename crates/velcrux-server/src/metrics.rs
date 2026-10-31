@@ -268,6 +268,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .load(Ordering::Relaxed);
     let fed_active_providers = stats.federation_active_providers.load(Ordering::Relaxed);
 
+    let prov_entries = stats.provenance_entries_total.load(Ordering::Relaxed);
+    let prov_witness_sigs = stats
+        .provenance_witness_signatures_total
+        .load(Ordering::Relaxed);
+    let prov_verif_passes = stats
+        .provenance_verification_passes_total
+        .load(Ordering::Relaxed);
+    let prov_verif_fails = stats
+        .provenance_verification_failures_total
+        .load(Ordering::Relaxed);
+    let prov_dag_depth = stats.provenance_dag_depth.load(Ordering::Relaxed);
+    let prov_dag_nodes = stats.provenance_dag_nodes_count.load(Ordering::Relaxed);
+    let prov_proofs = stats
+        .provenance_inclusion_proofs_total
+        .load(Ordering::Relaxed);
+    let prov_verif_lat_ns = stats
+        .provenance_verification_latency_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -716,7 +735,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_federation_replication_latency_nanoseconds {fed_repl_lat_ns}\n\n\
          # HELP velcrux_federation_active_providers Current number of active healthy federated cloud providers\n\
          # TYPE velcrux_federation_active_providers gauge\n\
-         velcrux_federation_active_providers {fed_active_providers}\n"
+         velcrux_federation_active_providers {fed_active_providers}\n\n\
+         # HELP velcrux_provenance_entries_total Total tamper-evident provenance log entries recorded\n\
+         # TYPE velcrux_provenance_entries_total counter\n\
+         velcrux_provenance_entries_total {prov_entries}\n\n\
+         # HELP velcrux_provenance_witness_signatures_total Total cryptographic witness cosignatures attached\n\
+         # TYPE velcrux_provenance_witness_signatures_total counter\n\
+         velcrux_provenance_witness_signatures_total {prov_witness_sigs}\n\n\
+         # HELP velcrux_provenance_verification_passes_total Total Merkle-DAG integrity verification passes completed\n\
+         # TYPE velcrux_provenance_verification_passes_total counter\n\
+         velcrux_provenance_verification_passes_total {prov_verif_passes}\n\n\
+         # HELP velcrux_provenance_verification_failures_total Total Merkle-DAG integrity verification failures or tamper alerts\n\
+         # TYPE velcrux_provenance_verification_failures_total counter\n\
+         velcrux_provenance_verification_failures_total {prov_verif_fails}\n\n\
+         # HELP velcrux_provenance_dag_depth Current depth of the Merkle-DAG audit trail\n\
+         # TYPE velcrux_provenance_dag_depth gauge\n\
+         velcrux_provenance_dag_depth {prov_dag_depth}\n\n\
+         # HELP velcrux_provenance_dag_nodes_count Current count of committed nodes in the Merkle-DAG\n\
+         # TYPE velcrux_provenance_dag_nodes_count gauge\n\
+         velcrux_provenance_dag_nodes_count {prov_dag_nodes}\n\n\
+         # HELP velcrux_provenance_inclusion_proofs_total Total cryptographic inclusion proofs generated and verified\n\
+         # TYPE velcrux_provenance_inclusion_proofs_total counter\n\
+         velcrux_provenance_inclusion_proofs_total {prov_proofs}\n\n\
+         # HELP velcrux_provenance_verification_latency_nanoseconds Latest observed Merkle-DAG verification latency in nanoseconds\n\
+         # TYPE velcrux_provenance_verification_latency_nanoseconds gauge\n\
+         velcrux_provenance_verification_latency_nanoseconds {prov_verif_lat_ns}\n"
     )
 }
 

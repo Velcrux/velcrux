@@ -4197,6 +4197,109 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_federation_replication_latency_nanoseconds` | `gauge` | Latest observed multi-cloud replication latency in nanoseconds. |
 | `velcrux_federation_active_providers` | `gauge` | Current number of active healthy federated cloud providers. |
 
+---
+
+## 58. Content Provenance & Tamper-Evident Merkle-DAG Audit Log Reference (Option CK, ADR-053)
+
+Velcrux includes a zero-trust, append-only cryptographic Merkle-DAG audit ledger (`ADR-053`) designed for strict regulatory compliance, immutable audit logging, and content authenticity verification. Every event (CAS chunk ingest, virtual path mutation, cross-cloud sync, credential rotation, quota enforcement) is immutably recorded with BLAKE3 cryptographic anchoring, topological cycle validation, and optional notary witness cosigning.
+
+### Operational CLI Reference
+
+The `velcrux provenance` command family manages the audit ledger:
+
+#### 1. Inspect Audit Log Status
+```bash
+# Human-readable summary of DAG depth, tips, root, and validation state
+velcrux provenance status
+
+# Machine-readable JSON summary
+velcrux --json provenance status
+```
+
+#### 2. Record Immutable Provenance Events
+```bash
+# Record a content-addressed chunk ingest event
+velcrux provenance record \
+  --actor "spiffe://velcrux/client/edge-agent" \
+  --action "cas_chunk_ingest" \
+  --resource "cas:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --data "raw chunk payload"
+
+# Record a virtual file mutation with explicit parent anchors
+velcrux provenance record \
+  --actor "spiffe://velcrux/client/ci-bot" \
+  --action "file_mutation" \
+  --resource "vpath:/models/v2/weights.bin" \
+  --parent "<parent_node_hash_hex>"
+
+# Machine-readable output
+velcrux provenance record \
+  --actor "spiffe://velcrux/operator" \
+  --action "access_grant" \
+  --resource "tenant:acme-corp" \
+  --json
+```
+
+#### 3. Cryptographic Merkle-DAG Verification
+```bash
+# Verify all node hashes, parent causal links, and acyclic properties
+velcrux provenance verify
+
+# JSON output for automated audit CI/CD checks
+velcrux --json provenance verify
+```
+
+#### 4. Cryptographic Inclusion Proof Generation
+```bash
+# Generate and verify inclusion proof anchoring a specific node to current DAG root
+velcrux provenance prove --node-hash "<64_char_node_hash_hex>"
+
+# JSON inclusion proof for external compliance auditors
+velcrux --json provenance prove --node-hash "<64_char_node_hash_hex>"
+```
+
+#### 5. Verifiable Notary Witness Cosigning
+```bash
+# Attach an independent notary witness signature to a node
+velcrux provenance witness \
+  --node-hash "<64_char_node_hash_hex>" \
+  --witness-id "notary-swiss-secure-vault-01"
+```
+
+#### 6. Compliance Ledger Export
+```bash
+# Export complete tamper-evident audit ledger to a JSON file
+velcrux provenance export --out /var/log/velcrux/provenance_audit.json
+
+# Dump JSON directly to stdout
+velcrux provenance export --json
+```
+
+#### 7. Microsecond Benchmarking
+```bash
+# Benchmark node construction, verification, proof generation, and witness signing
+velcrux provenance benchmark --iterations 50
+
+# JSON benchmark metrics
+velcrux --json provenance benchmark --iterations 100
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_provenance_entries_total` | `counter` | Total tamper-evident provenance log entries recorded. |
+| `velcrux_provenance_witness_signatures_total` | `counter` | Total cryptographic witness cosignatures attached. |
+| `velcrux_provenance_verification_passes_total` | `counter` | Total Merkle-DAG integrity verification passes completed. |
+| `velcrux_provenance_verification_failures_total` | `counter` | Total Merkle-DAG integrity verification failures or tamper alerts. |
+| `velcrux_provenance_dag_depth` | `gauge` | Current depth of the Merkle-DAG audit trail. |
+| `velcrux_provenance_dag_nodes_count` | `gauge` | Current count of committed nodes in the Merkle-DAG. |
+| `velcrux_provenance_inclusion_proofs_total` | `counter` | Total cryptographic inclusion proofs generated and verified. |
+| `velcrux_provenance_verification_latency_nanoseconds` | `gauge` | Latest observed Merkle-DAG verification latency in nanoseconds. |
+
+
 
 
 

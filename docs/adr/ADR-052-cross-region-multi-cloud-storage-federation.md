@@ -101,3 +101,4 @@ Adopt **Option 3: Pure Safe Rust Unified Multi-Cloud Storage Federation & Active
 ### Negative / Trade-Offs
 - **Multi-Cloud Write Latency**: Active-active writes must propagate across cloud APIs, bound by the write quorum latency.
 - **Storage Amplification**: Storing replicas across multiple hyperscalers consumes storage capacity across each provider (mitigated by tiered federation policies).
+

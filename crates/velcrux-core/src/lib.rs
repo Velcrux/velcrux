@@ -31,6 +31,7 @@ pub mod ec;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
+pub mod provenance;
 pub mod proxy;
 pub mod router;
 pub mod scheduler;
@@ -102,6 +103,13 @@ pub use protocol::{
     evaluate_dictionary_ratio, AdaptiveCompressionConfig, AdaptiveCompressionSelector,
     AdaptiveCompressionStats, CompressionDecision, CompressionRatioEvaluation, DictionaryCatalog,
     DictionaryMetadata, DictionaryTrainer, EntropyTier, ZstdDictionary,
+};
+pub use provenance::{
+    hex_decode_32 as provenance_hex_decode_32, hex_encode_32 as provenance_hex_encode_32,
+    MerkleDagAuditLog, ProvenanceAction, ProvenanceBenchmarkReport, ProvenanceConfig,
+    ProvenanceInclusionProof, ProvenanceNode, ProvenanceVerificationReport, TimestampToken,
+    WitnessCosignature, PROVENANCE_NODE_DOMAIN_TAG, PROVENANCE_ROOT_DOMAIN_TAG,
+    PROVENANCE_TIMESTAMP_DOMAIN_TAG, PROVENANCE_WITNESS_DOMAIN_TAG,
 };
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
