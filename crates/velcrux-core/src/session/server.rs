@@ -377,6 +377,22 @@ pub struct ServerStats {
     pub ec_degraded_objects: AtomicU64,
     /// Latency of latest shard repair in nanoseconds (Option CI).
     pub ec_repair_latency_nanoseconds: AtomicU64,
+    /// Total multi-cloud federation operations evaluated (Option CJ).
+    pub federation_operations_total: AtomicU64,
+    /// Total cross-cloud active-active synchronization events completed (Option CJ).
+    pub federation_sync_events_total: AtomicU64,
+    /// Total multi-cloud concurrent update conflicts resolved (Option CJ).
+    pub federation_conflicts_resolved_total: AtomicU64,
+    /// Total multi-cloud read-through cache hits (Option CJ).
+    pub federation_cache_hits_total: AtomicU64,
+    /// Total multi-cloud read-through cache misses (Option CJ).
+    pub federation_cache_misses_total: AtomicU64,
+    /// Total multi-cloud provider errors or failover triggers (Option CJ).
+    pub federation_provider_failures_total: AtomicU64,
+    /// Latest observed multi-cloud replication latency in nanoseconds (Option CJ).
+    pub federation_replication_latency_nanoseconds: AtomicU64,
+    /// Current number of active healthy federated cloud providers (Option CJ).
+    pub federation_active_providers: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -537,6 +553,14 @@ impl Default for ServerStats {
             ec_corrupted_shards_total: AtomicU64::new(0),
             ec_degraded_objects: AtomicU64::new(0),
             ec_repair_latency_nanoseconds: AtomicU64::new(0),
+            federation_operations_total: AtomicU64::new(0),
+            federation_sync_events_total: AtomicU64::new(0),
+            federation_conflicts_resolved_total: AtomicU64::new(0),
+            federation_cache_hits_total: AtomicU64::new(0),
+            federation_cache_misses_total: AtomicU64::new(0),
+            federation_provider_failures_total: AtomicU64::new(0),
+            federation_replication_latency_nanoseconds: AtomicU64::new(0),
+            federation_active_providers: AtomicU64::new(4),
         }
     }
 }

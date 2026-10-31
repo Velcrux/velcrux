@@ -4107,6 +4107,97 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_ec_degraded_objects` | `gauge` | Current number of objects in degraded or critical state needing repair. |
 | `velcrux_ec_repair_latency_nanoseconds` | `gauge` | Latency of the most recent autonomous shard reconstruction in nanoseconds. |
 
+---
+
+## 57. Cross-Region Multi-Cloud Distributed Storage Federation & Active-Active Geo-Replication Reference (Option CJ)
+
+Velcrux incorporates a pure safe Rust Cross-Region Multi-Cloud Distributed Storage Federation Broker (`ADR-052`). The system federates AWS S3, Google Cloud Storage (GCS), Azure Blob Storage, MinIO, and Local CAS into an active-active namespace with causal vector clock conflict resolution, read-through LRU caching, and zero-downtime provider failover.
+
+### CLI Operational Commands
+
+The `velcrux federation` subcommand suite provides comprehensive administrative control over multi-cloud operations:
+
+#### 1. Inspect Federation Status and Telemetry Counters
+```bash
+# Human-readable federation status
+velcrux federation status
+
+# Machine-readable JSON output for monitoring pipelines
+velcrux --json federation status
+```
+
+#### 2. Write Object with Active-Active Multi-Cloud Replication
+```bash
+# Upload a dataset with simultaneous replication to AWS, GCS, Azure, and MinIO
+velcrux federation put \
+  --input /data/models/phi3.safetensors \
+  --object-key models/phi3.safetensors
+
+# Upload with JSON metadata output
+velcrux --json federation put \
+  --input /data/datasets/corpus.tar.zst \
+  --object-key datasets/corpus.tar.zst
+```
+
+#### 3. Read Object via Read-Through Cache and Latency-Optimized Routing
+```bash
+# Retrieve object (serves from local LRU cache if hot, else lowest-latency cloud)
+velcrux federation get \
+  --object-key models/phi3.safetensors \
+  --output /tmp/phi3_local.safetensors
+
+# Read with JSON report
+velcrux --json federation get \
+  --object-key datasets/corpus.tar.zst \
+  --output /tmp/corpus_local.tar.zst
+```
+
+#### 4. Cross-Cloud Active-Active Synchronization Pass
+```bash
+# Synchronize missing and updated objects using causal vector clocks
+velcrux federation sync --policy causal
+
+# Synchronize with Last-Write-Wins (LWW) resolution
+velcrux federation sync --policy lww
+
+# Output JSON report for SIEM / audit integration
+velcrux --json federation sync --policy causal
+```
+
+#### 5. Inspect Registered Cloud Providers & Health
+```bash
+# List all configured cloud backends with priority, region, and cost
+velcrux federation providers
+
+# JSON provider topology output
+velcrux --json federation providers
+```
+
+#### 6. Benchmark Multi-Cloud Throughput and Failover Latency
+```bash
+# Benchmark across 50 iterations with 64 KiB payload
+velcrux federation benchmark --iterations 50 --size 65536
+
+# Benchmark with JSON output
+velcrux --json federation benchmark --iterations 20 --size 262144
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_federation_operations_total` | `counter` | Total multi-cloud federation operations evaluated. |
+| `velcrux_federation_sync_events_total` | `counter` | Total cross-cloud active-active synchronization events completed. |
+| `velcrux_federation_conflicts_resolved_total` | `counter` | Total multi-cloud concurrent update conflicts resolved. |
+| `velcrux_federation_cache_hits_total` | `counter` | Total multi-cloud read-through cache hits. |
+| `velcrux_federation_cache_misses_total` | `counter` | Total multi-cloud read-through cache misses. |
+| `velcrux_federation_provider_failures_total` | `counter` | Total multi-cloud provider errors or failover triggers. |
+| `velcrux_federation_replication_latency_nanoseconds` | `gauge` | Latest observed multi-cloud replication latency in nanoseconds. |
+| `velcrux_federation_active_providers` | `gauge` | Current number of active healthy federated cloud providers. |
+
+
 
 
 

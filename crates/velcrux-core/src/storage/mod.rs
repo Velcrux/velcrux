@@ -27,6 +27,7 @@ pub mod chunk_store;
 pub mod cluster;
 pub mod dedup_defense;
 pub mod direct_io;
+pub mod federation;
 pub mod gc;
 pub mod gcs;
 pub mod memory;
@@ -60,6 +61,12 @@ pub use direct_io::{
     DirectIoPipelineStats, DirectIoPipelineWriter, DirectIoRingBuffer, DirectIoRingConfig,
     RingSlot, RingSlotState, DEFAULT_DIRECT_IO_MIN_SIZE, DEFAULT_RING_SLOTS, DEFAULT_SECTOR_SIZE,
     DEFAULT_SLOT_CAPACITY,
+};
+pub use federation::{
+    CloudProviderType, ConflictResolutionPolicy, FederatedObjectMeta, FederatedProviderConfig,
+    FederatedReadCache, FederatedStorageBroker, FederationBenchmarkReport, FederationConfig,
+    FederationRoutingPolicy, FederationSyncReport, ProviderHealthInfo, ProviderHealthStatus,
+    ProviderSyncStats,
 };
 pub use gc::{
     gc_chunk_store, gc_chunk_store_with_snapshots, gc_staging, ChunkStoreGcReport, StagingGcReport,

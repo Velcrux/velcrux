@@ -253,6 +253,20 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
     let ec_corrupted = stats.ec_corrupted_shards_total.load(Ordering::Relaxed);
     let ec_degraded = stats.ec_degraded_objects.load(Ordering::Relaxed);
     let ec_repair_lat_ns = stats.ec_repair_latency_nanoseconds.load(Ordering::Relaxed);
+    let fed_ops = stats.federation_operations_total.load(Ordering::Relaxed);
+    let fed_syncs = stats.federation_sync_events_total.load(Ordering::Relaxed);
+    let fed_conflicts = stats
+        .federation_conflicts_resolved_total
+        .load(Ordering::Relaxed);
+    let fed_hits = stats.federation_cache_hits_total.load(Ordering::Relaxed);
+    let fed_misses = stats.federation_cache_misses_total.load(Ordering::Relaxed);
+    let fed_failures = stats
+        .federation_provider_failures_total
+        .load(Ordering::Relaxed);
+    let fed_repl_lat_ns = stats
+        .federation_replication_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let fed_active_providers = stats.federation_active_providers.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -678,7 +692,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_ec_degraded_objects {ec_degraded}\n\n\
          # HELP velcrux_ec_repair_latency_nanoseconds Latency of latest shard repair in nanoseconds\n\
          # TYPE velcrux_ec_repair_latency_nanoseconds gauge\n\
-         velcrux_ec_repair_latency_nanoseconds {ec_repair_lat_ns}\n"
+         velcrux_ec_repair_latency_nanoseconds {ec_repair_lat_ns}\n\n\
+         # HELP velcrux_federation_operations_total Total multi-cloud federation operations evaluated\n\
+         # TYPE velcrux_federation_operations_total counter\n\
+         velcrux_federation_operations_total {fed_ops}\n\n\
+         # HELP velcrux_federation_sync_events_total Total cross-cloud active-active synchronization events completed\n\
+         # TYPE velcrux_federation_sync_events_total counter\n\
+         velcrux_federation_sync_events_total {fed_syncs}\n\n\
+         # HELP velcrux_federation_conflicts_resolved_total Total multi-cloud concurrent update conflicts resolved\n\
+         # TYPE velcrux_federation_conflicts_resolved_total counter\n\
+         velcrux_federation_conflicts_resolved_total {fed_conflicts}\n\n\
+         # HELP velcrux_federation_cache_hits_total Total multi-cloud read-through cache hits\n\
+         # TYPE velcrux_federation_cache_hits_total counter\n\
+         velcrux_federation_cache_hits_total {fed_hits}\n\n\
+         # HELP velcrux_federation_cache_misses_total Total multi-cloud read-through cache misses\n\
+         # TYPE velcrux_federation_cache_misses_total counter\n\
+         velcrux_federation_cache_misses_total {fed_misses}\n\n\
+         # HELP velcrux_federation_provider_failures_total Total multi-cloud provider errors or failover triggers\n\
+         # TYPE velcrux_federation_provider_failures_total counter\n\
+         velcrux_federation_provider_failures_total {fed_failures}\n\n\
+         # HELP velcrux_federation_replication_latency_nanoseconds Latest observed multi-cloud replication latency in nanoseconds\n\
+         # TYPE velcrux_federation_replication_latency_nanoseconds gauge\n\
+         velcrux_federation_replication_latency_nanoseconds {fed_repl_lat_ns}\n\n\
+         # HELP velcrux_federation_active_providers Current number of active healthy federated cloud providers\n\
+         # TYPE velcrux_federation_active_providers gauge\n\
+         velcrux_federation_active_providers {fed_active_providers}\n"
     )
 }
 

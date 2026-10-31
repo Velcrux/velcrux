@@ -854,6 +854,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: EcSubCmd,
     },
+    /// Cross-region multi-cloud distributed storage federation & active-active geo-replication (Option CJ).
+    Federation {
+        #[command(subcommand)]
+        sub: FederationSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1226,6 +1231,67 @@ enum EcSubCmd {
         json: bool,
     },
     /// Run microsecond benchmark measuring encoding, decoding with missing shards, and repair latency.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Payload size in bytes per iteration (default: 65536 = 64 KiB).
+        #[arg(long, default_value = "65536")]
+        size: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum FederationSubCmd {
+    /// Show active multi-cloud storage federation status, health, and cache statistics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Write an object with active-active replication across registered cloud providers.
+    Put {
+        /// Local file path or source data.
+        #[arg(long, short = 'i', alias = "input")]
+        input: PathBuf,
+        /// Destination object key within the federated namespace.
+        #[arg(long, alias = "key-id", alias = "name")]
+        object_key: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read an object through the multi-cloud federation with read-through caching and auto-failover.
+    Get {
+        /// Object key to retrieve.
+        #[arg(long, alias = "key-id", alias = "name")]
+        object_key: String,
+        /// Path to save retrieved object bytes.
+        #[arg(long, short = 'o', alias = "output")]
+        output: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reconcile and synchronize objects across all registered cloud providers.
+    Sync {
+        /// Conflict resolution policy: "causal" (default), "lww", "priority", or "fork".
+        #[arg(long, default_value = "causal")]
+        policy: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List or inspect registered cloud providers.
+    Providers {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond benchmark measuring multi-cloud put, cache hit, multi-cloud fetch, and failover latency.
     Benchmark {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
@@ -3486,6 +3552,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Ec { sub } => {
             run_ec(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Federation { sub } => {
+            run_federation(&cli, sub).await?;
             return Ok(());
         }
 
@@ -9105,6 +9175,259 @@ async fn run_ec(cli: &Cli, sub: &EcSubCmd) -> anyhow::Result<()> {
                     "  Single-Shard Repair:    {:.2} ns ({:.2} µs)",
                     report.single_shard_repair_latency_nanoseconds,
                     report.single_shard_repair_latency_nanoseconds / 1000.0
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_federation(cli: &Cli, sub: &FederationSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::storage::{
+        ConflictResolutionPolicy, FederatedProviderConfig, FederatedStorageBroker,
+        FederationConfig, ProviderHealthInfo,
+    };
+
+    let is_json = cli_log_json(cli);
+    let broker = FederatedStorageBroker::new(FederationConfig::default());
+
+    match sub {
+        FederationSubCmd::Status { json } => {
+            let providers = broker.list_providers();
+            let health = broker.get_health_status();
+            let (ops, syncs, conflicts, hits, misses, failures, cached_bytes) =
+                broker.telemetry_stats();
+
+            #[derive(Serialize)]
+            struct FederationStatusOutput {
+                status: &'static str,
+                routing_policy: String,
+                active_providers: usize,
+                providers: Vec<FederatedProviderConfig>,
+                health_stats: Vec<ProviderHealthInfo>,
+                operations_total: u64,
+                sync_events_total: u64,
+                conflicts_resolved_total: u64,
+                cache_hits_total: u64,
+                cache_misses_total: u64,
+                provider_failures_total: u64,
+                cached_bytes: u64,
+            }
+
+            let out = FederationStatusOutput {
+                status: "operational",
+                routing_policy: "active_active (ActiveActive)".to_string(),
+                active_providers: providers.len(),
+                providers: providers.clone(),
+                health_stats: health,
+                operations_total: ops,
+                sync_events_total: syncs,
+                conflicts_resolved_total: conflicts,
+                cache_hits_total: hits,
+                cache_misses_total: misses,
+                provider_failures_total: failures,
+                cached_bytes,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Cross-Region Multi-Cloud Distributed Storage Federation Status ===");
+                println!("  Status:                 {}", out.status);
+                println!("  Routing Policy:         {}", out.routing_policy);
+                println!("  Active Providers:       {}", out.active_providers);
+                println!("  Federated Clouds:");
+                for p in &providers {
+                    println!(
+                        "    - {:<18} ({:<5}) [{:<12}] Priority: {}, Egress: ${:.3}/GiB",
+                        p.id,
+                        p.provider_type.as_str(),
+                        p.region,
+                        p.priority,
+                        p.cost_per_gb_egress
+                    );
+                }
+                println!("  Telemetry Counters:");
+                println!("    Operations Total:     {}", out.operations_total);
+                println!("    Sync Events Total:    {}", out.sync_events_total);
+                println!("    Conflicts Resolved:   {}", out.conflicts_resolved_total);
+                println!("    Cache Hits:           {}", out.cache_hits_total);
+                println!("    Cache Misses:         {}", out.cache_misses_total);
+                println!("    Provider Failures:    {}", out.provider_failures_total);
+                println!("    Cached Bytes:         {} bytes", out.cached_bytes);
+            }
+        }
+        FederationSubCmd::Put {
+            input,
+            object_key,
+            json,
+        } => {
+            let data = std::fs::read(input)
+                .with_context(|| format!("Failed to read input file from {}", input.display()))?;
+            let meta = broker.put(object_key, &data)?;
+
+            #[derive(Serialize)]
+            struct PutOutput {
+                key: String,
+                size_bytes: u64,
+                blake3_hash: String,
+                origin_provider: String,
+                regions: Vec<String>,
+                replicated_providers: usize,
+            }
+
+            let providers = broker.list_providers();
+            let regions: Vec<String> = providers.iter().map(|p| p.region.clone()).collect();
+            let out = PutOutput {
+                key: meta.key.clone(),
+                size_bytes: meta.size_bytes,
+                blake3_hash: meta.blake3_hash.to_hex(),
+                origin_provider: meta.origin_provider,
+                regions,
+                replicated_providers: providers.len(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Multi-Cloud Active-Active Put Completed ===");
+                println!("  Key:                    {}", out.key);
+                println!("  Size:                   {} bytes", out.size_bytes);
+                println!("  BLAKE3 Hash:            {}", out.blake3_hash);
+                println!("  Origin Provider:        {}", out.origin_provider);
+                println!("  Replicated Providers:   {}", out.replicated_providers);
+                println!("  Active Regions:         {}", out.regions.join(", "));
+            }
+        }
+        FederationSubCmd::Get {
+            object_key,
+            output,
+            json,
+        } => {
+            let (bytes, meta) = broker.get(object_key)?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(output, &bytes)
+                .with_context(|| format!("Failed to write output to {}", output.display()))?;
+
+            #[derive(Serialize)]
+            struct GetOutput {
+                key: String,
+                size_bytes: u64,
+                blake3_hash: String,
+                output_file: String,
+            }
+
+            let out = GetOutput {
+                key: meta.key,
+                size_bytes: bytes.len() as u64,
+                blake3_hash: meta.blake3_hash.to_hex(),
+                output_file: output.display().to_string(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Multi-Cloud Federated Get Completed ===");
+                println!("  Key:                    {}", out.key);
+                println!("  Size:                   {} bytes", out.size_bytes);
+                println!("  BLAKE3 Hash:            {}", out.blake3_hash);
+                println!("  Output File:            {}", out.output_file);
+            }
+        }
+        FederationSubCmd::Sync { policy, json } => {
+            let conflict_policy = match policy.to_ascii_lowercase().as_str() {
+                "lww" => ConflictResolutionPolicy::LastWriteWins,
+                "priority" => ConflictResolutionPolicy::ProviderPriority,
+                "fork" => ConflictResolutionPolicy::KeepBothFork,
+                _ => ConflictResolutionPolicy::CausalVectorClock,
+            };
+
+            let report = broker.sync_all(conflict_policy)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Multi-Cloud Cross-Region Sync Report ===");
+                println!("  Objects Scanned:        {}", report.objects_scanned);
+                println!("  Objects Synced:         {}", report.objects_synced);
+                println!("  Conflicts Detected:     {}", report.conflicts_detected);
+                println!("  Conflicts Resolved:     {}", report.conflicts_resolved);
+                println!(
+                    "  Bytes Replicated:       {} bytes",
+                    report.bytes_replicated
+                );
+                println!(
+                    "  Duration:               {:.2} ms",
+                    report.elapsed_duration_ms
+                );
+            }
+        }
+        FederationSubCmd::Providers { json } => {
+            let providers = broker.list_providers();
+            let health = broker.get_health_status();
+
+            #[derive(Serialize)]
+            struct ProviderReport {
+                providers: Vec<FederatedProviderConfig>,
+                health: Vec<ProviderHealthInfo>,
+            }
+
+            let out = ProviderReport {
+                providers: providers.clone(),
+                health,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Registered Federated Cloud Providers ===");
+                for p in &providers {
+                    println!(
+                        "  [{}] Type: {:<8} Region: {:<12} Priority: {} Cost: ${:.3}/GiB Container: {}",
+                        p.id, p.provider_type.as_str(), p.region, p.priority, p.cost_per_gb_egress, p.bucket_or_container
+                    );
+                }
+            }
+        }
+        FederationSubCmd::Benchmark {
+            iterations,
+            size,
+            json,
+        } => {
+            let report = broker.run_benchmark(*iterations, *size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Multi-Cloud Federation Benchmark ({} iters, {} bytes) ===",
+                    report.iterations, report.payload_size_bytes
+                );
+                println!(
+                    "  Active-Active Put:      {:.2} ns ({:.2} MiB/s)",
+                    report.put_latency_nanoseconds,
+                    report.put_throughput_bytes_per_sec / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Read Cache Hit:         {:.2} ns ({:.2} MiB/s)",
+                    report.cache_hit_latency_nanoseconds,
+                    report.cache_hit_throughput_bytes_per_sec / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Multi-Cloud Fetch:      {:.2} ns ({:.2} MiB/s)",
+                    report.fetch_latency_nanoseconds,
+                    report.fetch_throughput_bytes_per_sec / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Conflict Resolution:    {:.0} ops/sec",
+                    report.conflict_resolution_ops_per_sec
+                );
+                println!(
+                    "  Failover Switch:        {:.2} ns",
+                    report.failover_latency_nanoseconds
                 );
             }
         }

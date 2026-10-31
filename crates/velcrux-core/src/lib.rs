@@ -110,10 +110,6 @@ pub use state::{
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
     WalCheckpointMode, WalCheckpointReport, MAX_WIRE_CHUNKS,
 };
-pub use tee::{
-    TeeAttestationEngine, TeeAttestationQuote, TeeAttestationReport, TeeBenchmarkReport,
-    TeePlatform, TeePolicy,
-};
 
 pub use router::{
     haversine_distance_km, run_router_benchmark, AnycastRouter, MigrationState, MigrationTicket,
@@ -136,15 +132,18 @@ pub use storage::{
     BackgroundScrubDaemon, CanonicalAce, CanonicalAcl, CasChunkEntry, CasCompactionDaemon,
     CasCompactionDaemonConfig, CasGcPolicy, CasGeneration, CasGenerationalGcReport, CasStoreStatus,
     CasTombstone, ChunkAclEntry, ChunkIntegrityStatus, ChunkPoisonReport, ChunkQuarantineManager,
-    ChunkStore, ChunkStoreGcReport, ChunkTierMetadata, ClusterNode, ClusterNodeState,
-    ClusterReport, ClusteredChunkStore, ColdScrubReport, ConsistentHashRing, DataScrubber,
-    DedupAuditReport, DedupNamespacePolicy, DirectFileReader, DirectFileWriter,
-    DirectIoBenchmarkReport, DirectIoConfig, DirectIoMode, DirectIoPipelineReader,
-    DirectIoPipelineStats, DirectIoPipelineWriter, DirectIoRingBuffer, DirectIoRingConfig,
-    FileMeta, GcsConfig, GcsError, GcsObjectMeta, GcsStorageBackend, GcsSyncReport,
-    GenerationalCasManager, LifecycleSweepReport, LocalChunkStore, LocalFilesystemBackend,
-    MemoryFile, MemoryStorageBackend, MountConfig, MountManager, MountSessionInfo,
-    NamespacedChunkStore, PlatformOs, ProofOfOwnershipEngine, QuarantinedChunk, QuorumPolicy,
+    ChunkStore, ChunkStoreGcReport, ChunkTierMetadata, CloudProviderType, ClusterNode,
+    ClusterNodeState, ClusterReport, ClusteredChunkStore, ColdScrubReport,
+    ConflictResolutionPolicy, ConsistentHashRing, DataScrubber, DedupAuditReport,
+    DedupNamespacePolicy, DirectFileReader, DirectFileWriter, DirectIoBenchmarkReport,
+    DirectIoConfig, DirectIoMode, DirectIoPipelineReader, DirectIoPipelineStats,
+    DirectIoPipelineWriter, DirectIoRingBuffer, DirectIoRingConfig, FederatedObjectMeta,
+    FederatedProviderConfig, FederatedReadCache, FederatedStorageBroker, FederationBenchmarkReport,
+    FederationConfig, FederationRoutingPolicy, FederationSyncReport, FileMeta, GcsConfig, GcsError,
+    GcsObjectMeta, GcsStorageBackend, GcsSyncReport, GenerationalCasManager, LifecycleSweepReport,
+    LocalChunkStore, LocalFilesystemBackend, MemoryFile, MemoryStorageBackend, MountConfig,
+    MountManager, MountSessionInfo, NamespacedChunkStore, PlatformOs, ProofOfOwnershipEngine,
+    ProviderHealthInfo, ProviderHealthStatus, ProviderSyncStats, QuarantinedChunk, QuorumPolicy,
     ReplicationReport, S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport,
     ScrubFinding, ScrubMode, ScrubOptions, ScrubReport, SigV4Signer, SnapshotDiff, Staging,
     StagingGcReport, StorageBackend, StorageTier, TenantTierPolicy, TieredStorageManager,

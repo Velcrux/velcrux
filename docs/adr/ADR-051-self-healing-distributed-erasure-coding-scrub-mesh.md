@@ -120,3 +120,4 @@ Every shard is encapsulated in a self-describing binary format:
 ### Negative / Trade-Offs
 - **CPU Overhead for Parity Computation**: Galois Field arithmetic incurs CPU cycles compared to raw memory copies. Mitigated via lookup tables and fast-path systematic decoding when all $K$ data shards are present.
 - **Reconstruction Latency**: Missing data shards require matrix inversion and linear combinations before data can be returned to readers.
+
