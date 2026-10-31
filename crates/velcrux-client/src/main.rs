@@ -849,6 +849,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: TeeSubCmd,
     },
+    /// Distributed erasure coding & autonomous shard scrub mesh (Option CI).
+    Ec {
+        #[command(subcommand)]
+        sub: EcSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1158,6 +1163,76 @@ enum TeeSubCmd {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
         iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum EcSubCmd {
+    /// Show active erasure coding and shard scrub mesh status and telemetry counters.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Encode a file or binary payload into systematic (K + M) data and parity shards.
+    Encode {
+        /// Path to input file to encode.
+        #[arg(long)]
+        input: PathBuf,
+        /// Output directory to store generated shard files.
+        #[arg(long, alias = "output-dir")]
+        out_dir: PathBuf,
+        /// Number of data shards (K, default: 4).
+        #[arg(long, short = 'k', default_value = "4")]
+        data_shards: usize,
+        /// Number of parity shards (M, default: 2).
+        #[arg(long, short = 'm', default_value = "2")]
+        parity_shards: usize,
+        /// Optional object ID (defaults to filename).
+        #[arg(long)]
+        object_id: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Decode a reconstructed file from a directory containing at least K valid shards.
+    Decode {
+        /// Directory containing shard files.
+        #[arg(long, alias = "dir")]
+        shards_dir: PathBuf,
+        /// Path to output reconstructed file.
+        #[arg(long)]
+        output: PathBuf,
+        /// Target object ID to decode (optional if directory has shards for one object).
+        #[arg(long)]
+        object_id: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scrub shard directory for corruptions, bit-rot, and missing shards.
+    Scrub {
+        /// Directory containing shard files to inspect.
+        #[arg(long, alias = "dir")]
+        shards_dir: PathBuf,
+        /// Automatically reconstruct and self-heal missing/corrupted shards on disk.
+        #[arg(long)]
+        auto_repair: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond benchmark measuring encoding, decoding with missing shards, and repair latency.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Payload size in bytes per iteration (default: 65536 = 64 KiB).
+        #[arg(long, default_value = "65536")]
+        size: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -3407,6 +3482,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Tee { sub } => {
             run_tee(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Ec { sub } => {
+            run_ec(&cli, sub).await?;
             return Ok(());
         }
 
@@ -8722,6 +8801,310 @@ async fn run_tee(cli: &Cli, sub: &TeeSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Session Key Derivation:       {:.2} ns ({:.2} ops/sec)",
                     report.key_derivation_latency_nanoseconds, report.key_derivation_ops_per_second
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_ec(cli: &Cli, sub: &EcSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::ec::{ErasureEngine, ErasureSchema, ShardEnvelope, ShardScrubMesh};
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        EcSubCmd::Status { json } => {
+            let mesh = ShardScrubMesh::new();
+            let (enc, rep, scrub, corrupt, degraded, lat_ns) = mesh.stats();
+
+            #[derive(Serialize)]
+            struct EcStatusOutput {
+                default_schema: String,
+                supported_finite_field: &'static str,
+                ec_encoded_shards_total: u64,
+                ec_repaired_shards_total: u64,
+                ec_scrubbed_shards_total: u64,
+                ec_corrupted_shards_total: u64,
+                ec_degraded_objects: u64,
+                ec_repair_latency_nanoseconds: u64,
+            }
+
+            let out = EcStatusOutput {
+                default_schema: "4+2 (K=4 data, M=2 parity)".to_string(),
+                supported_finite_field: "Galois Field GF(2^8) with Cauchy MDS Generator",
+                ec_encoded_shards_total: enc,
+                ec_repaired_shards_total: rep,
+                ec_scrubbed_shards_total: scrub,
+                ec_corrupted_shards_total: corrupt,
+                ec_degraded_objects: degraded,
+                ec_repair_latency_nanoseconds: lat_ns,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Distributed Erasure Coding & Shard Scrub Mesh Status ===");
+                println!("  Default Schema:         {}", out.default_schema);
+                println!("  Finite Field / Matrix:  {}", out.supported_finite_field);
+                println!("  Encoded Shards:         {}", out.ec_encoded_shards_total);
+                println!("  Repaired Shards:        {}", out.ec_repaired_shards_total);
+                println!("  Scrubbed Shards:        {}", out.ec_scrubbed_shards_total);
+                println!(
+                    "  Corrupted Shards:       {}",
+                    out.ec_corrupted_shards_total
+                );
+                println!("  Degraded Objects:       {}", out.ec_degraded_objects);
+                println!(
+                    "  Last Repair Latency:    {} ns ({:.2} µs)",
+                    out.ec_repair_latency_nanoseconds,
+                    (out.ec_repair_latency_nanoseconds as f64) / 1000.0
+                );
+            }
+        }
+        EcSubCmd::Encode {
+            input,
+            out_dir,
+            data_shards,
+            parity_shards,
+            object_id,
+            json,
+        } => {
+            let schema = ErasureSchema::new(*data_shards, *parity_shards)?;
+            let data = std::fs::read(input)
+                .with_context(|| format!("Failed to read input file from {}", input.display()))?;
+
+            let obj_id = object_id.clone().unwrap_or_else(|| {
+                input
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("object")
+                    .to_string()
+            });
+
+            let shards = ErasureEngine::encode(&data, schema, &obj_id)?;
+            std::fs::create_dir_all(out_dir).with_context(|| {
+                format!("Failed to create output directory: {}", out_dir.display())
+            })?;
+
+            let mut shard_files = Vec::with_capacity(shards.len());
+            for s in &shards {
+                let filename = format!("{}.shard.{}", obj_id, s.shard_index);
+                let p = out_dir.join(filename);
+                s.save_to_file(&p)?;
+                shard_files.push(p.display().to_string());
+            }
+
+            #[derive(Serialize)]
+            struct EncodeOutput {
+                object_id: String,
+                original_size_bytes: usize,
+                data_shards: usize,
+                parity_shards: usize,
+                total_shards: usize,
+                shard_size_bytes: usize,
+                shard_files: Vec<String>,
+            }
+
+            let out = EncodeOutput {
+                object_id: obj_id.clone(),
+                original_size_bytes: data.len(),
+                data_shards: *data_shards,
+                parity_shards: *parity_shards,
+                total_shards: shards.len(),
+                shard_size_bytes: shards[0].payload.len(),
+                shard_files,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Erasure Coding Encode Completed ===");
+                println!("  Object ID:              {}", out.object_id);
+                println!(
+                    "  Schema:                 {} data + {} parity (Total: {})",
+                    out.data_shards, out.parity_shards, out.total_shards
+                );
+                println!(
+                    "  Original Size:          {} bytes",
+                    out.original_size_bytes
+                );
+                println!("  Shard Size:             {} bytes", out.shard_size_bytes);
+                println!("  Output Directory:       {}", out_dir.display());
+            }
+        }
+        EcSubCmd::Decode {
+            shards_dir,
+            output,
+            object_id,
+            json,
+        } => {
+            // Find all valid shards in shards_dir
+            let mut available_shards: Vec<ShardEnvelope> = Vec::new();
+            if shards_dir.exists() && shards_dir.is_dir() {
+                for entry in std::fs::read_dir(shards_dir)?.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Ok(env) = ShardEnvelope::load_from_file(&path) {
+                            if let Some(ref target_obj) = object_id {
+                                if env.object_id == *target_obj {
+                                    available_shards.push(env);
+                                }
+                            } else {
+                                available_shards.push(env);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if available_shards.is_empty() {
+                anyhow::bail!(
+                    "No valid erasure coding shards found in directory {}",
+                    shards_dir.display()
+                );
+            }
+
+            let schema = available_shards[0].schema;
+            let obj_id = available_shards[0].object_id.clone();
+            let total = schema.total_shards();
+            let mut slots: Vec<Option<ShardEnvelope>> = vec![None; total];
+            for env in available_shards {
+                let idx = env.shard_index;
+                if idx < total {
+                    slots[idx] = Some(env);
+                }
+            }
+
+            let decoded_bytes = ErasureEngine::decode(&slots, schema)?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(output, &decoded_bytes)?;
+
+            #[derive(Serialize)]
+            struct DecodeOutput {
+                object_id: String,
+                schema: ErasureSchema,
+                reconstructed_size_bytes: usize,
+                output_file: String,
+            }
+
+            let out = DecodeOutput {
+                object_id: obj_id,
+                schema,
+                reconstructed_size_bytes: decoded_bytes.len(),
+                output_file: output.display().to_string(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Erasure Coding Decode Completed ===");
+                println!("  Object ID:              {}", out.object_id);
+                println!(
+                    "  Schema:                 {} data + {} parity",
+                    out.schema.data_shards, out.schema.parity_shards
+                );
+                println!(
+                    "  Reconstructed Size:     {} bytes",
+                    out.reconstructed_size_bytes
+                );
+                println!("  Output File:            {}", out.output_file);
+            }
+        }
+        EcSubCmd::Scrub {
+            shards_dir,
+            auto_repair,
+            json,
+        } => {
+            let mesh = ShardScrubMesh::new();
+            if *auto_repair {
+                let report = mesh.auto_repair_directory(shards_dir)?;
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("=== Erasure Coding Autonomous Shard Scrub & Repair ===");
+                    println!("  Scanned Directory:      {}", shards_dir.display());
+                    println!(
+                        "  Total Files Scanned:    {}",
+                        report.scrub_report.total_files_scanned
+                    );
+                    println!(
+                        "  Objects Scanned:        {}",
+                        report.scrub_report.objects_scanned
+                    );
+                    println!(
+                        "  Healthy Objects:        {}",
+                        report.scrub_report.healthy_objects
+                    );
+                    println!(
+                        "  Degraded Objects:       {}",
+                        report.scrub_report.degraded_objects
+                    );
+                    println!(
+                        "  Critical Objects:       {}",
+                        report.scrub_report.critical_objects
+                    );
+                    println!(
+                        "  Unrecoverable Objects:  {}",
+                        report.scrub_report.unrecoverable_objects
+                    );
+                    println!("  Objects Self-Healed:    {}", report.objects_repaired);
+                    println!("  Shards Reconstructed:   {}", report.shards_reconstructed);
+                }
+            } else {
+                let report = mesh.scrub_directory(shards_dir)?;
+                if *json || is_json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("=== Erasure Coding Shard Scrub Inspection ===");
+                    println!("  Scanned Directory:      {}", shards_dir.display());
+                    println!("  Total Files Scanned:    {}", report.total_files_scanned);
+                    println!("  Objects Scanned:        {}", report.objects_scanned);
+                    println!("  Valid Shards:           {}", report.valid_shards);
+                    println!("  Corrupted Shards:       {}", report.corrupted_shards);
+                    println!("  Healthy Objects:        {}", report.healthy_objects);
+                    println!("  Degraded Objects:       {}", report.degraded_objects);
+                    println!("  Critical Objects:       {}", report.critical_objects);
+                    println!("  Unrecoverable Objects:  {}", report.unrecoverable_objects);
+                }
+            }
+        }
+        EcSubCmd::Benchmark {
+            iterations,
+            size,
+            json,
+        } => {
+            let mesh = ShardScrubMesh::new();
+            let report = mesh.run_benchmark(*iterations, *size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Erasure Coding & Self-Healing Benchmark ({} iters, {} bytes) ===",
+                    report.iterations, report.payload_size_bytes
+                );
+                println!(
+                    "  Schema:                 {} data + {} parity",
+                    report.schema.data_shards, report.schema.parity_shards
+                );
+                println!(
+                    "  Encoding Latency:       {:.2} ns ({:.2} MiB/s)",
+                    report.encode_latency_nanoseconds,
+                    report.encode_throughput_bytes_per_sec / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Decoding Latency:       {:.2} ns ({:.2} MiB/s)",
+                    report.decode_latency_nanoseconds,
+                    report.decode_throughput_bytes_per_sec / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Single-Shard Repair:    {:.2} ns ({:.2} µs)",
+                    report.single_shard_repair_latency_nanoseconds,
+                    report.single_shard_repair_latency_nanoseconds / 1000.0
                 );
             }
         }

@@ -112,3 +112,4 @@ If an adversary runs a modified binary, the resulting launch measurement will di
 ### Negative
 - Initial enclave measurement calculation requires computing cryptographic hashes over the binary executable.
 - Enclave execution incurs small hardware memory encryption overhead ($1\text{--}3\%$) at runtime.
+

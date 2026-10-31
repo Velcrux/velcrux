@@ -27,6 +27,7 @@ pub mod chunking;
 pub mod consensus;
 pub mod crypto;
 pub mod did;
+pub mod ec;
 pub mod error;
 pub mod manifest;
 pub mod protocol;
@@ -85,6 +86,11 @@ pub use did::{
     parse_ed25519_keypair, resolve_did, CredentialProof, DidAttestationEngine, DidBenchmarkReport,
     DidDocument, DidMethod, TransferCapabilitySubject, VerifiableCredential, VerificationMethod,
     VerificationReport,
+};
+pub use ec::{
+    EcAutoRepairReport, EcBenchmarkReport, EcObjectScrubSummary, EcRepairReport, EcScrubReport,
+    ErasureEngine, ErasureSchema, ObjectHealthState, ShardEnvelope, ShardScrubMesh, SHARD_MAGIC,
+    SHARD_VERSION,
 };
 pub use error::{Result, VelcruxError};
 pub use manifest::{

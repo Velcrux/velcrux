@@ -247,6 +247,12 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .tee_verification_latency_nanoseconds
         .load(Ordering::Relaxed);
     let tee_active = stats.tee_active_enclaves.load(Ordering::Relaxed);
+    let ec_encoded = stats.ec_encoded_shards_total.load(Ordering::Relaxed);
+    let ec_repaired = stats.ec_repaired_shards_total.load(Ordering::Relaxed);
+    let ec_scrubbed = stats.ec_scrubbed_shards_total.load(Ordering::Relaxed);
+    let ec_corrupted = stats.ec_corrupted_shards_total.load(Ordering::Relaxed);
+    let ec_degraded = stats.ec_degraded_objects.load(Ordering::Relaxed);
+    let ec_repair_lat_ns = stats.ec_repair_latency_nanoseconds.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -654,7 +660,25 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_tee_verification_latency_nanoseconds {tee_latency_ns}\n\n\
          # HELP velcrux_tee_active_enclaves Current active verified TEE sessions\n\
          # TYPE velcrux_tee_active_enclaves gauge\n\
-         velcrux_tee_active_enclaves {tee_active}\n"
+         velcrux_tee_active_enclaves {tee_active}\n\n\
+         # HELP velcrux_ec_encoded_shards_total Total erasure coding shards encoded\n\
+         # TYPE velcrux_ec_encoded_shards_total counter\n\
+         velcrux_ec_encoded_shards_total {ec_encoded}\n\n\
+         # HELP velcrux_ec_repaired_shards_total Total erasure coding shards repaired and reconstructed\n\
+         # TYPE velcrux_ec_repaired_shards_total counter\n\
+         velcrux_ec_repaired_shards_total {ec_repaired}\n\n\
+         # HELP velcrux_ec_scrubbed_shards_total Total erasure coding shards scrubbed for integrity\n\
+         # TYPE velcrux_ec_scrubbed_shards_total counter\n\
+         velcrux_ec_scrubbed_shards_total {ec_scrubbed}\n\n\
+         # HELP velcrux_ec_corrupted_shards_total Total corrupted erasure coding shards detected\n\
+         # TYPE velcrux_ec_corrupted_shards_total counter\n\
+         velcrux_ec_corrupted_shards_total {ec_corrupted}\n\n\
+         # HELP velcrux_ec_degraded_objects Current number of degraded erasure-coded objects\n\
+         # TYPE velcrux_ec_degraded_objects gauge\n\
+         velcrux_ec_degraded_objects {ec_degraded}\n\n\
+         # HELP velcrux_ec_repair_latency_nanoseconds Latency of latest shard repair in nanoseconds\n\
+         # TYPE velcrux_ec_repair_latency_nanoseconds gauge\n\
+         velcrux_ec_repair_latency_nanoseconds {ec_repair_lat_ns}\n"
     )
 }
 

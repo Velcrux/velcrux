@@ -4016,6 +4016,98 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_tee_verification_latency_nanoseconds` | `gauge` | Latency of the most recent hardware TEE attestation verification in nanoseconds. |
 | `velcrux_tee_active_enclaves` | `gauge` | Current number of active verified TEE sessions. |
 
+---
+
+## 56. Self-Healing Distributed Erasure Coding & Autonomous Shard Scrub Reference (Option CI)
+
+Velcrux incorporates a pure safe Rust Reed-Solomon $(K+M, K)$ erasure coding engine and autonomous shard scrub mesh (`ADR-051`). The system guarantees mathematically optimal data durability with bounded storage overhead, cryptographic integrity protection via `VEC1` binary envelopes, and zero-downtime autonomous shard reconstruction.
+
+### CLI Operational Commands
+
+The `velcrux ec` subcommand suite provides complete administrative control over encoding, decoding, scrubbing, and microsecond performance benchmarking:
+
+#### 1. Inspect Erasure Coding Engine & Mesh Status
+```bash
+# Human-readable status summary
+velcrux ec status
+
+# Machine-readable JSON output for monitoring pipelines
+velcrux --json ec status
+```
+
+#### 2. Encode File into Systematic Data and Parity Shards
+```bash
+# Encode file using balanced (4+2) schema into target shard directory
+velcrux ec encode \
+  --input /data/datasets/archive.tar \
+  --out-dir /mnt/velcrux_shards/archive/ \
+  -k 4 \
+  -m 2 \
+  --object-id archive-2026-q4
+
+# Encode file using high-durability (8+4) schema with JSON metadata output
+velcrux ec encode \
+  --input /data/models/weights.safetensors \
+  --out-dir /mnt/velcrux_shards/weights/ \
+  -k 8 \
+  -m 4 \
+  --json
+```
+
+#### 3. Decode & Reconstruct Original Object from Shards
+```bash
+# Decode file from directory containing >= K valid shards
+velcrux ec decode \
+  --shards-dir /mnt/velcrux_shards/archive/ \
+  --output /tmp/archive_restored.tar
+
+# Decode specific object ID when directory contains shards for multiple objects
+velcrux ec decode \
+  --shards-dir /mnt/velcrux_shards/multi/ \
+  --object-id archive-2026-q4 \
+  --output /tmp/archive_restored.tar \
+  --json
+```
+
+#### 4. Scrub Shard Directory for Bit-Rot and Missing Fragments
+```bash
+# Scan directory without making disk modifications (inspection mode)
+velcrux ec scrub --shards-dir /mnt/velcrux_shards/archive/
+
+# Continuous autonomous healing: detect bit-rot and regenerate missing shards on disk
+velcrux ec scrub \
+  --shards-dir /mnt/velcrux_shards/archive/ \
+  --auto-repair
+
+# Output JSON scrub report for automated SIEM / alerting
+velcrux --json ec scrub \
+  --shards-dir /mnt/velcrux_shards/archive/ \
+  --auto-repair
+```
+
+#### 5. Benchmark Encoding, Decoding, and Repair Latency
+```bash
+# Benchmark default 64 KiB payload across 50 iterations
+velcrux ec benchmark --size 65536 --iterations 50
+
+# Benchmark 256 KiB payload with JSON output
+velcrux --json ec benchmark --size 262144 --iterations 20
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_ec_encoded_shards_total` | `counter` | Total erasure-coded data and parity shards generated. |
+| `velcrux_ec_repaired_shards_total` | `counter` | Total corrupted or missing shards autonomously reconstructed. |
+| `velcrux_ec_scrubbed_shards_total` | `counter` | Total shard files inspected by the autonomous scrubber. |
+| `velcrux_ec_corrupted_shards_total` | `counter` | Total corrupted shards detected with cryptographic BLAKE3 checksum mismatches. |
+| `velcrux_ec_degraded_objects` | `gauge` | Current number of objects in degraded or critical state needing repair. |
+| `velcrux_ec_repair_latency_nanoseconds` | `gauge` | Latency of the most recent autonomous shard reconstruction in nanoseconds. |
+
+
 
 
 

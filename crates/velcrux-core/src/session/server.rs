@@ -365,6 +365,18 @@ pub struct ServerStats {
     pub tee_verification_latency_nanoseconds: AtomicU64,
     /// Current active verified TEE sessions (Option CH).
     pub tee_active_enclaves: AtomicU64,
+    /// Total erasure coding shards encoded (Option CI).
+    pub ec_encoded_shards_total: AtomicU64,
+    /// Total erasure coding shards repaired/reconstructed (Option CI).
+    pub ec_repaired_shards_total: AtomicU64,
+    /// Total erasure coding shards scrubbed for integrity (Option CI).
+    pub ec_scrubbed_shards_total: AtomicU64,
+    /// Total corrupted erasure coding shards detected (Option CI).
+    pub ec_corrupted_shards_total: AtomicU64,
+    /// Current number of degraded erasure-coded objects with < K+M valid shards (Option CI).
+    pub ec_degraded_objects: AtomicU64,
+    /// Latency of latest shard repair in nanoseconds (Option CI).
+    pub ec_repair_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -519,6 +531,12 @@ impl Default for ServerStats {
             tee_attestation_failures_total: AtomicU64::new(0),
             tee_verification_latency_nanoseconds: AtomicU64::new(0),
             tee_active_enclaves: AtomicU64::new(0),
+            ec_encoded_shards_total: AtomicU64::new(0),
+            ec_repaired_shards_total: AtomicU64::new(0),
+            ec_scrubbed_shards_total: AtomicU64::new(0),
+            ec_corrupted_shards_total: AtomicU64::new(0),
+            ec_degraded_objects: AtomicU64::new(0),
+            ec_repair_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }
