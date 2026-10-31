@@ -355,6 +355,16 @@ pub struct ServerStats {
     pub did_verification_latency_nanoseconds: AtomicU64,
     /// Current active delegated capability chains (Option CG).
     pub did_active_delegations: AtomicU64,
+    /// Total hardware TEE remote attestations evaluated (Option CH).
+    pub tee_attestations_total: AtomicU64,
+    /// Total successful hardware TEE remote attestations (Option CH).
+    pub tee_attestation_successes_total: AtomicU64,
+    /// Total failed hardware TEE remote attestations (Option CH).
+    pub tee_attestation_failures_total: AtomicU64,
+    /// Latest observed hardware TEE verification latency in nanoseconds (Option CH).
+    pub tee_verification_latency_nanoseconds: AtomicU64,
+    /// Current active verified TEE sessions (Option CH).
+    pub tee_active_enclaves: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -504,6 +514,11 @@ impl Default for ServerStats {
             did_vc_verification_failures_total: AtomicU64::new(0),
             did_verification_latency_nanoseconds: AtomicU64::new(0),
             did_active_delegations: AtomicU64::new(0),
+            tee_attestations_total: AtomicU64::new(0),
+            tee_attestation_successes_total: AtomicU64::new(0),
+            tee_attestation_failures_total: AtomicU64::new(0),
+            tee_verification_latency_nanoseconds: AtomicU64::new(0),
+            tee_active_enclaves: AtomicU64::new(0),
         }
     }
 }

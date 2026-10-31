@@ -238,6 +238,15 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .did_verification_latency_nanoseconds
         .load(Ordering::Relaxed);
     let did_active_delegs = stats.did_active_delegations.load(Ordering::Relaxed);
+    let tee_attestations = stats.tee_attestations_total.load(Ordering::Relaxed);
+    let tee_successes = stats
+        .tee_attestation_successes_total
+        .load(Ordering::Relaxed);
+    let tee_failures = stats.tee_attestation_failures_total.load(Ordering::Relaxed);
+    let tee_latency_ns = stats
+        .tee_verification_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let tee_active = stats.tee_active_enclaves.load(Ordering::Relaxed);
 
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
@@ -630,7 +639,22 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_did_verification_latency_nanoseconds {did_latency_ns}\n\n\
          # HELP velcrux_did_active_delegations Current active delegated capability chains\n\
          # TYPE velcrux_did_active_delegations gauge\n\
-         velcrux_did_active_delegations {did_active_delegs}\n"
+         velcrux_did_active_delegations {did_active_delegs}\n\n\
+         # HELP velcrux_tee_attestations_total Total hardware TEE remote attestations evaluated\n\
+         # TYPE velcrux_tee_attestations_total counter\n\
+         velcrux_tee_attestations_total {tee_attestations}\n\n\
+         # HELP velcrux_tee_attestation_successes_total Total successful hardware TEE remote attestations\n\
+         # TYPE velcrux_tee_attestation_successes_total counter\n\
+         velcrux_tee_attestation_successes_total {tee_successes}\n\n\
+         # HELP velcrux_tee_attestation_failures_total Total failed hardware TEE remote attestations\n\
+         # TYPE velcrux_tee_attestation_failures_total counter\n\
+         velcrux_tee_attestation_failures_total {tee_failures}\n\n\
+         # HELP velcrux_tee_verification_latency_nanoseconds Latest observed hardware TEE verification latency in nanoseconds\n\
+         # TYPE velcrux_tee_verification_latency_nanoseconds gauge\n\
+         velcrux_tee_verification_latency_nanoseconds {tee_latency_ns}\n\n\
+         # HELP velcrux_tee_active_enclaves Current active verified TEE sessions\n\
+         # TYPE velcrux_tee_active_enclaves gauge\n\
+         velcrux_tee_active_enclaves {tee_active}\n"
     )
 }
 

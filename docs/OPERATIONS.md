@@ -3937,6 +3937,86 @@ Metrics exposed under `/metrics` on all Velcrux server nodes:
 | `velcrux_did_verification_latency_nanoseconds` | `gauge` | Latency of the most recent Verifiable Credential attestation in nanoseconds. |
 | `velcrux_did_active_delegations` | `gauge` | Current number of active delegated capability chains verified. |
 
+---
+
+## 55. Confidential Computing & Hardware TEE Remote Attestation Reference (Option CH)
+
+Velcrux incorporates a pure safe Rust Confidential Computing and Hardware TEE Remote Attestation engine (`ADR-050`). The engine provides cryptographic remote attestation across AMD SEV-SNP, Intel SGX/TDX, AWS Nitro Enclaves, and safe simulated environments. Transferred data is protected using hardware-isolated execution and hardware-bound ephemeral encryption session keys.
+
+### CLI Operational Commands
+
+The operator CLI exposes the `velcrux tee` command family:
+
+#### 1. Inspect TEE Engine Status
+```bash
+# Display human-readable attestation engine metrics and supported platforms
+velcrux tee status
+
+# Output status metrics as JSON
+velcrux tee status --json
+```
+
+#### 2. Calculate Deterministic Enclave Launch Measurement
+```bash
+# Measure an enclave binary for AMD SEV-SNP (SHA-384 launch digest)
+velcrux tee measure --binary /usr/local/bin/velcruxd --platform amd_sev_snp
+
+# Measure an enclave binary for Intel SGX (SHA-256 MRENCLAVE)
+velcrux tee measure --binary /usr/local/bin/velcruxd --platform intel_sgx --json
+```
+
+#### 3. Generate Hardware Remote Attestation Quote
+```bash
+# Generate AMD SEV-SNP quote bound to a session challenge nonce
+velcrux tee quote \
+  --platform amd_sev_snp \
+  --report-data "client_session_challenge_nonce_012345" \
+  --security-version 2
+
+# Generate quote with JSON output
+velcrux tee quote \
+  --platform aws_nitro \
+  --report-data "challenge_nonce_hex" \
+  --json
+```
+
+#### 4. Verify Attestation Quote & Security Policy
+```bash
+# Verify quote against default security policy (debug disabled, age <= 1h)
+velcrux tee verify \
+  --quote quote.json \
+  --nonce "client_session_challenge_nonce_012345"
+
+# Verify quote against custom security policy file
+velcrux tee verify \
+  --quote quote.json \
+  --policy /etc/velcrux/tee_policy.json \
+  --nonce "client_session_challenge_nonce_012345" \
+  --json
+```
+
+#### 5. Benchmark Quote Generation, Verification, and Key Derivation
+```bash
+# Run benchmark across 50 iterations
+velcrux tee benchmark --iterations 50
+
+# Benchmark with JSON output
+velcrux tee benchmark --iterations 100 --json
+```
+
+### Prometheus Observability
+
+Metrics exposed under `/metrics` on all Velcrux server nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_tee_attestations_total` | `counter` | Total hardware TEE remote attestations evaluated. |
+| `velcrux_tee_attestation_successes_total` | `counter` | Total successful hardware TEE remote attestations. |
+| `velcrux_tee_attestation_failures_total` | `counter` | Total failed hardware TEE remote attestations (debug enabled, measurement mismatch, expired quote, nonce mismatch). |
+| `velcrux_tee_verification_latency_nanoseconds` | `gauge` | Latency of the most recent hardware TEE attestation verification in nanoseconds. |
+| `velcrux_tee_active_enclaves` | `gauge` | Current number of active verified TEE sessions. |
+
+
 
 
 

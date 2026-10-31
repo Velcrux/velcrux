@@ -38,6 +38,7 @@ pub mod state;
 pub mod storage;
 pub mod swarm;
 pub mod sync;
+pub mod tee;
 pub mod telemetry;
 pub mod transfer;
 pub mod transport;
@@ -102,6 +103,10 @@ pub use state::{
     JournalRecovery, LedgerEntry, MockStateStore, Role, SqliteStateStore, StateStore,
     StateStoreError, StateStoreResult, TransferRecord, TransferStatus, UpsertOutcome,
     WalCheckpointMode, WalCheckpointReport, MAX_WIRE_CHUNKS,
+};
+pub use tee::{
+    TeeAttestationEngine, TeeAttestationQuote, TeeAttestationReport, TeeBenchmarkReport,
+    TeePlatform, TeePolicy,
 };
 
 pub use router::{

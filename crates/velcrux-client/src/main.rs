@@ -844,6 +844,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: DidSubCmd,
     },
+    /// Confidential computing & hardware TEE remote attestation (Option CH).
+    Tee {
+        #[command(subcommand)]
+        sub: TeeSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1085,6 +1090,73 @@ enum DidSubCmd {
     Benchmark {
         /// Number of benchmark iterations (default: 500).
         #[arg(long, default_value = "500")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TeeSubCmd {
+    /// Show active TEE remote attestation engine status and telemetry counters.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Measure an enclave executable binary to compute its deterministic launch digest.
+    Measure {
+        /// Path to the binary executable to measure.
+        #[arg(long)]
+        binary: PathBuf,
+        /// Target TEE hardware platform (amd_sev_snp, intel_sgx, intel_tdx, aws_nitro, simulated).
+        #[arg(long, default_value = "amd_sev_snp")]
+        platform: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a cryptographically signed hardware TEE remote attestation quote.
+    Quote {
+        /// Target TEE hardware platform (amd_sev_snp, intel_sgx, intel_tdx, aws_nitro, simulated).
+        #[arg(long, default_value = "amd_sev_snp")]
+        platform: String,
+        /// Enclave launch measurement hex string. If not specified, a default launch measurement is generated.
+        #[arg(long)]
+        measurement: Option<String>,
+        /// Report data string or hex string (session challenge nonce binding).
+        #[arg(long, default_value = "default_challenge_nonce")]
+        report_data: String,
+        /// TCB security version number.
+        #[arg(long, default_value = "1")]
+        security_version: u32,
+        /// Enable debug mode for the enclave quote (forbidden in secure production policies).
+        #[arg(long)]
+        debug_mode: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a hardware TEE remote attestation quote against a security policy.
+    Verify {
+        /// Attestation quote JSON string or path to JSON file.
+        #[arg(long)]
+        quote: String,
+        /// Optional path or JSON string of TEE verification policy.
+        #[arg(long)]
+        policy: Option<String>,
+        /// Optional expected challenge nonce (hex or string) to verify report_data binding.
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond benchmark for TEE quote generation, verification, and key derivation.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
         iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
@@ -3331,6 +3403,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Did { sub } => {
             run_did(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Tee { sub } => {
+            run_tee(&cli, sub).await?;
             return Ok(());
         }
 
@@ -8413,6 +8489,239 @@ async fn run_did(cli: &Cli, sub: &DidSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Verification Latency:   {:.2} ns ({:.2} ops/sec)",
                     report.verification_latency_nanoseconds, report.verification_ops_per_second
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_tee(cli: &Cli, sub: &TeeSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::tee::{
+        hex_decode, TeeAttestationEngine, TeeAttestationQuote, TeePlatform, TeePolicy,
+    };
+
+    let is_json = cli_log_json(cli);
+
+    match sub {
+        TeeSubCmd::Status { json } => {
+            let engine = TeeAttestationEngine::new();
+            let (total, succ, fail, last_latency_ns, active) = engine.stats();
+
+            #[derive(Serialize)]
+            struct TeeStatusOutput {
+                supported_platforms: Vec<&'static str>,
+                tee_attestations_total: u64,
+                tee_attestation_successes_total: u64,
+                tee_attestation_failures_total: u64,
+                tee_verification_latency_nanoseconds: u64,
+                tee_active_enclaves: u64,
+            }
+
+            let out = TeeStatusOutput {
+                supported_platforms: vec![
+                    "amd_sev_snp",
+                    "intel_sgx",
+                    "intel_tdx",
+                    "aws_nitro",
+                    "simulated",
+                ],
+                tee_attestations_total: total,
+                tee_attestation_successes_total: succ,
+                tee_attestation_failures_total: fail,
+                tee_verification_latency_nanoseconds: last_latency_ns,
+                tee_active_enclaves: active,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Confidential Computing & Hardware TEE Attestation Status ===");
+                println!("  Supported Platforms:    amd_sev_snp, intel_sgx, intel_tdx, aws_nitro, simulated");
+                println!("  TEE Attestations:       {}", out.tee_attestations_total);
+                println!(
+                    "  Attestation Successes:  {}",
+                    out.tee_attestation_successes_total
+                );
+                println!(
+                    "  Attestation Failures:   {}",
+                    out.tee_attestation_failures_total
+                );
+                println!("  Active Enclaves:        {}", out.tee_active_enclaves);
+                println!(
+                    "  Last Latency:           {} ns ({:.2} µs)",
+                    out.tee_verification_latency_nanoseconds,
+                    (out.tee_verification_latency_nanoseconds as f64) / 1000.0
+                );
+            }
+        }
+        TeeSubCmd::Measure {
+            binary,
+            platform,
+            json,
+        } => {
+            let plat = TeePlatform::from_str_loose(platform)
+                .ok_or_else(|| anyhow::anyhow!("Unknown TEE platform: {platform}"))?;
+            let bytes = std::fs::read(binary)
+                .with_context(|| format!("Failed to read binary file from {}", binary.display()))?;
+            let measurement = TeeAttestationEngine::measure_binary(&bytes, plat);
+
+            #[derive(Serialize)]
+            struct MeasureOutput {
+                binary_path: String,
+                platform: String,
+                binary_size_bytes: usize,
+                launch_measurement: String,
+            }
+
+            let out = MeasureOutput {
+                binary_path: binary.display().to_string(),
+                platform: plat.as_str().to_string(),
+                binary_size_bytes: bytes.len(),
+                launch_measurement: measurement.clone(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Enclave Launch Measurement Calculated ===");
+                println!("  Binary:                 {}", out.binary_path);
+                println!("  Platform:               {}", out.platform);
+                println!("  Binary Size:            {} bytes", out.binary_size_bytes);
+                println!("  Launch Measurement:     {}", out.launch_measurement);
+            }
+        }
+        TeeSubCmd::Quote {
+            platform,
+            measurement,
+            report_data,
+            security_version,
+            debug_mode,
+            json,
+        } => {
+            let plat = TeePlatform::from_str_loose(platform)
+                .ok_or_else(|| anyhow::anyhow!("Unknown TEE platform: {platform}"))?;
+            let m = measurement.clone().unwrap_or_else(|| {
+                TeeAttestationEngine::measure_binary(b"VELCRUX_DEFAULT_ENCLAVE_IMAGE_2026", plat)
+            });
+            let raw_report_data = if let Some(decoded) = hex_decode(report_data) {
+                decoded
+            } else {
+                report_data.as_bytes().to_vec()
+            };
+
+            let engine = TeeAttestationEngine::new();
+            let quote = engine.generate_quote(
+                plat,
+                &m,
+                &raw_report_data,
+                *security_version,
+                *debug_mode,
+            )?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&quote)?);
+            } else {
+                println!("=== Generated Hardware TEE Remote Attestation Quote ===");
+                println!("  Platform:               {:?}", quote.platform);
+                println!("  Enclave ID:             {}", quote.enclave_id);
+                println!("  Launch Measurement:     {}", quote.measurement);
+                println!("  Report Data (Hex):      {}", quote.report_data);
+                println!("  Security Version (SVN): {}", quote.security_version);
+                println!("  Debug Mode:             {}", quote.debug_enabled);
+                println!("  Timestamp:              {}", quote.timestamp);
+                println!("  Signing Key ID:         {}", quote.signing_key_id);
+                println!("  Signature (Hex):        {}", quote.signature);
+                println!();
+                println!("Raw Quote JSON:");
+                println!("{}", serde_json::to_string_pretty(&quote)?);
+            }
+        }
+        TeeSubCmd::Verify {
+            quote,
+            policy,
+            nonce,
+            json,
+        } => {
+            let engine = TeeAttestationEngine::new();
+            let quote_str = if std::path::Path::new(quote).exists() {
+                std::fs::read_to_string(quote)?
+            } else {
+                quote.clone()
+            };
+
+            let q: TeeAttestationQuote = serde_json::from_str(&quote_str)
+                .map_err(|e| anyhow::anyhow!("Failed to parse TEE Quote JSON: {e}"))?;
+
+            let pol: TeePolicy = if let Some(p) = policy {
+                let policy_str = if std::path::Path::new(p).exists() {
+                    std::fs::read_to_string(p)?
+                } else {
+                    p.clone()
+                };
+                serde_json::from_str(&policy_str)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse TEE Policy JSON: {e}"))?
+            } else {
+                TeePolicy::default()
+            };
+
+            let nonce_bytes = nonce.as_ref().map(|n| {
+                if let Some(decoded) = hex_decode(n) {
+                    decoded
+                } else {
+                    n.as_bytes().to_vec()
+                }
+            });
+
+            let report = engine.verify_quote(&q, &pol, nonce_bytes.as_deref(), None)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Hardware TEE Remote Attestation Validated ===");
+                println!("  Status:                 VALID");
+                println!("  Platform:               {:?}", report.platform);
+                println!("  Enclave ID:             {}", report.enclave_id);
+                println!("  Launch Measurement:     {}", report.measurement);
+                println!("  Security Version:       {}", report.security_version);
+                println!("  Debug Enabled:          {}", report.debug_enabled);
+                println!("  Nonce Matched:          {}", report.nonce_matched);
+                println!(
+                    "  Quote Age:              {} seconds",
+                    report.quote_age_seconds
+                );
+                println!(
+                    "  Verification Latency:   {} ns ({:.2} µs)",
+                    report.verification_latency_nanoseconds,
+                    (report.verification_latency_nanoseconds as f64) / 1000.0
+                );
+            }
+        }
+        TeeSubCmd::Benchmark { iterations, json } => {
+            let engine = TeeAttestationEngine::new();
+            let report = engine.run_benchmark(*iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "=== Hardware TEE Remote Attestation Benchmark ({} iters) ===",
+                    report.iterations
+                );
+                println!(
+                    "  Quote Generation Latency:     {:.2} ns ({:.2} ops/sec)",
+                    report.quote_generation_latency_nanoseconds,
+                    report.quote_generation_ops_per_second
+                );
+                println!(
+                    "  Quote Verification Latency:   {:.2} ns ({:.2} ops/sec)",
+                    report.quote_verification_latency_nanoseconds,
+                    report.quote_verification_ops_per_second
+                );
+                println!(
+                    "  Session Key Derivation:       {:.2} ns ({:.2} ops/sec)",
+                    report.key_derivation_latency_nanoseconds, report.key_derivation_ops_per_second
                 );
             }
         }

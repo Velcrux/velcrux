@@ -117,3 +117,4 @@ $$\text{Digest} = \text{BLAKE3}\left(\text{"velcrux-vc-attestation:v1:"} \parall
 ### Negative
 - Key rotation requires issuing updated DIDs and refreshing active Verifiable Credentials.
 - Credential size includes delegation chain metadata when multi-hop delegation is used.
+
