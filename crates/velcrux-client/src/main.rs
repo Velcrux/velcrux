@@ -884,6 +884,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: TxsnapshotSubCmd,
     },
+    /// Deterministic network emulation & jitter harness for chaos sync verification (Option CP).
+    Netem {
+        #[command(subcommand)]
+        sub: NetemSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1703,6 +1708,85 @@ enum TxsnapshotSubCmd {
     Benchmark {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum NetemSubCmd {
+    /// Show current network emulation configuration, active profile, and metrics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply and activate a network emulation profile or custom link parameters.
+    Apply {
+        /// Pre-configured profile preset: "starlink-satellite", "transatlantic-wan", "rural-cellular-5g", "bufferbloat-adverse", "pristine-lan".
+        #[arg(long)]
+        profile: Option<String>,
+        /// Base propagation delay in milliseconds.
+        #[arg(long)]
+        delay_ms: Option<f64>,
+        /// Delay jitter in milliseconds.
+        #[arg(long)]
+        jitter_ms: Option<f64>,
+        /// Jitter distribution: "normal" (default), "uniform", or "pareto".
+        #[arg(long)]
+        distribution: Option<String>,
+        /// Delay correlation coefficient between successive packets (0.0 to 0.99).
+        #[arg(long)]
+        correlation: Option<f64>,
+        /// Independent packet loss percentage (0.0 to 100.0).
+        #[arg(long)]
+        loss_percent: Option<f64>,
+        /// Packet reorder percentage (0.0 to 100.0).
+        #[arg(long)]
+        reorder_percent: Option<f64>,
+        /// Packet duplication percentage (0.0 to 100.0).
+        #[arg(long)]
+        duplicate_percent: Option<f64>,
+        /// Packet payload corruption percentage (0.0 to 100.0).
+        #[arg(long)]
+        corrupt_percent: Option<f64>,
+        /// Ingress bandwidth limit in Megabits per second (0 for unlimited).
+        #[arg(long)]
+        bandwidth_mbps: Option<f64>,
+        /// Deterministic PRNG seed.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Disable all network emulation impairments and reset to pristine pass-through.
+    Clear {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Simulate virtual packet traffic through the configured netem profile and report metrics.
+    Simulate {
+        /// Number of packets to simulate (default: 500).
+        #[arg(long, default_value = "500")]
+        packets: usize,
+        /// Packet payload size in bytes (default: 1200).
+        #[arg(long, default_value = "1200")]
+        size: usize,
+        /// Optional deterministic seed to override.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring jitter calculation, loss evaluation, and queue throughput.
+    Benchmark {
+        /// Number of benchmark iterations (default: 1000).
+        #[arg(long, default_value = "1000")]
         iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
@@ -3981,6 +4065,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Txsnapshot { sub } => {
             run_txsnapshot(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Netem { sub } => {
+            run_netem(&cli, sub).await?;
             return Ok(());
         }
 
@@ -11052,6 +11140,227 @@ async fn run_txsnapshot(cli: &Cli, sub: &TxsnapshotSubCmd) -> anyhow::Result<()>
                 println!("  Commit 2PC Latency:  {:.2} ns", bench.commit_2pc_nanos);
                 println!("  MVCC Read Latency:   {:.2} ns", bench.mvcc_read_nanos);
                 println!("  Rollback Latency:    {:.2} ns", bench.rollback_nanos);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_netem(cli: &Cli, sub: &NetemSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::netem::{NetemConfig, NetemEngine, NetemProfilePreset};
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_NETEM_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_netem"));
+
+    let mut engine = NetemEngine::new(state_dir.clone(), None)?;
+
+    match sub {
+        NetemSubCmd::Status { json } => {
+            let config = engine.config();
+            let metrics = engine.metrics_snapshot();
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "config": config,
+                        "metrics": metrics,
+                    })
+                );
+            } else {
+                println!("=== Network Emulation & Jitter Harness Status ===");
+                println!(
+                    "  Status:             {}",
+                    if config.enabled {
+                        "ACTIVE (Emulating)"
+                    } else {
+                        "DISABLED (Pass-through)"
+                    }
+                );
+                if let Some(ref p) = config.preset_name {
+                    println!("  Active Preset:      {}", p);
+                }
+                println!("  Base Delay:         {:.2} ms", config.delay_ms);
+                println!(
+                    "  Delay Jitter:       {:.2} ms ({})",
+                    config.jitter_ms, config.jitter_dist
+                );
+                println!("  Delay Correlation:  {:.2}", config.delay_correlation);
+                println!("  Packet Loss:        {:.2}%", config.loss_percent);
+                println!("  Packet Reorder:     {:.2}%", config.reorder_percent);
+                println!("  Packet Duplication: {:.2}%", config.duplicate_percent);
+                println!("  Payload Corruption: {:.2}%", config.corrupt_percent);
+                if config.bandwidth_mbps > 0.0 {
+                    println!("  Bandwidth Limit:    {:.2} Mbps", config.bandwidth_mbps);
+                } else {
+                    println!("  Bandwidth Limit:    Unlimited");
+                }
+                println!("  PRNG Seed:          {}", config.prng_seed);
+                println!("--- Emulation Telemetry Metrics ---");
+                println!("  Packets Processed:  {}", metrics.packets_processed);
+                println!("  Packets Delivered:  {}", metrics.packets_delivered);
+                println!("  Packets Dropped:    {}", metrics.packets_dropped);
+                println!("  Packets Reordered:  {}", metrics.packets_reordered);
+                println!("  Packets Duplicated: {}", metrics.packets_duplicated);
+                println!("  Packets Corrupted:  {}", metrics.packets_corrupted);
+                println!(
+                    "  Latest RTT:         {:.2} ms",
+                    metrics.latest_rtt_nanos as f64 / 1_000_000.0
+                );
+            }
+        }
+        NetemSubCmd::Apply {
+            profile,
+            delay_ms,
+            jitter_ms,
+            distribution,
+            correlation,
+            loss_percent,
+            reorder_percent,
+            duplicate_percent,
+            corrupt_percent,
+            bandwidth_mbps,
+            seed,
+            json,
+        } => {
+            let mut new_cfg = if let Some(preset_str) = profile {
+                let preset: NetemProfilePreset = preset_str.parse()?;
+                NetemConfig::from_preset(preset, *seed)
+            } else {
+                let mut current = engine.config().clone();
+                current.enabled = true;
+                current
+            };
+
+            if let Some(d) = delay_ms {
+                new_cfg.delay_ms = *d;
+            }
+            if let Some(j) = jitter_ms {
+                new_cfg.jitter_ms = *j;
+            }
+            if let Some(dist_str) = distribution {
+                new_cfg.jitter_dist = dist_str.parse()?;
+            }
+            if let Some(c) = correlation {
+                new_cfg.delay_correlation = *c;
+            }
+            if let Some(l) = loss_percent {
+                new_cfg.loss_percent = *l;
+            }
+            if let Some(r) = reorder_percent {
+                new_cfg.reorder_percent = *r;
+            }
+            if let Some(dup) = duplicate_percent {
+                new_cfg.duplicate_percent = *dup;
+            }
+            if let Some(cor) = corrupt_percent {
+                new_cfg.corrupt_percent = *cor;
+            }
+            if let Some(bw) = bandwidth_mbps {
+                new_cfg.bandwidth_mbps = *bw;
+            }
+            if let Some(s) = seed {
+                new_cfg.prng_seed = *s;
+            }
+            new_cfg.enabled = true;
+
+            engine.update_config(new_cfg.clone())?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&new_cfg)?);
+            } else {
+                println!("=== Network Emulation Profile Applied ===");
+                println!("  Status:             ACTIVE");
+                if let Some(ref p) = new_cfg.preset_name {
+                    println!("  Preset:             {}", p);
+                }
+                println!("  Base Delay:         {:.2} ms", new_cfg.delay_ms);
+                println!(
+                    "  Jitter:             {:.2} ms ({})",
+                    new_cfg.jitter_ms, new_cfg.jitter_dist
+                );
+                println!("  Loss:               {:.2}%", new_cfg.loss_percent);
+                println!("  Reorder:            {:.2}%", new_cfg.reorder_percent);
+                println!("  Duplication:        {:.2}%", new_cfg.duplicate_percent);
+                println!("  Corruption:         {:.2}%", new_cfg.corrupt_percent);
+            }
+        }
+        NetemSubCmd::Clear { json } => {
+            let mut reset_cfg = NetemConfig::default();
+            reset_cfg.enabled = false;
+            engine.update_config(reset_cfg.clone())?;
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "cleared",
+                        "enabled": false,
+                    })
+                );
+            } else {
+                println!("=== Network Emulation Cleared ===");
+                println!(
+                    "  All impairments cleared. Transport operates in pristine pass-through mode."
+                );
+            }
+        }
+        NetemSubCmd::Simulate {
+            packets,
+            size,
+            seed,
+            json,
+        } => {
+            if let Some(s) = seed {
+                let mut cfg = engine.config().clone();
+                cfg.prng_seed = *s;
+                engine.update_config(cfg)?;
+            }
+
+            let report = engine.simulate_traffic(*packets, *size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Network Emulation Traffic Simulation Report ===");
+                println!("  Total Packets:      {}", report.total_packets);
+                println!("  Delivered:          {}", report.delivered);
+                println!("  Dropped:            {}", report.dropped);
+                println!("  Delivery Ratio:     {:.2}%", report.delivery_ratio);
+                println!("  Reordered Packets:  {}", report.reordered);
+                println!("  Duplicated Packets: {}", report.duplicated);
+                println!("  Corrupted Packets:  {}", report.corrupted);
+                println!("  Min RTT:            {:.2} ms", report.min_rtt_ms);
+                println!("  P50 (Median) RTT:   {:.2} ms", report.p50_rtt_ms);
+                println!("  P95 RTT:            {:.2} ms", report.p95_rtt_ms);
+                println!("  P99 RTT:            {:.2} ms", report.p99_rtt_ms);
+                println!("  Max RTT:            {:.2} ms", report.max_rtt_ms);
+                println!("  Effective Rate:     {:.2} Mbps", report.throughput_mbps);
+            }
+        }
+        NetemSubCmd::Benchmark { iterations, json } => {
+            let bench = NetemEngine::run_benchmark(*iterations)?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!("=== Deterministic Network Emulation Microsecond Benchmark ===");
+                println!("  Iterations:          {}", bench.iterations);
+                println!("  Jitter Calc Latency: {:.2} ns", bench.jitter_calc_nanos);
+                println!("  Markov Loss Latency: {:.2} ns", bench.markov_eval_nanos);
+                println!(
+                    "  Enqueue Latency:     {:.2} ns",
+                    bench.packet_enqueue_nanos
+                );
+                println!(
+                    "  Dequeue Latency:     {:.2} ns",
+                    bench.packet_dequeue_nanos
+                );
+                println!(
+                    "  Throughput:          {:.0} packets/sec",
+                    bench.throughput_pps
+                );
             }
         }
     }

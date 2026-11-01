@@ -349,6 +349,19 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .txsnapshot_commit_latency_nanoseconds
         .load(Ordering::Relaxed);
 
+    let netem_processed = stats.netem_packets_processed_total.load(Ordering::Relaxed);
+    let netem_delivered = stats.netem_packets_delivered_total.load(Ordering::Relaxed);
+    let netem_dropped = stats.netem_packets_dropped_total.load(Ordering::Relaxed);
+    let netem_reordered = stats.netem_packets_reordered_total.load(Ordering::Relaxed);
+    let netem_duplicated = stats.netem_packets_duplicated_total.load(Ordering::Relaxed);
+    let netem_corrupted = stats.netem_packets_corrupted_total.load(Ordering::Relaxed);
+    let netem_rtt_ns = stats
+        .netem_simulated_rtt_nanoseconds
+        .load(Ordering::Relaxed);
+    let netem_sched_lat_ns = stats
+        .netem_scheduler_latency_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -917,7 +930,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_txsnapshot_conflicts_total {txsnap_conflicts}\n\n\
          # HELP velcrux_txsnapshot_commit_latency_nanoseconds Latest observed 2PC commit latency in nanoseconds\n\
          # TYPE velcrux_txsnapshot_commit_latency_nanoseconds gauge\n\
-         velcrux_txsnapshot_commit_latency_nanoseconds {txsnap_commit_lat_ns}\n"
+         velcrux_txsnapshot_commit_latency_nanoseconds {txsnap_commit_lat_ns}\n\n\
+         # HELP velcrux_netem_packets_processed_total Total network emulation packets processed\n\
+         # TYPE velcrux_netem_packets_processed_total counter\n\
+         velcrux_netem_packets_processed_total {netem_processed}\n\n\
+         # HELP velcrux_netem_packets_delivered_total Total network emulation packets delivered\n\
+         # TYPE velcrux_netem_packets_delivered_total counter\n\
+         velcrux_netem_packets_delivered_total {netem_delivered}\n\n\
+         # HELP velcrux_netem_packets_dropped_total Total network emulation packets dropped\n\
+         # TYPE velcrux_netem_packets_dropped_total counter\n\
+         velcrux_netem_packets_dropped_total {netem_dropped}\n\n\
+         # HELP velcrux_netem_packets_reordered_total Total network emulation packets reordered\n\
+         # TYPE velcrux_netem_packets_reordered_total counter\n\
+         velcrux_netem_packets_reordered_total {netem_reordered}\n\n\
+         # HELP velcrux_netem_packets_duplicated_total Total network emulation packets duplicated\n\
+         # TYPE velcrux_netem_packets_duplicated_total counter\n\
+         velcrux_netem_packets_duplicated_total {netem_duplicated}\n\n\
+         # HELP velcrux_netem_packets_corrupted_total Total network emulation packets corrupted\n\
+         # TYPE velcrux_netem_packets_corrupted_total counter\n\
+         velcrux_netem_packets_corrupted_total {netem_corrupted}\n\n\
+         # HELP velcrux_netem_simulated_rtt_nanoseconds Latest simulated network RTT in nanoseconds\n\
+         # TYPE velcrux_netem_simulated_rtt_nanoseconds gauge\n\
+         velcrux_netem_simulated_rtt_nanoseconds {netem_rtt_ns}\n\n\
+         # HELP velcrux_netem_scheduler_latency_nanoseconds Latest network emulation scheduler latency in nanoseconds\n\
+         # TYPE velcrux_netem_scheduler_latency_nanoseconds gauge\n\
+         velcrux_netem_scheduler_latency_nanoseconds {netem_sched_lat_ns}\n"
     )
 }
 

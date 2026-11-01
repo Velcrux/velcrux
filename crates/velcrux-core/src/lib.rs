@@ -30,6 +30,7 @@ pub mod did;
 pub mod ec;
 pub mod error;
 pub mod manifest;
+pub mod netem;
 pub mod protocol;
 pub mod provenance;
 pub mod proxy;
@@ -217,6 +218,10 @@ pub use crypto::pqc::{
     HybridSignature, HybridSignatureEngine, HybridSigningPrivateKey, HybridSigningPublicKey,
     MlDsaPrivateKey, MlDsaPublicKey, MlDsaSignature, MlKemCiphertext, MlKemPrivateKey,
     MlKemPublicKey, PqcAlgorithm, PqcBenchmarkReport, PqcStatusReport,
+};
+pub use netem::{
+    GilbertElliottLossConfig, JitterDistribution, NetemBenchmarkReport, NetemConfig, NetemEngine,
+    NetemMetricsSnapshot, NetemPrng, NetemProfilePreset, NetemSimulationReport, PacketAction,
 };
 pub use proxy::{
     run_l7_benchmark, FlowTier, L7Action, L7BenchmarkReport, L7ProxyEngine, L7ProxyStatus,

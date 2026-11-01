@@ -4651,6 +4651,98 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_txsnapshot_conflicts_total` | `counter` | Total OCC conflict rejections detected. |
 | `velcrux_txsnapshot_commit_latency_nanoseconds` | `gauge` | Latest observed 2PC commit latency in nanoseconds. |
 
+---
+
+## 63. Deterministic Network Emulation & Jitter Harness Runbook & Configuration Reference (ADR-058, Option CP)
+
+### Architectural Overview
+
+Velcrux incorporates a pure safe Rust userspace deterministic network emulator and jitter injection harness (`ADR-058`). It allows SREs and developers to reproduce hostile real-world WAN network conditions (satellite delay variations, cellular burst drops, bufferbloat queue delays, out-of-order delivery, and bit flips) without root privileges or kernel networking modifications.
+
+### Operator CLI Reference
+
+#### 1. Inspect Network Emulation Status
+```bash
+# Display active network emulation parameters and packet statistics
+velcrux netem status
+
+# JSON output for automated test harnesses
+velcrux --json netem status
+```
+
+#### 2. Apply Pre-Configured WAN Link Presets
+```bash
+# Emulate Starlink low-Earth-orbit satellite (60ms base delay, Pareto jitter, Markov burst loss)
+velcrux netem apply --profile starlink-satellite
+
+# Emulate inter-continental transatlantic WAN (90ms base delay, Normal jitter, 0.2% loss)
+velcrux netem apply --profile transatlantic-wan
+
+# Emulate rural 5G cellular link (35ms base delay, burst drops)
+velcrux netem apply --profile rural-cellular-5g
+
+# Emulate congested bufferbloat link (Pareto queuing spikes up to 120ms)
+velcrux netem apply --profile bufferbloat-adverse
+```
+
+#### 3. Apply Custom Network Impairments
+```bash
+# Configure custom latency, loss, and reordering
+velcrux netem apply \
+  --delay-ms 40.0 \
+  --jitter-ms 10.0 \
+  --distribution normal \
+  --correlation 0.3 \
+  --loss-percent 2.5 \
+  --reorder-percent 1.0 \
+  --duplicate-percent 0.5 \
+  --bandwidth-mbps 100.0 \
+  --seed 4242
+```
+
+#### 4. Reset to Pristine Pass-Through
+```bash
+# Clear all network impairments and return to raw unthrottled transport
+velcrux netem clear
+```
+
+#### 5. Virtual Traffic Simulation
+```bash
+# Simulate 500 packets of 1200 bytes through active netem profile
+velcrux netem simulate --packets 500 --size 1200
+
+# JSON report with min, max, p50, p95, p99 RTT percentiles and delivery ratio
+velcrux --json netem simulate --packets 1000 --seed 1234
+```
+
+#### 6. Microsecond Performance Benchmarking
+```bash
+# Benchmark packet scheduling, jitter calculation, and queue throughput across 1,000 iterations
+velcrux netem benchmark --iterations 1000
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_NETEM_DIR` | `/tmp/velcrux_netem` | Directory where active netem configuration and metrics state are persisted. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_netem_packets_processed_total` | `counter` | Total network emulation packets processed. |
+| `velcrux_netem_packets_delivered_total` | `counter` | Total network emulation packets delivered. |
+| `velcrux_netem_packets_dropped_total` | `counter` | Total network emulation packets dropped due to loss modeling. |
+| `velcrux_netem_packets_reordered_total` | `counter` | Total network emulation packets delivered out of sequence. |
+| `velcrux_netem_packets_duplicated_total` | `counter` | Total network emulation packets duplicated. |
+| `velcrux_netem_packets_corrupted_total` | `counter` | Total network emulation packets corrupted with bit-flips. |
+| `velcrux_netem_simulated_rtt_nanoseconds` | `gauge` | Latest simulated round-trip time in nanoseconds. |
+| `velcrux_netem_scheduler_latency_nanoseconds` | `gauge` | Latest scheduler processing latency in nanoseconds. |
+
+
 
 
 

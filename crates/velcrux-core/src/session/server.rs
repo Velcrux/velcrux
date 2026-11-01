@@ -473,6 +473,22 @@ pub struct ServerStats {
     pub txsnapshot_conflicts_total: AtomicU64,
     /// Latest observed 2PC commit latency in nanoseconds (Option CO).
     pub txsnapshot_commit_latency_nanoseconds: AtomicU64,
+    /// Total network emulation packets processed (Option CP).
+    pub netem_packets_processed_total: AtomicU64,
+    /// Total network emulation packets delivered (Option CP).
+    pub netem_packets_delivered_total: AtomicU64,
+    /// Total network emulation packets dropped (Option CP).
+    pub netem_packets_dropped_total: AtomicU64,
+    /// Total network emulation packets reordered (Option CP).
+    pub netem_packets_reordered_total: AtomicU64,
+    /// Total network emulation packets duplicated (Option CP).
+    pub netem_packets_duplicated_total: AtomicU64,
+    /// Total network emulation packets corrupted (Option CP).
+    pub netem_packets_corrupted_total: AtomicU64,
+    /// Latest simulated network RTT in nanoseconds (Option CP).
+    pub netem_simulated_rtt_nanoseconds: AtomicU64,
+    /// Latest network emulation scheduler latency in nanoseconds (Option CP).
+    pub netem_scheduler_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -681,6 +697,14 @@ impl Default for ServerStats {
             txsnapshot_rollbacks_total: AtomicU64::new(0),
             txsnapshot_conflicts_total: AtomicU64::new(0),
             txsnapshot_commit_latency_nanoseconds: AtomicU64::new(0),
+            netem_packets_processed_total: AtomicU64::new(0),
+            netem_packets_delivered_total: AtomicU64::new(0),
+            netem_packets_dropped_total: AtomicU64::new(0),
+            netem_packets_reordered_total: AtomicU64::new(0),
+            netem_packets_duplicated_total: AtomicU64::new(0),
+            netem_packets_corrupted_total: AtomicU64::new(0),
+            netem_simulated_rtt_nanoseconds: AtomicU64::new(0),
+            netem_scheduler_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }
