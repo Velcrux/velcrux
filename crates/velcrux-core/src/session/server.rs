@@ -409,6 +409,22 @@ pub struct ServerStats {
     pub provenance_inclusion_proofs_total: AtomicU64,
     /// Latest observed Merkle-DAG verification latency in nanoseconds (Option CK).
     pub provenance_verification_latency_nanoseconds: AtomicU64,
+    /// Current calculated BBRv3 pacing rate in bits per second (Option CL).
+    pub congestion_pacing_rate_bps: AtomicU64,
+    /// Minimum physical round-trip time in nanoseconds (Option CL).
+    pub congestion_min_rtt_nanoseconds: AtomicU64,
+    /// Calculated Bandwidth-Delay Product in bytes (Option CL).
+    pub congestion_estimated_bdp_bytes: AtomicU64,
+    /// Active Congestion Window (CWND) in bytes (Option CL).
+    pub congestion_cwnd_bytes: AtomicU64,
+    /// Current BBRv3 phase code (0=Startup, 1=Drain, 2=ProbeBw, 3=ProbeRtt) (Option CL).
+    pub congestion_state_phase: AtomicU64,
+    /// Reinforcement-learned reward score scaled by 100 (Option CL).
+    pub congestion_rl_reward_score: AtomicU64,
+    /// Total packet loss events detected (Option CL).
+    pub congestion_loss_events_total: AtomicU64,
+    /// Total BBRv3 phase transitions executed (Option CL).
+    pub congestion_phase_transitions_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -585,6 +601,14 @@ impl Default for ServerStats {
             provenance_dag_nodes_count: AtomicU64::new(0),
             provenance_inclusion_proofs_total: AtomicU64::new(0),
             provenance_verification_latency_nanoseconds: AtomicU64::new(0),
+            congestion_pacing_rate_bps: AtomicU64::new(100_000_000),
+            congestion_min_rtt_nanoseconds: AtomicU64::new(50_000_000),
+            congestion_estimated_bdp_bytes: AtomicU64::new(625_000),
+            congestion_cwnd_bytes: AtomicU64::new(1_250_000),
+            congestion_state_phase: AtomicU64::new(0),
+            congestion_rl_reward_score: AtomicU64::new(100),
+            congestion_loss_events_total: AtomicU64::new(0),
+            congestion_phase_transitions_total: AtomicU64::new(0),
         }
     }
 }

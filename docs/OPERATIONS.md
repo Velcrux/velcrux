@@ -4299,6 +4299,90 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_provenance_inclusion_proofs_total` | `counter` | Total cryptographic inclusion proofs generated and verified. |
 | `velcrux_provenance_verification_latency_nanoseconds` | `gauge` | Latest observed Merkle-DAG verification latency in nanoseconds. |
 
+---
+
+## 59. Adaptive Predictive Congestion Control & Flow Tuning Reference (Option CL, ADR-054)
+
+Velcrux includes a high-performance, pure safe Rust implementation of the BBRv3 congestion control state machine coupled with an online Reinforcement-Learned (Contextual Bandit) pacing optimizer (`ADR-054`). The controller dynamically calculates pacing rates, tracks minimum physical round-trip times (min RTT), scales congestion windows (CWND) against Bandwidth-Delay Product (BDP), and tolerates non-congestive wireless/satellite packet drops without throughput collapse.
+
+### Operational CLI Reference
+
+The `velcrux congestion` subcommand family manages runtime congestion parameters:
+
+#### 1. Inspect Congestion Controller Status
+```bash
+# Human-readable status showing phase, pacing rate, BDP, CWND, and RL score
+velcrux congestion status
+
+# Machine-readable JSON status
+velcrux --json congestion status
+```
+
+#### 2. Tune Link Profiles & Gains
+```bash
+# Tune controller for LEO Satellite (Starlink / Kuiper)
+velcrux congestion tune --profile satellite_leo --pacing-gain 1.25 --cwnd-gain 2.5
+
+# Tune controller for Transoceanic Subsea Fiber
+velcrux congestion tune --profile transoceanic_fiber --pacing-gain 1.05 --cwnd-gain 2.0
+
+# Tune controller for Cellular 5G mmWave
+velcrux congestion tune --profile cellular_5g --pacing-gain 1.20 --cwnd-gain 2.25
+
+# JSON output
+velcrux --json congestion tune --profile datacenter_lan
+```
+
+#### 3. Ingest ACK Feedback Sample
+```bash
+# Manually ingest an ACK sample with measured RTT and delivery rate
+velcrux congestion sample \
+  --rtt-ms 42.5 \
+  --bytes-acked 131072 \
+  --loss-rate 0.002 \
+  --delivery-rate-mbps 500.0
+
+# Machine-readable output
+velcrux --json congestion sample --rtt-ms 18.0 --bytes-acked 65536
+```
+
+#### 4. Simulate Link Trajectory
+```bash
+# Simulate 5 seconds under Starlink periodic handoff drops
+velcrux congestion simulate --scenario starlink --duration-sec 5
+
+# Simulate transoceanic subsea link
+velcrux congestion simulate --scenario transoceanic --duration-sec 10
+
+# JSON simulation report
+velcrux --json congestion simulate --scenario 5g_burst --duration-sec 3
+```
+
+#### 5. Microsecond Performance Benchmarking
+```bash
+# Benchmark sample processing and pacing recalculation across 50 iterations
+velcrux congestion benchmark --iterations 50
+
+# Benchmark with JSON output
+velcrux --json congestion benchmark --iterations 100
+```
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_congestion_pacing_rate_bps` | `gauge` | Current calculated BBRv3 pacing rate in bits per second. |
+| `velcrux_congestion_min_rtt_nanoseconds` | `gauge` | Minimum physical round-trip time in nanoseconds. |
+| `velcrux_congestion_estimated_bdp_bytes` | `gauge` | Calculated Bandwidth-Delay Product in bytes. |
+| `velcrux_congestion_cwnd_bytes` | `gauge` | Active Congestion Window (CWND) in bytes. |
+| `velcrux_congestion_state_phase` | `gauge` | Current BBRv3 operational phase (0=Startup, 1=Drain, 2=ProbeBw, 3=ProbeRtt). |
+| `velcrux_congestion_rl_reward_score` | `gauge` | Reinforcement-learned reward score scaled by 100. |
+| `velcrux_congestion_loss_events_total` | `counter` | Total packet loss events detected. |
+| `velcrux_congestion_phase_transitions_total` | `counter` | Total BBRv3 phase transitions executed. |
+
+
 
 
 

@@ -9,6 +9,7 @@
 
 pub mod bdp;
 pub mod benchmarks;
+pub mod congestion;
 pub mod fec;
 pub mod flow_control;
 pub mod identity;
@@ -27,6 +28,11 @@ pub use bdp::{
 };
 pub use benchmarks::{
     BaselineComparator, BenchmarkMetrics, BenchmarkScenario, WanMatrixReport, WanMatrixRunner,
+};
+pub use congestion::{
+    AdaptivePredictiveCongestionController, BanditAction, BbrPhase, CongestionBenchmarkReport,
+    CongestionConfig, CongestionLinkProfile, CongestionMetricsSnapshot, CongestionSimulationReport,
+    ProbeBwCyclePhase, RlPacingOptimizer,
 };
 pub use fec::{
     gf_add, gf_div, gf_inv, gf_mul, gf_sub, simulate_fec_recovery, AdaptiveFecController,

@@ -287,6 +287,17 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .provenance_verification_latency_nanoseconds
         .load(Ordering::Relaxed);
 
+    let cong_pacing_bps = stats.congestion_pacing_rate_bps.load(Ordering::Relaxed);
+    let cong_min_rtt_ns = stats.congestion_min_rtt_nanoseconds.load(Ordering::Relaxed);
+    let cong_bdp_bytes = stats.congestion_estimated_bdp_bytes.load(Ordering::Relaxed);
+    let cong_cwnd_bytes = stats.congestion_cwnd_bytes.load(Ordering::Relaxed);
+    let cong_phase = stats.congestion_state_phase.load(Ordering::Relaxed);
+    let cong_reward = stats.congestion_rl_reward_score.load(Ordering::Relaxed);
+    let cong_losses = stats.congestion_loss_events_total.load(Ordering::Relaxed);
+    let cong_transitions = stats
+        .congestion_phase_transitions_total
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -759,7 +770,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_provenance_inclusion_proofs_total {prov_proofs}\n\n\
          # HELP velcrux_provenance_verification_latency_nanoseconds Latest observed Merkle-DAG verification latency in nanoseconds\n\
          # TYPE velcrux_provenance_verification_latency_nanoseconds gauge\n\
-         velcrux_provenance_verification_latency_nanoseconds {prov_verif_lat_ns}\n"
+         velcrux_provenance_verification_latency_nanoseconds {prov_verif_lat_ns}\n\n\
+         # HELP velcrux_congestion_pacing_rate_bps Current calculated BBRv3 pacing rate in bits per second\n\
+         # TYPE velcrux_congestion_pacing_rate_bps gauge\n\
+         velcrux_congestion_pacing_rate_bps {cong_pacing_bps}\n\n\
+         # HELP velcrux_congestion_min_rtt_nanoseconds Minimum physical round-trip time in nanoseconds\n\
+         # TYPE velcrux_congestion_min_rtt_nanoseconds gauge\n\
+         velcrux_congestion_min_rtt_nanoseconds {cong_min_rtt_ns}\n\n\
+         # HELP velcrux_congestion_estimated_bdp_bytes Calculated Bandwidth-Delay Product in bytes\n\
+         # TYPE velcrux_congestion_estimated_bdp_bytes gauge\n\
+         velcrux_congestion_estimated_bdp_bytes {cong_bdp_bytes}\n\n\
+         # HELP velcrux_congestion_cwnd_bytes Active Congestion Window in bytes\n\
+         # TYPE velcrux_congestion_cwnd_bytes gauge\n\
+         velcrux_congestion_cwnd_bytes {cong_cwnd_bytes}\n\n\
+         # HELP velcrux_congestion_state_phase Current BBRv3 operational phase (0=Startup, 1=Drain, 2=ProbeBw, 3=ProbeRtt)\n\
+         # TYPE velcrux_congestion_state_phase gauge\n\
+         velcrux_congestion_state_phase {cong_phase}\n\n\
+         # HELP velcrux_congestion_rl_reward_score Reinforcement-learned reward score scaled by 100\n\
+         # TYPE velcrux_congestion_rl_reward_score gauge\n\
+         velcrux_congestion_rl_reward_score {cong_reward}\n\n\
+         # HELP velcrux_congestion_loss_events_total Total packet loss events detected\n\
+         # TYPE velcrux_congestion_loss_events_total counter\n\
+         velcrux_congestion_loss_events_total {cong_losses}\n\n\
+         # HELP velcrux_congestion_phase_transitions_total Total BBRv3 phase transitions executed\n\
+         # TYPE velcrux_congestion_phase_transitions_total counter\n\
+         velcrux_congestion_phase_transitions_total {cong_transitions}\n"
     )
 }
 

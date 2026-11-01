@@ -864,6 +864,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: ProvenanceSubCmd,
     },
+    /// Adaptive predictive network congestion & BBRv3 / reinforcement-learned flow control (Option CL).
+    Congestion {
+        #[command(subcommand)]
+        sub: CongestionSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1379,6 +1384,70 @@ enum ProvenanceSubCmd {
         json: bool,
     },
     /// Run microsecond benchmark measuring node construction, DAG verification, proof generation, and witness signing latency.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CongestionSubCmd {
+    /// Show current BBRv3 congestion state, pacing rate, BDP, CWND, and RL telemetry.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dynamically tune link profile, pacing gain, or CWND multiplier.
+    Tune {
+        /// Network link profile preset (e.g. "satellite_leo", "cellular_5g", "transoceanic_fiber", "datacenter_lan", "adaptive_auto").
+        #[arg(long)]
+        profile: Option<String>,
+        /// Pacing gain multiplier (e.g. 1.25).
+        #[arg(long)]
+        pacing_gain: Option<f64>,
+        /// CWND gain multiplier against BDP (e.g. 2.0).
+        #[arg(long)]
+        cwnd_gain: Option<f64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest ACK feedback sample (RTT, bytes acked, loss rate) into BBRv3/RL controller.
+    Sample {
+        /// Observed round-trip time in milliseconds.
+        #[arg(long)]
+        rtt_ms: f64,
+        /// Number of acknowledged bytes.
+        #[arg(long, default_value = "65536")]
+        bytes_acked: u64,
+        /// Estimated packet loss rate (0.0 to 1.0).
+        #[arg(long, default_value = "0.0")]
+        loss_rate: f64,
+        /// Delivery rate in megabits per second (optional).
+        #[arg(long)]
+        delivery_rate_mbps: Option<f64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Simulate congestion trajectory under specialized link scenarios (e.g. "starlink", "transoceanic", "5g_burst").
+    Simulate {
+        /// Scenario preset: "starlink", "transoceanic", "5g_burst".
+        #[arg(long, default_value = "starlink")]
+        scenario: String,
+        /// Simulation duration in seconds.
+        #[arg(long, default_value = "5")]
+        duration_sec: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond benchmark measuring sample processing and pacing recalculation latency.
     Benchmark {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
@@ -3644,6 +3713,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Provenance { sub } => {
             run_provenance(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Congestion { sub } => {
+            run_congestion(&cli, sub).await?;
             return Ok(());
         }
 
@@ -9810,6 +9883,185 @@ async fn run_provenance(cli: &Cli, sub: &ProvenanceSubCmd) -> anyhow::Result<()>
                 println!(
                     "  Witness Cosigning:      {:.2} ns",
                     report.witness_cosign_latency_nanoseconds
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_congestion(cli: &Cli, sub: &CongestionSubCmd) -> anyhow::Result<()> {
+    use std::str::FromStr;
+    use velcrux_core::transport::{
+        AdaptivePredictiveCongestionController, CongestionConfig, CongestionLinkProfile,
+    };
+
+    let is_json = cli_log_json(cli);
+    let mut ctrl = AdaptivePredictiveCongestionController::new(CongestionConfig::default());
+
+    match sub {
+        CongestionSubCmd::Status { json } => {
+            let snap = ctrl.metrics_snapshot();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&snap)?);
+            } else {
+                println!("=== BBRv3 Adaptive Congestion Controller Status ===");
+                println!(
+                    "  BBRv3 Phase:            {} ({})",
+                    snap.bbr_phase.as_str().to_uppercase(),
+                    snap.cycle_phase
+                );
+                println!("  Link Profile:           {}", snap.profile);
+                println!(
+                    "  Pacing Rate:            {} bps ({:.2} Mbps)",
+                    snap.pacing_rate_bps,
+                    snap.pacing_rate_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Physical Min RTT:       {} ns ({:.2} ms)",
+                    snap.min_rtt_ns,
+                    snap.min_rtt_ns as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Smoothed RTT:           {} ns ({:.2} ms)",
+                    snap.smoothed_rtt_ns,
+                    snap.smoothed_rtt_ns as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Estimated BDP:          {} bytes ({:.2} KiB)",
+                    snap.estimated_bdp_bytes,
+                    snap.estimated_bdp_bytes as f64 / 1024.0
+                );
+                println!(
+                    "  Congestion Window:      {} bytes ({:.2} KiB)",
+                    snap.cwnd_bytes,
+                    snap.cwnd_bytes as f64 / 1024.0
+                );
+                println!("  RL Reward Score:        {:.3}", snap.rl_reward_score);
+                println!("  Packet Loss Rate:       {:.4}", snap.loss_rate);
+                println!("  Loss Events Total:      {}", snap.loss_events_total);
+                println!("  Phase Transitions:      {}", snap.phase_transitions_total);
+            }
+        }
+        CongestionSubCmd::Tune {
+            profile,
+            pacing_gain,
+            cwnd_gain,
+            json,
+        } => {
+            let prof = profile
+                .as_deref()
+                .map(CongestionLinkProfile::from_str)
+                .transpose()
+                .unwrap_or(None);
+            ctrl.tune(prof, *pacing_gain, *cwnd_gain);
+            let snap = ctrl.metrics_snapshot();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&snap)?);
+            } else {
+                println!("=== BBRv3 Congestion Parameters Tuned ===");
+                println!("  Link Profile:           {}", snap.profile);
+                println!(
+                    "  Pacing Rate:            {:.2} Mbps",
+                    snap.pacing_rate_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "  CWND:                   {:.2} KiB",
+                    snap.cwnd_bytes as f64 / 1024.0
+                );
+            }
+        }
+        CongestionSubCmd::Sample {
+            rtt_ms,
+            bytes_acked,
+            loss_rate,
+            delivery_rate_mbps,
+            json,
+        } => {
+            let rtt_ns = (rtt_ms * 1_000_000.0) as u64;
+            let bw_bps = match delivery_rate_mbps {
+                Some(mbps) => (mbps * 1_000_000.0) as u64,
+                None => {
+                    if rtt_ns > 0 {
+                        (bytes_acked * 8 * 1_000_000_000) / rtt_ns
+                    } else {
+                        100_000_000
+                    }
+                }
+            };
+
+            ctrl.on_ack(bw_bps, rtt_ns, *bytes_acked, *loss_rate > 0.0, *loss_rate);
+            let snap = ctrl.metrics_snapshot();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&snap)?);
+            } else {
+                println!("=== ACK Sample Ingested ===");
+                println!("  New BBRv3 Phase:        {}", snap.bbr_phase);
+                println!(
+                    "  Updated Pacing Rate:    {:.2} Mbps",
+                    snap.pacing_rate_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Updated CWND:           {:.2} KiB",
+                    snap.cwnd_bytes as f64 / 1024.0
+                );
+                println!("  RL Reward Score:        {:.3}", snap.rl_reward_score);
+            }
+        }
+        CongestionSubCmd::Simulate {
+            scenario,
+            duration_sec,
+            json,
+        } => {
+            let sim = ctrl.simulate_scenario(scenario, *duration_sec);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&sim)?);
+            } else {
+                println!("=== Congestion Simulation Completed ===");
+                println!("  Scenario:               {}", sim.scenario);
+                println!("  Duration:               {} s", sim.duration_seconds);
+                println!("  Samples Evaluated:      {}", sim.samples_evaluated);
+                println!(
+                    "  Average Pacing Rate:    {:.2} Mbps",
+                    sim.average_pacing_rate_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Final CWND:             {:.2} KiB",
+                    sim.final_cwnd_bytes as f64 / 1024.0
+                );
+                println!("  Phase Transitions:      {}", sim.phase_transitions);
+                println!("  Final Phase:            {}", sim.final_phase);
+            }
+        }
+        CongestionSubCmd::Benchmark { iterations, json } => {
+            let bench = AdaptivePredictiveCongestionController::run_benchmark(*iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!(
+                    "=== BBRv3 Congestion Benchmark ({} iterations) ===",
+                    bench.iterations
+                );
+                println!(
+                    "  Mean Sample Latency:    {:.2} ns",
+                    bench.mean_sample_latency_nanoseconds
+                );
+                println!(
+                    "  Throughput:             {:.0} samples/sec",
+                    bench.throughput_samples_per_sec
+                );
+                println!(
+                    "  Final Pacing Rate:      {:.2} Mbps",
+                    bench.final_pacing_rate_bps as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Final CWND:             {:.2} KiB",
+                    bench.final_cwnd_bytes as f64 / 1024.0
                 );
             }
         }

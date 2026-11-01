@@ -104,3 +104,4 @@ H_0 & \text{if } |\text{Heads}| = 1 \\
 ### Negative / Trade-Offs
 - **Storage Growth**: Immutable append-only audit ledgers require disk space proportional to event volume. Addressed via optional export and pruning to cold archive tiers.
 - **Topological In-Degree Sorting**: Graph cycle detection requires topological traversal during full verification runs. Mitigated via incremental tip verification during normal operations.
+
