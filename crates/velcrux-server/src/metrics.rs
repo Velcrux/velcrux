@@ -315,6 +315,23 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .compaction_cycle_duration_nanoseconds
         .load(Ordering::Relaxed);
 
+    let zkq_proofs_gen = stats.zkquota_proofs_generated_total.load(Ordering::Relaxed);
+    let zkq_proofs_verif = stats.zkquota_proofs_verified_total.load(Ordering::Relaxed);
+    let zkq_failures = stats
+        .zkquota_verification_failures_total
+        .load(Ordering::Relaxed);
+    let zkq_tenants = stats.zkquota_active_blinded_tenants.load(Ordering::Relaxed);
+    let zkq_compliant = stats
+        .zkquota_quota_compliant_tenants
+        .load(Ordering::Relaxed);
+    let zkq_breaches = stats.zkquota_quota_breaches_total.load(Ordering::Relaxed);
+    let zkq_gen_lat_ns = stats
+        .zkquota_proof_gen_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let zkq_verif_lat_ns = stats
+        .zkquota_proof_verif_latency_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -835,7 +852,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_compaction_active_cold_chunks {comp_cold}\n\n\
          # HELP velcrux_compaction_cycle_duration_nanoseconds Duration of latest compaction cycle in nanoseconds\n\
          # TYPE velcrux_compaction_cycle_duration_nanoseconds gauge\n\
-         velcrux_compaction_cycle_duration_nanoseconds {comp_duration_ns}\n"
+         velcrux_compaction_cycle_duration_nanoseconds {comp_duration_ns}\n\n\
+         # HELP velcrux_zkquota_proofs_generated_total Total zero-knowledge quota proofs generated\n\
+         # TYPE velcrux_zkquota_proofs_generated_total counter\n\
+         velcrux_zkquota_proofs_generated_total {zkq_proofs_gen}\n\n\
+         # HELP velcrux_zkquota_proofs_verified_total Total zero-knowledge quota proofs verified\n\
+         # TYPE velcrux_zkquota_proofs_verified_total counter\n\
+         velcrux_zkquota_proofs_verified_total {zkq_proofs_verif}\n\n\
+         # HELP velcrux_zkquota_verification_failures_total Total proof verification failures detected\n\
+         # TYPE velcrux_zkquota_verification_failures_total counter\n\
+         velcrux_zkquota_verification_failures_total {zkq_failures}\n\n\
+         # HELP velcrux_zkquota_active_blinded_tenants Current count of active blinded tenants registered\n\
+         # TYPE velcrux_zkquota_active_blinded_tenants gauge\n\
+         velcrux_zkquota_active_blinded_tenants {zkq_tenants}\n\n\
+         # HELP velcrux_zkquota_quota_compliant_tenants Current count of tenants proven within quota limits\n\
+         # TYPE velcrux_zkquota_quota_compliant_tenants gauge\n\
+         velcrux_zkquota_quota_compliant_tenants {zkq_compliant}\n\n\
+         # HELP velcrux_zkquota_quota_breaches_total Total quota breach alerts detected during blinded audits\n\
+         # TYPE velcrux_zkquota_quota_breaches_total counter\n\
+         velcrux_zkquota_quota_breaches_total {zkq_breaches}\n\n\
+         # HELP velcrux_zkquota_proof_gen_latency_nanoseconds Latest observed ZK proof generation latency in nanoseconds\n\
+         # TYPE velcrux_zkquota_proof_gen_latency_nanoseconds gauge\n\
+         velcrux_zkquota_proof_gen_latency_nanoseconds {zkq_gen_lat_ns}\n\n\
+         # HELP velcrux_zkquota_proof_verif_latency_nanoseconds Latest observed ZK proof verification latency in nanoseconds\n\
+         # TYPE velcrux_zkquota_proof_verif_latency_nanoseconds gauge\n\
+         velcrux_zkquota_proof_verif_latency_nanoseconds {zkq_verif_lat_ns}\n"
     )
 }
 

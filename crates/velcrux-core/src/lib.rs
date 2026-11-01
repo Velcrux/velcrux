@@ -47,6 +47,7 @@ pub mod transport;
 pub mod util;
 pub mod wan;
 pub mod xdp;
+pub mod zkquota;
 
 pub use audit::{
     combine_hashes, hex_decode_32, hex_encode, run_audit_benchmark, verify_exclusion_proof,
@@ -249,4 +250,9 @@ pub use wan::{
 pub use xdp::{
     parse_packet_headers, run_xdp_benchmark, PacketHeaderSummary, UmemConfig, UmemPool, XdpAction,
     XdpBenchmarkReport, XdpDescriptor, XdpDriverMode, XdpEngine, XdpFilterRule, XdpStatus,
+};
+pub use zkquota::{
+    PedersenGenerators, Scalar256, TenantQuotaRecord, ZkBitProof, ZkClusterAuditReport,
+    ZkMembershipProof, ZkQuotaAuditBundle, ZkQuotaBenchmarkReport, ZkQuotaEngine,
+    ZkQuotaEngineStatus, ZkRangeProof, ZkTenantAuditSummary,
 };

@@ -4472,6 +4472,92 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_compaction_active_cold_chunks` | `gauge` | Current count of active chunks residing in Cold erasure mesh tier. |
 | `velcrux_compaction_cycle_duration_nanoseconds` | `gauge` | Duration of latest compaction cycle in nanoseconds. |
 
+---
+
+## 61. Zero-Knowledge Quota Auditing Runbook & Configuration Reference (Option CN, ADR-056)
+
+Velcrux includes a high-performance, pure safe Rust implementation of the Zero-Knowledge Multi-Tenant Quota & Membership Auditing Engine (`ADR-056`). The engine enables cluster operators to prove tenant quota compliance ($0 \le \text{usage} \le \text{quota}$), set membership, and storage balance invariance without disclosing raw usage byte counts, quota limits, directory paths, or tenant identities to external auditors.
+
+### Operational CLI Reference
+
+The `velcrux zkquota` subcommand family provides comprehensive operator control, proof generation, and verification:
+
+#### 1. Inspect Engine Status & Blinded Tenant Metrics
+```bash
+# Display human-readable count of registered tenants, compliance status, and proof latency
+velcrux zkquota status
+
+# Machine-readable JSON output for automated compliance monitoring
+velcrux --json zkquota status
+```
+
+#### 2. Generate Blinded Quota Proof for a Tenant
+```bash
+# Generate a zero-knowledge range proof and membership proof for a specific tenant
+velcrux zkquota prove \
+  --tenant tenant-finance-01 \
+  --usage-bytes 107374182400 \
+  --quota-bytes 536870912000 \
+  --save
+
+# Generate and output JSON proof bundle for export to auditors
+velcrux --json zkquota prove \
+  --tenant tenant-health-02 \
+  --usage-bytes 45000000000 \
+  --quota-bytes 100000000000
+```
+
+#### 3. Verify Zero-Knowledge Quota Proof Bundle
+```bash
+# Verify a proof bundle from inline JSON string or file path
+velcrux zkquota verify --bundle /path/to/audit_bundle.json
+
+# Verify the latest generated proof for a registered tenant
+velcrux zkquota verify --tenant tenant-finance-01
+
+# JSON verification result
+velcrux --json zkquota verify --tenant tenant-finance-01
+```
+
+#### 4. Execute Cluster-Wide Blinded Compliance Audit
+```bash
+# Audit all registered tenants and compute storage balance accumulator
+velcrux zkquota audit
+
+# JSON audit summary for SOC2 / ISO 27001 compliance logs
+velcrux --json zkquota audit
+```
+
+#### 5. Microsecond Performance Benchmarking
+```bash
+# Benchmark Pedersen commitments, CDS94 range proofs, and membership verification across 50 iterations
+velcrux zkquota benchmark --iterations 50
+
+# JSON benchmark output for automated regression gates
+velcrux --json zkquota benchmark --iterations 100
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_ZKQUOTA_DIR` | `/tmp/velcrux_zkquota` | Directory where persistent engine state, tenant commitments, and audit reports are stored. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_zkquota_proofs_generated_total` | `counter` | Total zero-knowledge quota proofs generated. |
+| `velcrux_zkquota_proofs_verified_total` | `counter` | Total zero-knowledge quota proofs verified. |
+| `velcrux_zkquota_verification_failures_total` | `counter` | Total proof verification failures or invalid proofs detected. |
+| `velcrux_zkquota_active_blinded_tenants` | `gauge` | Current count of active blinded tenants registered. |
+| `velcrux_zkquota_quota_compliant_tenants` | `gauge` | Current count of tenants proven strictly within quota limits. |
+| `velcrux_zkquota_quota_breaches_total` | `counter` | Total quota breach alerts detected during blinded audits. |
+| `velcrux_zkquota_proof_gen_latency_nanoseconds` | `gauge` | Latest observed ZK proof generation latency in nanoseconds. |
+| `velcrux_zkquota_proof_verif_latency_nanoseconds` | `gauge` | Latest observed ZK proof verification latency in nanoseconds. |
+
 
 
 

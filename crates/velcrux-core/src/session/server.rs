@@ -441,6 +441,22 @@ pub struct ServerStats {
     pub compaction_active_cold_chunks: AtomicU64,
     /// Latest compaction cycle duration in nanoseconds (Option CM).
     pub compaction_cycle_duration_nanoseconds: AtomicU64,
+    /// Total zero-knowledge quota proofs generated (Option CN).
+    pub zkquota_proofs_generated_total: AtomicU64,
+    /// Total zero-knowledge quota proofs verified (Option CN).
+    pub zkquota_proofs_verified_total: AtomicU64,
+    /// Total proof verification failures detected (Option CN).
+    pub zkquota_verification_failures_total: AtomicU64,
+    /// Current count of active blinded tenants registered (Option CN).
+    pub zkquota_active_blinded_tenants: AtomicU64,
+    /// Current count of tenants proven within quota limits (Option CN).
+    pub zkquota_quota_compliant_tenants: AtomicU64,
+    /// Total quota breach alerts detected during blinded audits (Option CN).
+    pub zkquota_quota_breaches_total: AtomicU64,
+    /// Latest observed ZK proof generation latency in nanoseconds (Option CN).
+    pub zkquota_proof_gen_latency_nanoseconds: AtomicU64,
+    /// Latest observed ZK proof verification latency in nanoseconds (Option CN).
+    pub zkquota_proof_verif_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -633,6 +649,14 @@ impl Default for ServerStats {
             compaction_active_warm_chunks: AtomicU64::new(0),
             compaction_active_cold_chunks: AtomicU64::new(0),
             compaction_cycle_duration_nanoseconds: AtomicU64::new(0),
+            zkquota_proofs_generated_total: AtomicU64::new(0),
+            zkquota_proofs_verified_total: AtomicU64::new(0),
+            zkquota_verification_failures_total: AtomicU64::new(0),
+            zkquota_active_blinded_tenants: AtomicU64::new(0),
+            zkquota_quota_compliant_tenants: AtomicU64::new(0),
+            zkquota_quota_breaches_total: AtomicU64::new(0),
+            zkquota_proof_gen_latency_nanoseconds: AtomicU64::new(0),
+            zkquota_proof_verif_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }

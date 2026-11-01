@@ -874,6 +874,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: CompactionSubCmd,
     },
+    /// Zero-knowledge range & membership proofs for blinded multi-tenant quota auditing (Option CN).
+    Zkquota {
+        #[command(subcommand)]
+        sub: ZkquotaSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1517,6 +1522,61 @@ enum CompactionSubCmd {
     Benchmark {
         /// Number of benchmark iterations (default: 500).
         #[arg(long, default_value = "500")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ZkquotaSubCmd {
+    /// Show current blinded quota engine status, registered tenants, and verification metrics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a zero-knowledge range & membership proof for a tenant's storage usage.
+    Prove {
+        /// Tenant identifier (internal secret).
+        #[arg(long)]
+        tenant: String,
+        /// Current storage usage in bytes.
+        #[arg(long)]
+        usage_bytes: Option<u64>,
+        /// Quota limit in bytes.
+        #[arg(long)]
+        quota_bytes: Option<u64>,
+        /// Save the proof into the persistent store.
+        #[arg(long)]
+        save: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a zero-knowledge quota audit bundle without revealing usage.
+    Verify {
+        /// Path to proof bundle JSON file or inline JSON.
+        #[arg(long)]
+        bundle: Option<String>,
+        /// Tenant identifier to verify latest cached proof.
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute cluster-wide blinded compliance audit across all registered tenants.
+    Audit {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring proof generation, verification, and throughput.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
         iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
@@ -3787,6 +3847,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Compaction { sub } => {
             run_compaction(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Zkquota { sub } => {
+            run_zkquota(&cli, sub).await?;
             return Ok(());
         }
 
@@ -10382,6 +10446,238 @@ async fn run_compaction(cli: &Cli, sub: &CompactionSubCmd) -> anyhow::Result<()>
                 println!(
                     "  Simulated Throughput:   {:.2} MB/sec",
                     bench.simulated_migration_throughput_mb_per_sec
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_zkquota(cli: &Cli, sub: &ZkquotaSubCmd) -> anyhow::Result<()> {
+    use std::fs;
+    use velcrux_core::zkquota::{ZkQuotaAuditBundle, ZkQuotaEngine};
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_ZKQUOTA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_zkquota"));
+
+    let mut engine = ZkQuotaEngine::load_or_create(state_dir)?;
+
+    match sub {
+        ZkquotaSubCmd::Status { json } => {
+            let status = engine.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Zero-Knowledge Blinded Quota Auditing Engine Status ===");
+                println!(
+                    "  Registered Tenants:     {}",
+                    status.total_registered_tenants
+                );
+                println!("  Compliant Tenants:      {}", status.compliant_tenants);
+                println!("  Quota Breaches:         {}", status.quota_breaches);
+                println!(
+                    "  Proofs Generated:       {}",
+                    status.proofs_generated_total
+                );
+                println!("  Proofs Verified:        {}", status.proofs_verified_total);
+                println!(
+                    "  Verification Failures:  {}",
+                    status.verification_failures_total
+                );
+                println!("  Authorized Merkle Root: {}", status.authorized_set_root);
+                println!(
+                    "  Last Gen Latency:       {} ns ({:.2} ms)",
+                    status.last_proof_gen_latency_ns,
+                    status.last_proof_gen_latency_ns as f64 / 1_000_000.0
+                );
+                println!(
+                    "  Last Verif Latency:     {} ns ({:.2} ms)",
+                    status.last_proof_verif_latency_ns,
+                    status.last_proof_verif_latency_ns as f64 / 1_000_000.0
+                );
+            }
+        }
+        ZkquotaSubCmd::Prove {
+            tenant,
+            usage_bytes,
+            quota_bytes,
+            save,
+            json,
+        } => {
+            if let (Some(u), Some(q)) = (usage_bytes, quota_bytes) {
+                engine.register_tenant(tenant, *q, *u);
+            } else if !engine.registered_tenants.contains_key(tenant) {
+                let default_quota = 500 * 1024 * 1024 * 1024; // 500 GiB
+                let default_usage = 120 * 1024 * 1024 * 1024; // 120 GiB
+                engine.register_tenant(tenant, default_quota, default_usage);
+            }
+
+            let bundle = engine.generate_quota_proof(tenant)?;
+            if *save {
+                let _ = engine.save_state();
+            }
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bundle)?);
+            } else {
+                println!("=== Zero-Knowledge Blinded Quota Proof Generated ===");
+                println!("  Blinded Identity:       {}", bundle.blinded_identity);
+                println!(
+                    "  Quota Bound:            {} bytes ({})",
+                    bundle.quota_limit_bytes,
+                    format_bytes(bundle.quota_limit_bytes)
+                );
+                println!("  Usage Commitment:       {}", bundle.usage_commitment);
+                println!("  Proof Num Bits:         {}", bundle.range_proof.num_bits);
+                println!(
+                    "  Compliance Status:      {}",
+                    if bundle.is_compliant {
+                        "COMPLIANT (0 <= usage <= quota)"
+                    } else {
+                        "BREACH DETECTED"
+                    }
+                );
+            }
+        }
+        ZkquotaSubCmd::Verify {
+            bundle,
+            tenant,
+            json,
+        } => {
+            let bundle_to_verify: ZkQuotaAuditBundle = if let Some(ref path_or_str) = bundle {
+                if let Ok(content) = fs::read_to_string(path_or_str) {
+                    serde_json::from_str(&content)?
+                } else {
+                    serde_json::from_str(path_or_str)?
+                }
+            } else if let Some(ref t) = tenant {
+                engine.generate_quota_proof(t)?
+            } else if let Some(first_tid) = engine.registered_tenants.keys().next().cloned() {
+                engine.generate_quota_proof(&first_tid)?
+            } else {
+                // Generate a demo valid tenant proof
+                engine.register_tenant("audit-demo", 1_000_000_000, 200_000_000);
+                engine.generate_quota_proof("audit-demo")?
+            };
+
+            let is_valid = engine.verify_quota_proof(&bundle_to_verify);
+
+            #[derive(Serialize)]
+            struct VerifyOutput {
+                is_valid: bool,
+                is_compliant: bool,
+                blinded_identity: String,
+                usage_commitment: String,
+                quota_limit_bytes: u64,
+            }
+
+            let out = VerifyOutput {
+                is_valid,
+                is_compliant: bundle_to_verify.is_compliant,
+                blinded_identity: bundle_to_verify.blinded_identity.to_string(),
+                usage_commitment: bundle_to_verify.usage_commitment.to_string(),
+                quota_limit_bytes: bundle_to_verify.quota_limit_bytes,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== Zero-Knowledge Quota Proof Verification ===");
+                println!(
+                    "  Mathematical Validity:  {}",
+                    if is_valid { "VALID" } else { "INVALID" }
+                );
+                println!(
+                    "  Quota Compliance:       {}",
+                    if out.is_compliant {
+                        "COMPLIANT"
+                    } else {
+                        "BREACH"
+                    }
+                );
+                println!("  Blinded Identity:       {}", out.blinded_identity);
+                println!("  Usage Commitment:       {}", out.usage_commitment);
+                println!(
+                    "  Quota Bound:            {} bytes ({})",
+                    out.quota_limit_bytes,
+                    format_bytes(out.quota_limit_bytes)
+                );
+            }
+        }
+        ZkquotaSubCmd::Audit { json } => {
+            if engine.registered_tenants.is_empty() {
+                engine.register_tenant("tenant-prod-1", 1_000_000_000, 450_000_000);
+                engine.register_tenant("tenant-prod-2", 2_000_000_000, 800_000_000);
+            }
+
+            let report = engine.run_cluster_audit();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Cluster-Wide Zero-Knowledge Quota Audit Report ===");
+                println!("  Audit ID:               {}", report.audit_id);
+                println!("  Total Tenants Audited:  {}", report.total_tenants_audited);
+                println!("  Compliant Tenants:      {}", report.compliant_tenants);
+                println!("  Breached Tenants:       {}", report.breached_tenants);
+                println!("  All Proofs Valid:       {}", report.all_proofs_valid);
+                println!(
+                    "  Balance Accumulator:    {}",
+                    report.balance_accumulator_valid
+                );
+                println!(
+                    "  Audit Duration:         {} ns ({:.2} ms)",
+                    report.audit_duration_nanoseconds,
+                    report.audit_duration_nanoseconds as f64 / 1_000_000.0
+                );
+                println!("  Tenant Summaries:");
+                for (i, t) in report.tenant_summaries.iter().enumerate() {
+                    println!(
+                        "    [{:>2}] Blinded ID: {} | Compliant: {}",
+                        i + 1,
+                        t.blinded_id,
+                        t.is_compliant
+                    );
+                }
+            }
+        }
+        ZkquotaSubCmd::Benchmark { iterations, json } => {
+            let bench = ZkQuotaEngine::run_benchmark(*iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!(
+                    "=== Zero-Knowledge Quota Benchmark ({} iterations) ===",
+                    bench.iterations
+                );
+                println!(
+                    "  Pedersen Commitment:    {:.2} ns/op ({:.0} ops/sec)",
+                    bench.pedersen_commitment_latency_nanoseconds,
+                    bench.pedersen_commitment_throughput_ops_per_sec
+                );
+                println!(
+                    "  Range Proof Generation: {:.2} ns/op ({:.0} proofs/sec)",
+                    bench.range_proof_generation_latency_nanoseconds,
+                    bench.range_proof_generation_throughput_proofs_per_sec
+                );
+                println!(
+                    "  Range Proof Verif:      {:.2} ns/op ({:.0} proofs/sec)",
+                    bench.range_proof_verification_latency_nanoseconds,
+                    bench.range_proof_verification_throughput_proofs_per_sec
+                );
+                println!(
+                    "  Membership Proof Gen:   {:.2} ns/op",
+                    bench.membership_proof_generation_latency_nanoseconds
+                );
+                println!(
+                    "  Membership Proof Verif: {:.2} ns/op",
+                    bench.membership_proof_verification_latency_nanoseconds
+                );
+                println!(
+                    "  Cluster Audit Sweep:    {:.2} ns",
+                    bench.cluster_audit_sweep_latency_nanoseconds
                 );
             }
         }
