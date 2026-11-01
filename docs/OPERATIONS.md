@@ -4382,6 +4382,96 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_congestion_loss_events_total` | `counter` | Total packet loss events detected. |
 | `velcrux_congestion_phase_transitions_total` | `counter` | Total BBRv3 phase transitions executed. |
 
+---
+
+## 60. Autonomous Storage Tiering & Compaction Runbook & Configuration Reference (Option CM, ADR-055)
+
+Velcrux includes a high-performance, pure safe Rust implementation of the Autonomous Self-Tuning Storage Tiering & Compaction Engine (`ADR-055`). The engine maintains real-time CAS chunk heatmaps, calculates exponential recency decay and access frequency scores, autonomously demotes chunks across physical tiers (`Hot` $\to$ `Warm` $\to$ `Cold` $\to$ `FrozenGlacier`) based on capacity watermarks, auto-promotes accessed chunks on read, and reclaims orphan chunks and tombstones via zero-copy compaction bounded by strict Service Level Objective (SLO) time budgets.
+
+### Operational CLI Reference
+
+The `velcrux compaction` subcommand family provides comprehensive operator control and observability:
+
+#### 1. Inspect Engine Status & Tier Utilization
+```bash
+# Display human-readable tier capacities, chunk counts, reclaimed bytes, and last cycle metrics
+velcrux compaction status
+
+# Machine-readable JSON output for automated ingestion
+velcrux --json compaction status
+```
+
+#### 2. Inspect Chunk Access Heatmap
+```bash
+# View top 10 hottest chunks across all tiers
+velcrux compaction heatmap --limit 10
+
+# Filter heatmap by specific storage tier ("hot", "warm", "cold", "glacier")
+velcrux compaction heatmap --limit 20 --tier warm
+
+# JSON dump of heatmap records
+velcrux --json compaction heatmap --limit 50
+```
+
+#### 3. Autonomous & Manual Tier Migration
+```bash
+# Evaluate watermarks and execute planned demotions/promotions
+velcrux compaction migrate
+
+# Force migration evaluation regardless of capacity watermark thresholds
+velcrux compaction migrate --force
+
+# Manually relocate a specific chunk to cold or glacier tier
+velcrux compaction migrate \
+  --chunk a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90 \
+  --to-tier glacier
+
+# JSON output
+velcrux --json compaction migrate --force
+```
+
+#### 4. Zero-Copy Compaction & Garbage Collection
+```bash
+# Dry-run compaction cycle to assess reclaimable orphan and tombstone bytes without purging
+velcrux compaction compact --dry-run
+
+# Execute active compaction cycle with custom SLO duration budget (50ms) and rate limit (50 MB/s)
+velcrux compaction compact --max-duration-ms 50 --rate-limit-mb 50
+
+# JSON compaction execution report
+velcrux --json compaction compact
+```
+
+#### 5. Microsecond Performance Benchmarking
+```bash
+# Execute microsecond benchmark measuring heatmap lookup, tier evaluation, and compaction latency
+velcrux compaction benchmark --iterations 500
+
+# JSON output for CI/CD regression verification
+velcrux --json compaction benchmark --iterations 100
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_COMPACTION_DIR` | `/tmp/velcrux_compaction` | Directory where persistent engine state and access journals are stored. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_compaction_reclaimed_bytes_total` | `counter` | Total bytes reclaimed by zero-copy compaction. |
+| `velcrux_compaction_orphans_purged_total` | `counter` | Total unreferenced orphan chunks permanently purged. |
+| `velcrux_compaction_tombstones_deleted_total` | `counter` | Total expired tombstones deleted from CAS shards. |
+| `velcrux_compaction_migrations_total` | `counter` | Total chunk tier migrations (demotions & promotions) executed. |
+| `velcrux_compaction_active_hot_chunks` | `gauge` | Current count of active chunks residing in Hot NVMe/SSD tier. |
+| `velcrux_compaction_active_warm_chunks` | `gauge` | Current count of active chunks residing in Warm secondary SSD tier. |
+| `velcrux_compaction_active_cold_chunks` | `gauge` | Current count of active chunks residing in Cold erasure mesh tier. |
+| `velcrux_compaction_cycle_duration_nanoseconds` | `gauge` | Duration of latest compaction cycle in nanoseconds. |
+
 
 
 

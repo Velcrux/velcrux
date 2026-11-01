@@ -425,6 +425,22 @@ pub struct ServerStats {
     pub congestion_loss_events_total: AtomicU64,
     /// Total BBRv3 phase transitions executed (Option CL).
     pub congestion_phase_transitions_total: AtomicU64,
+    /// Total bytes reclaimed by zero-copy compaction (Option CM).
+    pub compaction_reclaimed_bytes_total: AtomicU64,
+    /// Total orphan chunks purged during compaction cycles (Option CM).
+    pub compaction_orphans_purged_total: AtomicU64,
+    /// Total tombstones hard-deleted during compaction cycles (Option CM).
+    pub compaction_tombstones_deleted_total: AtomicU64,
+    /// Total chunk migrations across tiers executed (Option CM).
+    pub compaction_migrations_total: AtomicU64,
+    /// Current count of active chunks in hot tier (Option CM).
+    pub compaction_active_hot_chunks: AtomicU64,
+    /// Current count of active chunks in warm tier (Option CM).
+    pub compaction_active_warm_chunks: AtomicU64,
+    /// Current count of active chunks in cold tier (Option CM).
+    pub compaction_active_cold_chunks: AtomicU64,
+    /// Latest compaction cycle duration in nanoseconds (Option CM).
+    pub compaction_cycle_duration_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -609,6 +625,14 @@ impl Default for ServerStats {
             congestion_rl_reward_score: AtomicU64::new(100),
             congestion_loss_events_total: AtomicU64::new(0),
             congestion_phase_transitions_total: AtomicU64::new(0),
+            compaction_reclaimed_bytes_total: AtomicU64::new(0),
+            compaction_orphans_purged_total: AtomicU64::new(0),
+            compaction_tombstones_deleted_total: AtomicU64::new(0),
+            compaction_migrations_total: AtomicU64::new(0),
+            compaction_active_hot_chunks: AtomicU64::new(0),
+            compaction_active_warm_chunks: AtomicU64::new(0),
+            compaction_active_cold_chunks: AtomicU64::new(0),
+            compaction_cycle_duration_nanoseconds: AtomicU64::new(0),
         }
     }
 }

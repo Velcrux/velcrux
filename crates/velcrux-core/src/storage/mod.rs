@@ -25,6 +25,7 @@ pub mod azure;
 pub mod cas_gc;
 pub mod chunk_store;
 pub mod cluster;
+pub mod compaction;
 pub mod dedup_defense;
 pub mod direct_io;
 pub mod federation;
@@ -50,6 +51,11 @@ pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneR
 pub use cluster::{
     ClusterNode, ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing,
     QuorumPolicy, ReplicationReport,
+};
+pub use compaction::{
+    AccessHeatRecord, AutonomousCompactionEngine, ChunkAccessHeatmap, ChunkTemperature,
+    CompactionBenchmarkReport, CompactionCycleReport, CompactionEngineStatus, CompactionPolicy,
+    MigrationPlan,
 };
 pub use dedup_defense::{
     ChunkAclEntry, ChunkPoisonReport, ChunkQuarantineManager, DedupAuditReport,

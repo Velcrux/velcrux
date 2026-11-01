@@ -869,6 +869,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: CongestionSubCmd,
     },
+    /// Autonomous self-tuning storage tiering & zero-copy compaction engine (Option CM).
+    Compaction {
+        #[command(subcommand)]
+        sub: CompactionSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1451,6 +1456,67 @@ enum CongestionSubCmd {
     Benchmark {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CompactionSubCmd {
+    /// Show current status of storage tiers, utilization, reclaimed bytes, and compaction cycles.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect chunk access heatmap, temperature scores, and top hot/cold chunks.
+    Heatmap {
+        /// Maximum number of chunks to display (default: 10).
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Filter by specific tier: "hot", "warm", "cold", "glacier".
+        #[arg(long)]
+        tier: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate or execute autonomous migration policies across tiers.
+    Migrate {
+        /// Force migration evaluation regardless of capacity watermarks.
+        #[arg(long)]
+        force: bool,
+        /// Manually migrate a specific chunk hash.
+        #[arg(long)]
+        chunk: Option<String>,
+        /// Target storage tier for manual migration: "hot", "warm", "cold", "glacier".
+        #[arg(long)]
+        to_tier: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run zero-copy compaction, orphan reclamation, and tombstone purging cycle.
+    Compact {
+        /// Dry run mode: evaluate reclamation candidates without deleting files.
+        #[arg(long)]
+        dry_run: bool,
+        /// Maximum cycle execution time budget in milliseconds.
+        #[arg(long)]
+        max_duration_ms: Option<u64>,
+        /// Maximum compaction rate limit in Megabytes per second.
+        #[arg(long)]
+        rate_limit_mb: Option<u64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring heatmap lookup, tier evaluation, and compaction.
+    Benchmark {
+        /// Number of benchmark iterations (default: 500).
+        #[arg(long, default_value = "500")]
         iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
@@ -3717,6 +3783,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Congestion { sub } => {
             run_congestion(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Compaction { sub } => {
+            run_compaction(&cli, sub).await?;
             return Ok(());
         }
 
@@ -10062,6 +10132,256 @@ async fn run_congestion(cli: &Cli, sub: &CongestionSubCmd) -> anyhow::Result<()>
                 println!(
                     "  Final CWND:             {:.2} KiB",
                     bench.final_cwnd_bytes as f64 / 1024.0
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_compaction(cli: &Cli, sub: &CompactionSubCmd) -> anyhow::Result<()> {
+    use std::str::FromStr;
+    use velcrux_core::storage::{AutonomousCompactionEngine, ChunkTemperature};
+    use velcrux_core::util::Hash;
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_COMPACTION_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_compaction"));
+
+    let mut engine = AutonomousCompactionEngine::load_or_create(state_dir, None)?;
+
+    match sub {
+        CompactionSubCmd::Status { json } => {
+            let status = engine.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Autonomous Storage Tiering & Compaction Engine Status ===");
+                println!(
+                    "  Hot Tier (NVMe):        {} chunks ({}) [{:.1}% util]",
+                    status.hot_chunks,
+                    format_bytes(status.hot_bytes),
+                    status.hot_utilization_pct
+                );
+                println!(
+                    "  Warm Tier (SSD):        {} chunks ({}) [{:.1}% util]",
+                    status.warm_chunks,
+                    format_bytes(status.warm_bytes),
+                    status.warm_utilization_pct
+                );
+                println!(
+                    "  Cold Tier (Mesh):       {} chunks ({}) [{:.1}% util]",
+                    status.cold_chunks,
+                    format_bytes(status.cold_bytes),
+                    status.cold_utilization_pct
+                );
+                println!(
+                    "  Glacier Tier (Archive): {} chunks ({})",
+                    status.glacier_chunks,
+                    format_bytes(status.glacier_bytes)
+                );
+                println!("  Tracked Chunks:         {}", status.total_records);
+                println!(
+                    "  Reclaimed Bytes:        {}",
+                    format_bytes(status.reclaimed_bytes_total)
+                );
+                println!("  Orphans Purged:         {}", status.orphans_purged_total);
+                println!(
+                    "  Tombstones Deleted:     {}",
+                    status.tombstones_deleted_total
+                );
+                println!("  Total Migrations:       {}", status.migrations_total);
+                println!("  Compaction Cycles Run:  {}", status.total_cycles_executed);
+                println!(
+                    "  Last Cycle Duration:    {} ns ({:.2} ms)",
+                    status.last_cycle_duration_nanoseconds,
+                    status.last_cycle_duration_nanoseconds as f64 / 1_000_000.0
+                );
+            }
+        }
+        CompactionSubCmd::Heatmap { limit, tier, json } => {
+            let records = if let Some(t_str) = tier {
+                let parsed_tier = ChunkTemperature::from_str(t_str)?;
+                engine.heatmap.chunks_by_tier(parsed_tier)
+            } else {
+                engine.heatmap.top_hot(*limit)
+            };
+
+            #[derive(Serialize)]
+            struct HeatmapChunkView {
+                chunk_hash: String,
+                tier: String,
+                temperature_score: f64,
+                access_count: u64,
+                size_bytes: u64,
+                referenced: bool,
+                is_tombstone: bool,
+            }
+
+            let view: Vec<HeatmapChunkView> = records
+                .iter()
+                .take(*limit)
+                .map(|r| HeatmapChunkView {
+                    chunk_hash: r.chunk_hash.to_hex(),
+                    tier: r.current_tier.to_string(),
+                    temperature_score: (r.temperature_score * 100.0).round() / 100.0,
+                    access_count: r.access_count,
+                    size_bytes: r.size_bytes,
+                    referenced: r.referenced,
+                    is_tombstone: r.is_tombstone,
+                })
+                .collect();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&view)?);
+            } else {
+                println!(
+                    "=== CAS Chunk Access Heatmap (Top {} Entries) ===",
+                    view.len()
+                );
+                for r in &view {
+                    println!(
+                        "  [{:>7}] {} | Score: {:>5.1} | Count: {:>4} | Size: {}",
+                        r.tier.to_uppercase(),
+                        r.chunk_hash,
+                        r.temperature_score,
+                        r.access_count,
+                        format_bytes(r.size_bytes)
+                    );
+                }
+            }
+        }
+        CompactionSubCmd::Migrate {
+            force,
+            chunk,
+            to_tier,
+            json,
+        } => {
+            if let (Some(c_str), Some(t_str)) = (chunk, to_tier) {
+                let hash = Hash::from_hex(c_str)
+                    .ok_or_else(|| anyhow::anyhow!("invalid chunk hash: {c_str}"))?;
+                let target_tier = ChunkTemperature::from_str(t_str)?;
+                engine.migrate_chunk(&hash, target_tier)?;
+                if *json || is_json {
+                    println!(
+                        r#"{{"status":"ok","chunk":"{}","target_tier":"{}"}}"#,
+                        hash.to_hex(),
+                        target_tier
+                    );
+                } else {
+                    println!("=== Manual Chunk Migration Executed ===");
+                    println!("  Chunk:       {}", hash.to_hex());
+                    println!("  Target Tier: {}", target_tier);
+                }
+            } else {
+                let plan = engine.plan_migrations(*force);
+                let (moved, bytes) = engine.execute_migration_plan(&plan);
+                if *json || is_json {
+                    #[derive(Serialize)]
+                    struct MigrateOutput {
+                        total_demotions: usize,
+                        total_promotions: usize,
+                        chunks_migrated: usize,
+                        bytes_migrated: u64,
+                    }
+                    let out = MigrateOutput {
+                        total_demotions: plan.total_demotions,
+                        total_promotions: plan.total_promotions,
+                        chunks_migrated: moved,
+                        bytes_migrated: bytes,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("=== Autonomous Tier Migration Executed ===");
+                    println!(
+                        "  Demotions Hot -> Warm:     {}",
+                        plan.demotions_hot_to_warm.len()
+                    );
+                    println!(
+                        "  Demotions Warm -> Cold:    {}",
+                        plan.demotions_warm_to_cold.len()
+                    );
+                    println!(
+                        "  Demotions Cold -> Glacier: {}",
+                        plan.demotions_cold_to_glacier.len()
+                    );
+                    println!(
+                        "  Promotions to Hot:         {}",
+                        plan.promotions_to_hot.len()
+                    );
+                    println!("  Total Chunks Moved:        {}", moved);
+                    println!("  Total Migrated Bytes:      {}", format_bytes(bytes));
+                }
+            }
+        }
+        CompactionSubCmd::Compact {
+            dry_run,
+            max_duration_ms,
+            rate_limit_mb,
+            json,
+        } => {
+            let report =
+                engine.execute_compaction_cycle(*dry_run, *max_duration_ms, *rate_limit_mb);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Zero-Copy Compaction & Garbage Collection Report ===");
+                println!("  Cycle ID:               #{}", report.cycle_id);
+                println!(
+                    "  Mode:                   {}",
+                    if *dry_run { "DRY RUN" } else { "ACTIVE COMMIT" }
+                );
+                println!(
+                    "  Reclaimed Bytes:        {}",
+                    format_bytes(report.reclaimed_bytes)
+                );
+                println!("  Orphans Purged:         {}", report.orphans_purged);
+                println!("  Tombstones Deleted:     {}", report.tombstones_deleted);
+                println!("  Chunks Migrated:        {}", report.chunks_migrated);
+                println!(
+                    "  Bytes Migrated:         {}",
+                    format_bytes(report.bytes_migrated)
+                );
+                println!(
+                    "  Cycle Duration:         {} ns ({:.2} ms)",
+                    report.duration_nanoseconds,
+                    report.duration_nanoseconds as f64 / 1_000_000.0
+                );
+                println!("  SLO Budget Exceeded:    {}", report.slo_budget_exceeded);
+            }
+        }
+        CompactionSubCmd::Benchmark { iterations, json } => {
+            let bench = AutonomousCompactionEngine::run_benchmark(*iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!(
+                    "=== Autonomous Compaction Benchmark ({} iterations) ===",
+                    bench.iterations
+                );
+                println!(
+                    "  Heatmap Lookup Latency: {:.2} ns/op ({:.0} ops/sec)",
+                    bench.heatmap_lookup_latency_nanoseconds,
+                    bench.heatmap_lookup_throughput_ops_per_sec
+                );
+                println!(
+                    "  Tier Evaluation Latency:{:.2} ns/op ({:.0} ops/sec)",
+                    bench.tier_evaluation_latency_nanoseconds,
+                    bench.tier_evaluation_throughput_ops_per_sec
+                );
+                println!(
+                    "  Compaction Sweep:       {:.2} ns",
+                    bench.compaction_sweep_latency_nanoseconds
+                );
+                println!(
+                    "  Migration Planning:     {:.2} ns",
+                    bench.migration_planning_latency_nanoseconds
+                );
+                println!(
+                    "  Simulated Throughput:   {:.2} MB/sec",
+                    bench.simulated_migration_throughput_mb_per_sec
                 );
             }
         }

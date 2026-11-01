@@ -298,6 +298,23 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .congestion_phase_transitions_total
         .load(Ordering::Relaxed);
 
+    let comp_reclaimed_bytes = stats
+        .compaction_reclaimed_bytes_total
+        .load(Ordering::Relaxed);
+    let comp_orphans = stats
+        .compaction_orphans_purged_total
+        .load(Ordering::Relaxed);
+    let comp_tombstones = stats
+        .compaction_tombstones_deleted_total
+        .load(Ordering::Relaxed);
+    let comp_migrations = stats.compaction_migrations_total.load(Ordering::Relaxed);
+    let comp_hot = stats.compaction_active_hot_chunks.load(Ordering::Relaxed);
+    let comp_warm = stats.compaction_active_warm_chunks.load(Ordering::Relaxed);
+    let comp_cold = stats.compaction_active_cold_chunks.load(Ordering::Relaxed);
+    let comp_duration_ns = stats
+        .compaction_cycle_duration_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -794,7 +811,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_congestion_loss_events_total {cong_losses}\n\n\
          # HELP velcrux_congestion_phase_transitions_total Total BBRv3 phase transitions executed\n\
          # TYPE velcrux_congestion_phase_transitions_total counter\n\
-         velcrux_congestion_phase_transitions_total {cong_transitions}\n"
+         velcrux_congestion_phase_transitions_total {cong_transitions}\n\n\
+         # HELP velcrux_compaction_reclaimed_bytes_total Total bytes reclaimed by zero-copy compaction\n\
+         # TYPE velcrux_compaction_reclaimed_bytes_total counter\n\
+         velcrux_compaction_reclaimed_bytes_total {comp_reclaimed_bytes}\n\n\
+         # HELP velcrux_compaction_orphans_purged_total Total orphan chunks purged during compaction\n\
+         # TYPE velcrux_compaction_orphans_purged_total counter\n\
+         velcrux_compaction_orphans_purged_total {comp_orphans}\n\n\
+         # HELP velcrux_compaction_tombstones_deleted_total Total tombstones deleted during compaction\n\
+         # TYPE velcrux_compaction_tombstones_deleted_total counter\n\
+         velcrux_compaction_tombstones_deleted_total {comp_tombstones}\n\n\
+         # HELP velcrux_compaction_migrations_total Total chunk tier migrations executed\n\
+         # TYPE velcrux_compaction_migrations_total counter\n\
+         velcrux_compaction_migrations_total {comp_migrations}\n\n\
+         # HELP velcrux_compaction_active_hot_chunks Current count of active chunks in hot tier\n\
+         # TYPE velcrux_compaction_active_hot_chunks gauge\n\
+         velcrux_compaction_active_hot_chunks {comp_hot}\n\n\
+         # HELP velcrux_compaction_active_warm_chunks Current count of active chunks in warm tier\n\
+         # TYPE velcrux_compaction_active_warm_chunks gauge\n\
+         velcrux_compaction_active_warm_chunks {comp_warm}\n\n\
+         # HELP velcrux_compaction_active_cold_chunks Current count of active chunks in cold tier\n\
+         # TYPE velcrux_compaction_active_cold_chunks gauge\n\
+         velcrux_compaction_active_cold_chunks {comp_cold}\n\n\
+         # HELP velcrux_compaction_cycle_duration_nanoseconds Duration of latest compaction cycle in nanoseconds\n\
+         # TYPE velcrux_compaction_cycle_duration_nanoseconds gauge\n\
+         velcrux_compaction_cycle_duration_nanoseconds {comp_duration_ns}\n"
     )
 }
 
