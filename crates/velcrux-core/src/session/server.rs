@@ -457,6 +457,22 @@ pub struct ServerStats {
     pub zkquota_proof_gen_latency_nanoseconds: AtomicU64,
     /// Latest observed ZK proof verification latency in nanoseconds (Option CN).
     pub zkquota_proof_verif_latency_nanoseconds: AtomicU64,
+    /// Total distributed snapshot transactions begun (Option CO).
+    pub txsnapshot_transactions_begun_total: AtomicU64,
+    /// Total distributed snapshot transactions committed (Option CO).
+    pub txsnapshot_transactions_committed_total: AtomicU64,
+    /// Total distributed snapshot transactions aborted (Option CO).
+    pub txsnapshot_transactions_aborted_total: AtomicU64,
+    /// Current count of active open transactions (Option CO).
+    pub txsnapshot_active_transactions: AtomicU64,
+    /// Total distributed snapshots created (Option CO).
+    pub txsnapshot_snapshots_total: AtomicU64,
+    /// Total directory rollbacks executed (Option CO).
+    pub txsnapshot_rollbacks_total: AtomicU64,
+    /// Total OCC conflict rejections detected (Option CO).
+    pub txsnapshot_conflicts_total: AtomicU64,
+    /// Latest observed 2PC commit latency in nanoseconds (Option CO).
+    pub txsnapshot_commit_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -657,6 +673,14 @@ impl Default for ServerStats {
             zkquota_quota_breaches_total: AtomicU64::new(0),
             zkquota_proof_gen_latency_nanoseconds: AtomicU64::new(0),
             zkquota_proof_verif_latency_nanoseconds: AtomicU64::new(0),
+            txsnapshot_transactions_begun_total: AtomicU64::new(0),
+            txsnapshot_transactions_committed_total: AtomicU64::new(0),
+            txsnapshot_transactions_aborted_total: AtomicU64::new(0),
+            txsnapshot_active_transactions: AtomicU64::new(0),
+            txsnapshot_snapshots_total: AtomicU64::new(0),
+            txsnapshot_rollbacks_total: AtomicU64::new(0),
+            txsnapshot_conflicts_total: AtomicU64::new(0),
+            txsnapshot_commit_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }

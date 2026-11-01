@@ -4558,6 +4558,100 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_zkquota_proof_gen_latency_nanoseconds` | `gauge` | Latest observed ZK proof generation latency in nanoseconds. |
 | `velcrux_zkquota_proof_verif_latency_nanoseconds` | `gauge` | Latest observed ZK proof verification latency in nanoseconds. |
 
+---
+
+## 62. Distributed Global Snapshot Isolation & Transactional Checkpoint Mesh Runbook & Configuration Reference (ADR-057, Option CO)
+
+### Architectural Overview
+
+Velcrux incorporates a pure safe Rust distributed Multi-Version Concurrency Control (MVCC) snapshot isolation and Two-Phase Commit (2PC) checkpoint mesh (`ADR-057`). It guarantees linearizable snapshot reads, optimistic concurrency control (OCC) conflict detection, and atomic all-or-nothing directory rollbacks across multi-node edge sync meshes.
+
+### Operator CLI Reference
+
+#### 1. Inspect Distributed Snapshot Mesh Status
+```bash
+# Query active epoch, vector clock, and active/prepared transactions
+velcrux txsnapshot status
+
+# JSON status output for telemetry pipelines
+velcrux --json txsnapshot status
+```
+
+#### 2. Transaction Lifecycle: Begin, Stage, Prepare & Commit
+```bash
+# Begin a new distributed transaction with read snapshot isolation
+TX_ID=$(velcrux --json txsnapshot begin | jq -r .tx_id)
+
+# Stage file writes
+velcrux txsnapshot stage --tx "$TX_ID" --path "app/config.json" --file /etc/app.json
+velcrux txsnapshot stage --tx "$TX_ID" --path "data/records.bin" --data "hello world"
+
+# Stage file deletion (tombstone)
+velcrux txsnapshot stage --tx "$TX_ID" --path "legacy.log" --delete
+
+# Phase 1: 2PC Prepare across participating edge nodes
+velcrux txsnapshot prepare --tx "$TX_ID" --participants "edge-01,edge-02"
+
+# Phase 2: 2PC Commit (promotes staged files to immutable versions and publishes snapshot)
+velcrux txsnapshot commit --tx "$TX_ID" --tag "v2.0-gold"
+```
+
+#### 3. Abort Transaction
+```bash
+# Cleanly discard staged files without affecting live directory trees
+velcrux txsnapshot abort --tx "$TX_ID" --reason "sync aborted by operator"
+```
+
+#### 4. Point-in-Time Snapshot Read (MVCC Isolation)
+```bash
+# Read exact historical file content at a specific snapshot point in time
+velcrux txsnapshot read --snapshot "v2.0-gold" --path "app/config.json"
+
+# Extract historical file to destination path
+velcrux txsnapshot read --snapshot "v2.0-gold" --path "app/config.json" --out /tmp/restored_config.json
+```
+
+#### 5. List Historical Snapshots
+```bash
+# Enumerate all committed snapshots in the distributed mesh chronologically
+velcrux txsnapshot list
+```
+
+#### 6. Atomic Multi-File Directory Rollback
+```bash
+# Atomically restore live directory tree to match a historical snapshot exactly
+velcrux txsnapshot rollback --snapshot "v2.0-gold" --target-dir /srv/data/worktree
+```
+
+#### 7. Microsecond Performance Benchmarking
+```bash
+# Benchmark 2PC prepare, commit, MVCC read, and atomic rollback across 50 iterations
+velcrux txsnapshot benchmark --iterations 50
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_TXSNAPSHOT_DIR` | `/tmp/velcrux_txsnapshot` | Root directory for staging buffers, content-addressed version objects, and snapshot catalog. |
+| `VELCRUX_NODE_ID` | `node-local` | Node identifier used for vector clock ticks and 2PC coordination. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_txsnapshot_transactions_begun_total` | `counter` | Total distributed snapshot transactions begun. |
+| `velcrux_txsnapshot_transactions_committed_total` | `counter` | Total distributed snapshot transactions committed. |
+| `velcrux_txsnapshot_transactions_aborted_total` | `counter` | Total distributed snapshot transactions aborted. |
+| `velcrux_txsnapshot_active_transactions` | `gauge` | Current count of active open transactions. |
+| `velcrux_txsnapshot_snapshots_total` | `counter` | Total distributed snapshots created. |
+| `velcrux_txsnapshot_rollbacks_total` | `counter` | Total directory rollbacks executed. |
+| `velcrux_txsnapshot_conflicts_total` | `counter` | Total OCC conflict rejections detected. |
+| `velcrux_txsnapshot_commit_latency_nanoseconds` | `gauge` | Latest observed 2PC commit latency in nanoseconds. |
+
+
 
 
 

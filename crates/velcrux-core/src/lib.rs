@@ -44,6 +44,7 @@ pub mod tee;
 pub mod telemetry;
 pub mod transfer;
 pub mod transport;
+pub mod txsnapshot;
 pub mod util;
 pub mod wan;
 pub mod xdp;
@@ -238,6 +239,11 @@ pub use transport::{
     ABSOLUTE_MAX_BDP_WINDOW, ABSOLUTE_MIN_BDP_WINDOW, BASE_PLPMTU, DEFAULT_INITIAL_BDP_WINDOW,
     DEFAULT_MAX_BDP_WINDOW, DEFAULT_MIN_BDP_WINDOW, DEFAULT_PMTU_CANDIDATES, IPV6_MIN_MTU,
     JUMBO_FRAME_MTU, STANDARD_ETHERNET_MTU,
+};
+pub use txsnapshot::{
+    FileOpKind, FileRevision, GlobalSnapshotManifest, RollbackReport, SnapshotSummary,
+    StagedFileOp, TwoPhaseCommitResult, TwoPhasePrepare, TwoPhaseVote, TxSnapshotBenchmarkReport,
+    TxSnapshotEngine, TxSnapshotStatusReport, TxState, TxVectorClock, VoteKind,
 };
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,

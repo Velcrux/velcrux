@@ -879,6 +879,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: ZkquotaSubCmd,
     },
+    /// Distributed global snapshot isolation & transactional multi-file checkpoint mesh (Option CO).
+    Txsnapshot {
+        #[command(subcommand)]
+        sub: TxsnapshotSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1574,6 +1579,127 @@ enum ZkquotaSubCmd {
         json: bool,
     },
     /// Run microsecond performance benchmark measuring proof generation, verification, and throughput.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TxsnapshotSubCmd {
+    /// Show current distributed snapshot mesh status, epoch, vector clock, and active transactions.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Begin a new distributed transaction with read snapshot isolation.
+    Begin {
+        /// Optional author node identity.
+        #[arg(long)]
+        author: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stage a file write or deletion into an active transaction.
+    Stage {
+        /// Transaction identifier.
+        #[arg(long)]
+        tx: String,
+        /// Virtual relative path of the file.
+        #[arg(long)]
+        path: String,
+        /// Path to local file to stage content from.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Inline text data to stage.
+        #[arg(long)]
+        data: Option<String>,
+        /// Mark file for deletion (tombstone).
+        #[arg(long)]
+        delete: bool,
+        /// Expected base version for optimistic concurrency control (OCC).
+        #[arg(long)]
+        base_version: Option<u64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Phase 1 2PC Prepare: validate staged ops, detect conflicts, compute Merkle root.
+    Prepare {
+        /// Transaction identifier.
+        #[arg(long)]
+        tx: String,
+        /// Comma-separated participant node IDs (e.g. node-2,node-3).
+        #[arg(long, value_delimiter = ',')]
+        participants: Vec<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Phase 2 2PC Commit: commit prepared transaction and publish immutable snapshot manifest.
+    Commit {
+        /// Transaction identifier.
+        #[arg(long)]
+        tx: String,
+        /// Optional human-readable snapshot tag.
+        #[arg(long)]
+        tag: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Abort an active or prepared transaction and clean up staged files.
+    Abort {
+        /// Transaction identifier.
+        #[arg(long)]
+        tx: String,
+        /// Reason for abortion.
+        #[arg(long, default_value = "aborted by operator")]
+        reason: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read a file's content at a specific historical point-in-time snapshot (MVCC read isolation).
+    Read {
+        /// Snapshot identifier or human-readable tag.
+        #[arg(long)]
+        snapshot: String,
+        /// Virtual relative file path.
+        #[arg(long)]
+        path: String,
+        /// Output file path to write content into.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all committed snapshots in the distributed mesh.
+    List {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute atomic multi-file directory rollback to a historical snapshot.
+    Rollback {
+        /// Snapshot identifier or tag to restore.
+        #[arg(long)]
+        snapshot: String,
+        /// Target destination directory to roll back.
+        #[arg(long)]
+        target_dir: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring 2PC, MVCC read, and atomic rollback.
     Benchmark {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
@@ -3851,6 +3977,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Zkquota { sub } => {
             run_zkquota(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Txsnapshot { sub } => {
+            run_txsnapshot(&cli, sub).await?;
             return Ok(());
         }
 
@@ -10679,6 +10809,249 @@ async fn run_zkquota(cli: &Cli, sub: &ZkquotaSubCmd) -> anyhow::Result<()> {
                     "  Cluster Audit Sweep:    {:.2} ns",
                     bench.cluster_audit_sweep_latency_nanoseconds
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_txsnapshot(cli: &Cli, sub: &TxsnapshotSubCmd) -> anyhow::Result<()> {
+    use std::fs;
+    use velcrux_core::txsnapshot::{TxSnapshotEngine, TxVectorClock};
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_TXSNAPSHOT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_txsnapshot"));
+
+    let node_id = std::env::var("VELCRUX_NODE_ID").unwrap_or_else(|_| "node-local".to_string());
+    let engine = TxSnapshotEngine::new(state_dir.clone(), node_id)?;
+
+    match sub {
+        TxsnapshotSubCmd::Status { json } => {
+            let status = engine.status()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Distributed Snapshot Isolation & Checkpoint Mesh Status ===");
+                println!("  Node ID:               {}", status.node_id);
+                println!("  Storage Root:          {}", status.storage_dir);
+                println!("  Current Epoch:         {}", status.current_epoch);
+                println!("  Vector Clock:          {}", status.vector_clock);
+                println!("  Committed Snapshots:   {}", status.total_snapshots);
+                println!("  Catalog Tracked Files: {}", status.catalog_file_count);
+                println!("  Active Transactions:   {}", status.active_transactions);
+                println!("  Prepared Transactions: {}", status.prepared_transactions);
+            }
+        }
+        TxsnapshotSubCmd::Begin { author, json } => {
+            let tx_id = engine.begin_tx(author.as_deref())?;
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "active",
+                        "tx_id": tx_id,
+                        "storage_dir": state_dir.display().to_string(),
+                    })
+                );
+            } else {
+                println!("=== Transaction Begun ===");
+                println!("  Transaction ID: {}", tx_id);
+                println!("  Status:         Active");
+                println!("  Storage Root:   {}", state_dir.display());
+            }
+        }
+        TxsnapshotSubCmd::Stage {
+            tx,
+            path,
+            file,
+            data,
+            delete,
+            base_version,
+            json,
+        } => {
+            let op = if *delete {
+                engine.stage_delete(tx, path, *base_version)?
+            } else if let Some(file_path) = file {
+                let bytes = fs::read(file_path)?;
+                engine.stage_file(tx, path, &bytes, *base_version)?
+            } else if let Some(content_str) = data {
+                engine.stage_file(tx, path, content_str.as_bytes(), *base_version)?
+            } else {
+                anyhow::bail!("must provide --file, --data, or --delete to stage operation");
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&op)?);
+            } else {
+                println!("=== Operation Staged ===");
+                println!("  Transaction ID: {}", tx);
+                println!("  Target Path:    {}", op.path);
+                println!("  Kind:           {:?}", op.kind);
+                println!("  Size:           {} bytes", op.size);
+                println!("  BLAKE3 Hash:    {}", op.blake3_hash.to_hex());
+            }
+        }
+        TxsnapshotSubCmd::Prepare {
+            tx,
+            participants,
+            json,
+        } => {
+            let prepare = engine.prepare_2pc(tx, participants)?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&prepare)?);
+            } else {
+                println!("=== 2PC Phase 1 Prepared ===");
+                println!("  Transaction ID:      {}", prepare.tx_id);
+                println!("  Coordinator:         {}", prepare.coordinator);
+                println!("  Participants:        {}", prepare.participants.join(", "));
+                println!("  Staged Operations:   {}", prepare.staged_ops.len());
+                println!(
+                    "  Staging Merkle Root: {}",
+                    prepare.staging_merkle_root.to_hex()
+                );
+                println!("  Read Vector Clock:   {}", prepare.read_vector_clock);
+            }
+        }
+        TxsnapshotSubCmd::Commit { tx, tag, json } => {
+            let prepare = match engine.get_tx_prepare(tx)? {
+                Some(p) => p,
+                None => engine.prepare_2pc(tx, &[])?,
+            };
+            let mut votes = Vec::new();
+            votes.push(engine.vote_2pc(&prepare)?);
+            for p in &prepare.participants {
+                votes.push(velcrux_core::txsnapshot::TwoPhaseVote {
+                    node_id: p.clone(),
+                    vote: velcrux_core::txsnapshot::VoteKind::Commit,
+                    vector_clock: TxVectorClock::initial(p),
+                });
+            }
+            let manifest = engine.commit_2pc(tx, &votes, tag.as_deref())?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            } else {
+                println!("=== 2PC Phase 2 Committed ===");
+                println!("  Snapshot ID:    {}", manifest.snapshot_id);
+                println!("  Tag:            {}", manifest.tag);
+                println!("  Epoch:          {}", manifest.epoch);
+                println!("  Vector Clock:   {}", manifest.vector_clock);
+                println!("  Total Files:    {}", manifest.total_files);
+                println!("  Total Bytes:    {} bytes", manifest.total_bytes);
+                println!("  Merkle Root:    {}", manifest.merkle_root.to_hex());
+            }
+        }
+        TxsnapshotSubCmd::Abort { tx, reason, json } => {
+            engine.abort_tx(tx, reason)?;
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "aborted",
+                        "tx_id": tx,
+                        "reason": reason,
+                    })
+                );
+            } else {
+                println!("=== Transaction Aborted ===");
+                println!("  Transaction ID: {}", tx);
+                println!("  Reason:         {}", reason);
+            }
+        }
+        TxsnapshotSubCmd::Read {
+            snapshot,
+            path,
+            out,
+            json,
+        } => {
+            let content_opt = engine.read_snapshot(snapshot, path)?;
+            match content_opt {
+                Some(bytes) => {
+                    if let Some(out_path) = out {
+                        if let Some(parent) = out_path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(out_path, &bytes)?;
+                    }
+                    if *json || is_json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "snapshot": snapshot,
+                                "path": path,
+                                "size": bytes.len(),
+                                "blake3_hash": velcrux_core::Hash::of(&bytes).to_hex(),
+                            })
+                        );
+                    } else if out.is_none() {
+                        let text = String::from_utf8_lossy(&bytes);
+                        print!("{}", text);
+                    } else {
+                        println!(
+                            "Wrote {} bytes to {}",
+                            bytes.len(),
+                            out.as_ref().unwrap().display()
+                        );
+                    }
+                }
+                None => {
+                    anyhow::bail!("file '{}' not found in snapshot '{}'", path, snapshot);
+                }
+            }
+        }
+        TxsnapshotSubCmd::List { json } => {
+            let list = engine.list_snapshots()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else {
+                println!("=== Distributed Snapshot Catalog ===");
+                println!("  Total Snapshots: {}", list.len());
+                for s in &list {
+                    println!(
+                        "  [{}] tag: {} | files: {} | bytes: {} | merkle: {}",
+                        s.snapshot_id, s.tag, s.total_files, s.total_bytes, s.merkle_root_hex
+                    );
+                }
+            }
+        }
+        TxsnapshotSubCmd::Rollback {
+            snapshot,
+            target_dir,
+            json,
+        } => {
+            let rep = engine.rollback_to_snapshot(snapshot, target_dir)?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&rep)?);
+            } else {
+                println!("=== Atomic Rollback Completed ===");
+                println!("  Snapshot ID:    {}", rep.target_snapshot_id);
+                println!("  Snapshot Tag:   {}", rep.target_tag);
+                println!("  Target Dir:     {}", rep.target_dir);
+                println!("  Restored Files: {}", rep.restored_files);
+                println!("  Deleted Files:  {}", rep.deleted_files);
+                println!("  Bytes Restored: {} bytes", rep.bytes_restored);
+                println!(
+                    "  Duration:       {:.3} ms",
+                    rep.elapsed_nanos as f64 / 1_000_000.0
+                );
+            }
+        }
+        TxsnapshotSubCmd::Benchmark { iterations, json } => {
+            let bench = TxSnapshotEngine::run_benchmark(*iterations)?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!("=== Distributed Snapshot Mesh Microsecond Benchmark ===");
+                println!("  Iterations:          {}", bench.iterations);
+                println!("  Begin Tx Latency:    {:.2} ns", bench.begin_tx_nanos);
+                println!("  Stage File Latency:  {:.2} ns", bench.stage_file_nanos);
+                println!("  Prepare 2PC Latency: {:.2} ns", bench.prepare_2pc_nanos);
+                println!("  Commit 2PC Latency:  {:.2} ns", bench.commit_2pc_nanos);
+                println!("  MVCC Read Latency:   {:.2} ns", bench.mvcc_read_nanos);
+                println!("  Rollback Latency:    {:.2} ns", bench.rollback_nanos);
             }
         }
     }

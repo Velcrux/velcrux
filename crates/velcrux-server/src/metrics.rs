@@ -332,6 +332,23 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .zkquota_proof_verif_latency_nanoseconds
         .load(Ordering::Relaxed);
 
+    let txsnap_begun = stats
+        .txsnapshot_transactions_begun_total
+        .load(Ordering::Relaxed);
+    let txsnap_committed = stats
+        .txsnapshot_transactions_committed_total
+        .load(Ordering::Relaxed);
+    let txsnap_aborted = stats
+        .txsnapshot_transactions_aborted_total
+        .load(Ordering::Relaxed);
+    let txsnap_active = stats.txsnapshot_active_transactions.load(Ordering::Relaxed);
+    let txsnap_snapshots = stats.txsnapshot_snapshots_total.load(Ordering::Relaxed);
+    let txsnap_rollbacks = stats.txsnapshot_rollbacks_total.load(Ordering::Relaxed);
+    let txsnap_conflicts = stats.txsnapshot_conflicts_total.load(Ordering::Relaxed);
+    let txsnap_commit_lat_ns = stats
+        .txsnapshot_commit_latency_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -876,7 +893,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_zkquota_proof_gen_latency_nanoseconds {zkq_gen_lat_ns}\n\n\
          # HELP velcrux_zkquota_proof_verif_latency_nanoseconds Latest observed ZK proof verification latency in nanoseconds\n\
          # TYPE velcrux_zkquota_proof_verif_latency_nanoseconds gauge\n\
-         velcrux_zkquota_proof_verif_latency_nanoseconds {zkq_verif_lat_ns}\n"
+         velcrux_zkquota_proof_verif_latency_nanoseconds {zkq_verif_lat_ns}\n\n\
+         # HELP velcrux_txsnapshot_transactions_begun_total Total distributed snapshot transactions begun\n\
+         # TYPE velcrux_txsnapshot_transactions_begun_total counter\n\
+         velcrux_txsnapshot_transactions_begun_total {txsnap_begun}\n\n\
+         # HELP velcrux_txsnapshot_transactions_committed_total Total distributed snapshot transactions committed\n\
+         # TYPE velcrux_txsnapshot_transactions_committed_total counter\n\
+         velcrux_txsnapshot_transactions_committed_total {txsnap_committed}\n\n\
+         # HELP velcrux_txsnapshot_transactions_aborted_total Total distributed snapshot transactions aborted\n\
+         # TYPE velcrux_txsnapshot_transactions_aborted_total counter\n\
+         velcrux_txsnapshot_transactions_aborted_total {txsnap_aborted}\n\n\
+         # HELP velcrux_txsnapshot_active_transactions Current count of active open transactions\n\
+         # TYPE velcrux_txsnapshot_active_transactions gauge\n\
+         velcrux_txsnapshot_active_transactions {txsnap_active}\n\n\
+         # HELP velcrux_txsnapshot_snapshots_total Total distributed snapshots created\n\
+         # TYPE velcrux_txsnapshot_snapshots_total counter\n\
+         velcrux_txsnapshot_snapshots_total {txsnap_snapshots}\n\n\
+         # HELP velcrux_txsnapshot_rollbacks_total Total directory rollbacks executed\n\
+         # TYPE velcrux_txsnapshot_rollbacks_total counter\n\
+         velcrux_txsnapshot_rollbacks_total {txsnap_rollbacks}\n\n\
+         # HELP velcrux_txsnapshot_conflicts_total Total OCC conflict rejections detected\n\
+         # TYPE velcrux_txsnapshot_conflicts_total counter\n\
+         velcrux_txsnapshot_conflicts_total {txsnap_conflicts}\n\n\
+         # HELP velcrux_txsnapshot_commit_latency_nanoseconds Latest observed 2PC commit latency in nanoseconds\n\
+         # TYPE velcrux_txsnapshot_commit_latency_nanoseconds gauge\n\
+         velcrux_txsnapshot_commit_latency_nanoseconds {txsnap_commit_lat_ns}\n"
     )
 }
 
