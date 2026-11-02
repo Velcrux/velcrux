@@ -47,6 +47,7 @@ pub mod transfer;
 pub mod transport;
 pub mod txsnapshot;
 pub mod util;
+pub mod vault;
 pub mod wan;
 pub mod xdp;
 pub mod zkquota;
@@ -253,6 +254,12 @@ pub use txsnapshot::{
 pub use util::{
     Hash, HashAlgorithm, HashHasher, ParallelHasher, SimdFeatures, SimdTier, TransferId,
     VectorizedScanner,
+};
+pub use vault::{
+    pack_standalone_envelope, shred_file_on_disk, unpack_standalone_envelope, EphemeralDek,
+    VaultBenchmarkReport, VaultEngine, VaultFileStatus, VaultKeyPair, VaultManifest, VaultSummary,
+    VAULT_CIPHER_SUITE, VAULT_DEFAULT_SHRED_PASSES, VAULT_KEM_ALGO, VAULT_MAGIC_HEADER,
+    VAULT_NONCE_LEN, VAULT_SIG_ALGO, VAULT_TAG_LEN,
 };
 pub use wan::{
     ReassembledChunk, WanBenchmarkResult, WanBondingEngine, WanInterface, WanInterfaceInfo,

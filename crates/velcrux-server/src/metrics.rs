@@ -362,6 +362,19 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .netem_scheduler_latency_nanoseconds
         .load(Ordering::Relaxed);
 
+    let vault_encrypted = stats.vault_files_encrypted_total.load(Ordering::Relaxed);
+    let vault_decrypted = stats.vault_files_decrypted_total.load(Ordering::Relaxed);
+    let vault_active_bytes = stats.vault_active_sealed_bytes.load(Ordering::Relaxed);
+    let vault_active_files = stats.vault_active_sealed_files.load(Ordering::Relaxed);
+    let vault_shredded = stats.vault_keys_shredded_total.load(Ordering::Relaxed);
+    let vault_failures = stats
+        .vault_verification_failures_total
+        .load(Ordering::Relaxed);
+    let vault_seal_lat_ns = stats.vault_seal_latency_nanoseconds.load(Ordering::Relaxed);
+    let vault_unseal_lat_ns = stats
+        .vault_unseal_latency_nanoseconds
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -954,7 +967,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_netem_simulated_rtt_nanoseconds {netem_rtt_ns}\n\n\
          # HELP velcrux_netem_scheduler_latency_nanoseconds Latest network emulation scheduler latency in nanoseconds\n\
          # TYPE velcrux_netem_scheduler_latency_nanoseconds gauge\n\
-         velcrux_netem_scheduler_latency_nanoseconds {netem_sched_lat_ns}\n"
+         velcrux_netem_scheduler_latency_nanoseconds {netem_sched_lat_ns}\n\n\
+         # HELP velcrux_vault_files_encrypted_total Total files encrypted and sealed into post-quantum staging vault\n\
+         # TYPE velcrux_vault_files_encrypted_total counter\n\
+         velcrux_vault_files_encrypted_total {vault_encrypted}\n\n\
+         # HELP velcrux_vault_files_decrypted_total Total files decrypted and unsealed from post-quantum staging vault\n\
+         # TYPE velcrux_vault_files_decrypted_total counter\n\
+         velcrux_vault_files_decrypted_total {vault_decrypted}\n\n\
+         # HELP velcrux_vault_active_sealed_bytes Current active sealed payload bytes at rest in vault\n\
+         # TYPE velcrux_vault_active_sealed_bytes gauge\n\
+         velcrux_vault_active_sealed_bytes {vault_active_bytes}\n\n\
+         # HELP velcrux_vault_active_sealed_files Current active sealed files at rest in vault\n\
+         # TYPE velcrux_vault_active_sealed_files gauge\n\
+         velcrux_vault_active_sealed_files {vault_active_files}\n\n\
+         # HELP velcrux_vault_keys_shredded_total Total ephemeral staging vault keys shredded\n\
+         # TYPE velcrux_vault_keys_shredded_total counter\n\
+         velcrux_vault_keys_shredded_total {vault_shredded}\n\n\
+         # HELP velcrux_vault_verification_failures_total Total post-quantum signature or AEAD tamper verification failures\n\
+         # TYPE velcrux_vault_verification_failures_total counter\n\
+         velcrux_vault_verification_failures_total {vault_failures}\n\n\
+         # HELP velcrux_vault_seal_latency_nanoseconds Latest observed vault seal latency in nanoseconds\n\
+         # TYPE velcrux_vault_seal_latency_nanoseconds gauge\n\
+         velcrux_vault_seal_latency_nanoseconds {vault_seal_lat_ns}\n\n\
+         # HELP velcrux_vault_unseal_latency_nanoseconds Latest observed vault unseal latency in nanoseconds\n\
+         # TYPE velcrux_vault_unseal_latency_nanoseconds gauge\n\
+         velcrux_vault_unseal_latency_nanoseconds {vault_unseal_lat_ns}\n"
     )
 }
 

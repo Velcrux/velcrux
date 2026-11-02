@@ -889,6 +889,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: NetemSubCmd,
     },
+    /// Post-Quantum Encrypted Staging Vault with Kyber/Dilithium Envelope Encryption (Option CQ).
+    Vault {
+        #[command(subcommand)]
+        sub: VaultSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1788,6 +1793,71 @@ enum NetemSubCmd {
         /// Number of benchmark iterations (default: 1000).
         #[arg(long, default_value = "1000")]
         iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum VaultSubCmd {
+    /// Show staging vault configuration, active post-quantum key fingerprints, and metrics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Seal a file into a post-quantum encrypted staging envelope using ML-KEM-768 and ChaCha20-Poly1305.
+    Seal {
+        /// Source file path to seal.
+        file: std::path::PathBuf,
+        /// Optional destination path (.vlt standalone package file or output directory).
+        #[arg(long, short)]
+        dest: Option<std::path::PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Unseal an encrypted staging envelope and verify its ML-DSA-65 signature before restoring plaintext.
+    Unseal {
+        /// Staged file ID or path to standalone .vlt envelope file.
+        file_id_or_path: String,
+        /// Optional destination path or directory to write restored plaintext.
+        #[arg(long, short)]
+        dest: Option<std::path::PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cryptographically shred ephemeral keys and sealed payloads (multi-pass overwrite).
+    Shred {
+        /// Specific file ID to shred.
+        #[arg(long)]
+        file_id: Option<String>,
+        /// Shred all staged files and ephemeral keys in the vault.
+        #[arg(long)]
+        all: bool,
+        /// Number of overwrite passes (default: 3).
+        #[arg(long, default_value = "3")]
+        passes: u32,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all staged files currently held in the post-quantum staging vault.
+    List {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring ML-KEM-768, ML-DSA-65, and ChaCha20-Poly1305.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
+        /// Payload chunk size in bytes (default: 65536).
+        #[arg(long, default_value = "65536")]
+        chunk_size: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4069,6 +4139,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Netem { sub } => {
             run_netem(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Vault { sub } => {
+            run_vault(&cli, sub).await?;
             return Ok(());
         }
 
@@ -11361,6 +11435,215 @@ async fn run_netem(cli: &Cli, sub: &NetemSubCmd) -> anyhow::Result<()> {
                     "  Throughput:          {:.0} packets/sec",
                     bench.throughput_pps
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_vault(cli: &Cli, sub: &VaultSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::vault::VaultEngine;
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_VAULT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_vault"));
+
+    let engine = VaultEngine::new(state_dir, None)?;
+
+    match sub {
+        VaultSubCmd::Status { json } => {
+            let summary = engine.status()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("=== Post-Quantum Encrypted Staging Vault Status ===");
+                println!("  Vault ID:              {}", summary.vault_id);
+                println!("  Vault Directory:       {}", summary.vault_dir.display());
+                println!("  Active Sealed Files:   {}", summary.sealed_files_count);
+                println!(
+                    "  Active Sealed Bytes:   {} bytes",
+                    summary.total_sealed_bytes
+                );
+                println!("  Shredded Keys Count:   {}", summary.shredded_keys_count);
+                println!(
+                    "  Verification Failures: {}",
+                    summary.verification_failures_count
+                );
+                println!("  KEM Algorithm:         {}", summary.kem_algorithm);
+                println!("  Signature Algorithm:   {}", summary.sig_algorithm);
+                println!("  Cipher Suite:          {}", summary.cipher_suite);
+                println!(
+                    "  Recipient Fingerprint: {}",
+                    summary.recipient_pk_fingerprint
+                );
+                println!("  Signer Fingerprint:    {}", summary.signer_pk_fingerprint);
+            }
+        }
+        VaultSubCmd::Seal { file, dest, json } => {
+            let manifest = engine.seal_file(file, dest.as_deref())?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            } else {
+                println!("=== Post-Quantum Envelope Seal Completed ===");
+                println!("  File ID:            {}", manifest.file_id);
+                println!("  Original Name:      {}", manifest.original_name);
+                println!("  Original Size:      {} bytes", manifest.original_size);
+                println!("  Sealed Size:        {} bytes", manifest.sealed_size);
+                println!("  KEM Encapsulation:  {}", manifest.kem_algorithm);
+                println!(
+                    "  Manifest Signature: {} (ML-DSA-65 Valid)",
+                    manifest.sig_algorithm
+                );
+                println!("  Payload Hash:       {}", manifest.payload_hash_hex);
+                println!("  Status:             {}", manifest.status);
+            }
+        }
+        VaultSubCmd::Unseal {
+            file_id_or_path,
+            dest,
+            json,
+        } => {
+            let (manifest, out_path) = engine.unseal_file(file_id_or_path, dest.as_deref())?;
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "file_id": manifest.file_id,
+                        "original_name": manifest.original_name,
+                        "original_size": manifest.original_size,
+                        "restored_path": out_path.display().to_string(),
+                        "sig_verified": true,
+                        "status": "unsealed",
+                    })
+                );
+            } else {
+                println!("=== Post-Quantum Envelope Unseal Completed ===");
+                println!("  File ID:            {}", manifest.file_id);
+                println!("  Original Name:      {}", manifest.original_name);
+                println!("  Restored To:        {}", out_path.display());
+                println!("  Integrity Verified: PASS (ML-DSA-65 & ChaCha20-Poly1305)");
+                println!("  Status:             UNSEALED");
+            }
+        }
+        VaultSubCmd::Shred {
+            file_id,
+            all,
+            passes,
+            json,
+        } => {
+            if *all {
+                let count = engine.shred_all(*passes, false)?;
+                if *json || is_json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "shredded_all": true,
+                            "shredded_count": count,
+                            "passes": passes,
+                        })
+                    );
+                } else {
+                    println!("=== Post-Quantum Vault Shred Completed ===");
+                    println!(
+                        "  Shredded {} staged file envelopes across {} overwrite passes.",
+                        count, passes
+                    );
+                    println!("  All ephemeral keys securely destroyed.");
+                }
+            } else if let Some(fid) = file_id {
+                engine.shred_file(fid, *passes)?;
+                if *json || is_json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "file_id": fid,
+                            "shredded": true,
+                            "passes": passes,
+                        })
+                    );
+                } else {
+                    println!("=== Staged File Shred Completed ===");
+                    println!(
+                        "  File ID '{}' and ephemeral keys shredded with {} passes.",
+                        fid, passes
+                    );
+                }
+            } else {
+                anyhow::bail!("Specify either --file-id <ID> or --all to execute vault shred.");
+            }
+        }
+        VaultSubCmd::List { json } => {
+            let entries = engine.list_entries()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                println!("=== Post-Quantum Encrypted Staging Vault Entries ===");
+                if entries.is_empty() {
+                    println!("  (no staged files currently in vault)");
+                } else {
+                    for entry in entries {
+                        println!(
+                            "  [{}] {} ({} bytes -> {} sealed) - {}",
+                            entry.file_id,
+                            entry.original_name,
+                            entry.original_size,
+                            entry.sealed_size,
+                            entry.status
+                        );
+                    }
+                }
+            }
+        }
+        VaultSubCmd::Benchmark {
+            iterations,
+            chunk_size,
+            json,
+        } => {
+            let report = VaultEngine::run_benchmark(*iterations, *chunk_size);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Post-Quantum Encrypted Staging Vault Benchmark ===");
+                println!("  KEM Algorithm:        {}", report.kem_algorithm);
+                println!("  Signature Algorithm:  {}", report.sig_algorithm);
+                println!("  Cipher Suite:         {}", report.cipher_suite);
+                println!("  Iterations:           {}", report.iterations);
+                println!("  Chunk Size:           {} bytes", report.chunk_size_bytes);
+                println!(
+                    "  ML-KEM-768 Encap:     {:.2} µs",
+                    report.kem_encap_latency_us
+                );
+                println!(
+                    "  ML-KEM-768 Decap:     {:.2} µs",
+                    report.kem_decap_latency_us
+                );
+                println!(
+                    "  ML-DSA-65 Sign:       {:.2} µs",
+                    report.dsa_sign_latency_us
+                );
+                println!(
+                    "  ML-DSA-65 Verify:     {:.2} µs",
+                    report.dsa_verify_latency_us
+                );
+                println!(
+                    "  AEAD Seal Rate:       {:.2} MB/s",
+                    report.aead_seal_throughput_mb_s
+                );
+                println!(
+                    "  AEAD Unseal Rate:     {:.2} MB/s",
+                    report.aead_unseal_throughput_mb_s
+                );
+                println!(
+                    "  End-to-End Seal:      {:.2} µs",
+                    report.e2e_seal_latency_us
+                );
+                println!(
+                    "  End-to-End Unseal:    {:.2} µs",
+                    report.e2e_unseal_latency_us
+                );
+                println!("  Total Elapsed Time:   {:.2} ms", report.total_elapsed_ms);
             }
         }
     }

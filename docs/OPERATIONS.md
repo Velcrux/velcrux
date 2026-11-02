@@ -4742,6 +4742,87 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_netem_simulated_rtt_nanoseconds` | `gauge` | Latest simulated round-trip time in nanoseconds. |
 | `velcrux_netem_scheduler_latency_nanoseconds` | `gauge` | Latest scheduler processing latency in nanoseconds. |
 
+---
+
+## 64. Post-Quantum Encrypted Staging Vault Runbook & Configuration Reference (ADR-059, Option CQ)
+
+Velcrux incorporates a Post-Quantum Encrypted Staging Vault engine (`ADR-059`) to eliminate "Harvest Now, Decrypt Later" (HNDL) data-at-rest exposure during multi-tenant bulk synchronization. Intermediate files and chunks staged on disk are wrapped in post-quantum cryptographic envelopes pairing FIPS 203 **ML-KEM-768** (Kyber-768) key encapsulation with **ChaCha20-Poly1305** symmetric AEAD and FIPS 204 **ML-DSA-65** (Dilithium-3) tamper-proof manifest signatures.
+
+### Operator CLI Runbook
+
+#### 1. Inspect Staging Vault Status
+```bash
+# Human-readable summary of vault key fingerprints, algorithm suites, and metrics
+velcrux vault status
+
+# Structured JSON output for cluster orchestration
+velcrux --json vault status
+```
+
+#### 2. Seal File into Post-Quantum Staging Envelope
+```bash
+# Seal a file into the local vault staging area ($VELCRUX_VAULT_DIR/envelopes/)
+velcrux vault seal /path/to/sensitive_data.tar
+
+# Export as a standalone portable .vlt package
+velcrux vault seal /path/to/data.bin --dest /staging/data.vlt
+```
+
+#### 3. Unseal Envelope & Restore Plaintext
+```bash
+# Unseal a staged file by its file ID into a target directory
+velcrux vault unseal vfile-01jb8x7k2m9a1c3e --dest /restore/path/
+
+# Unseal a standalone .vlt package file directly
+velcrux vault unseal /staging/data.vlt --dest /restore/data.bin
+```
+
+#### 4. Active Cryptographic Shredding
+```bash
+# Cryptographically shred a single staged file and its ephemeral keys (3-pass overwrite)
+velcrux vault shred --file-id vfile-01jb8x7k2m9a1c3e --passes 3
+
+# Shred all staged files and envelopes in the vault
+velcrux vault shred --all --passes 3
+```
+
+#### 5. List Staged Vault Entries
+```bash
+# List all staged file manifests, sizes, and statuses
+velcrux vault list
+
+# Machine-readable JSON listing
+velcrux --json vault list
+```
+
+#### 6. Microsecond Performance Benchmarking
+```bash
+# Run benchmark measuring ML-KEM-768 encap/decap, ML-DSA-65 sign/verify, and AEAD throughput
+velcrux vault benchmark --iterations 50 --chunk-size 65536
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_VAULT_DIR` | `/tmp/velcrux_vault` | Directory where post-quantum vault keypairs and staged envelopes reside. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_vault_files_encrypted_total` | `counter` | Total files encrypted and sealed into post-quantum staging vault. |
+| `velcrux_vault_files_decrypted_total` | `counter` | Total files decrypted and unsealed from post-quantum staging vault. |
+| `velcrux_vault_active_sealed_bytes` | `gauge` | Current active sealed payload bytes at rest in staging vault. |
+| `velcrux_vault_active_sealed_files` | `gauge` | Current active sealed files at rest in staging vault. |
+| `velcrux_vault_keys_shredded_total` | `counter` | Total ephemeral staging vault keys shredded. |
+| `velcrux_vault_verification_failures_total` | `counter` | Total post-quantum signature or AEAD tamper verification failures. |
+| `velcrux_vault_seal_latency_nanoseconds` | `gauge` | Latest observed vault seal latency in nanoseconds. |
+| `velcrux_vault_unseal_latency_nanoseconds` | `gauge` | Latest observed vault unseal latency in nanoseconds. |
+
+
 
 
 

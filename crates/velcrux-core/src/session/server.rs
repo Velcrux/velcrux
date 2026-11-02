@@ -489,6 +489,22 @@ pub struct ServerStats {
     pub netem_simulated_rtt_nanoseconds: AtomicU64,
     /// Latest network emulation scheduler latency in nanoseconds (Option CP).
     pub netem_scheduler_latency_nanoseconds: AtomicU64,
+    /// Total files encrypted and sealed into post-quantum staging vault (Option CQ).
+    pub vault_files_encrypted_total: AtomicU64,
+    /// Total files decrypted and unsealed from post-quantum staging vault (Option CQ).
+    pub vault_files_decrypted_total: AtomicU64,
+    /// Current active sealed payload bytes at rest in vault (Option CQ).
+    pub vault_active_sealed_bytes: AtomicU64,
+    /// Current active sealed files at rest in vault (Option CQ).
+    pub vault_active_sealed_files: AtomicU64,
+    /// Total ephemeral staging vault keys shredded (Option CQ).
+    pub vault_keys_shredded_total: AtomicU64,
+    /// Total post-quantum signature or AEAD tamper verification failures (Option CQ).
+    pub vault_verification_failures_total: AtomicU64,
+    /// Latest observed vault seal latency in nanoseconds (Option CQ).
+    pub vault_seal_latency_nanoseconds: AtomicU64,
+    /// Latest observed vault unseal latency in nanoseconds (Option CQ).
+    pub vault_unseal_latency_nanoseconds: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -705,6 +721,14 @@ impl Default for ServerStats {
             netem_packets_corrupted_total: AtomicU64::new(0),
             netem_simulated_rtt_nanoseconds: AtomicU64::new(0),
             netem_scheduler_latency_nanoseconds: AtomicU64::new(0),
+            vault_files_encrypted_total: AtomicU64::new(0),
+            vault_files_decrypted_total: AtomicU64::new(0),
+            vault_active_sealed_bytes: AtomicU64::new(0),
+            vault_active_sealed_files: AtomicU64::new(0),
+            vault_keys_shredded_total: AtomicU64::new(0),
+            vault_verification_failures_total: AtomicU64::new(0),
+            vault_seal_latency_nanoseconds: AtomicU64::new(0),
+            vault_unseal_latency_nanoseconds: AtomicU64::new(0),
         }
     }
 }
