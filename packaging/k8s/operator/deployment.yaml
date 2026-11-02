@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: velcrux-operator
+  namespace: velcrux-system
+  labels:
+    app.kubernetes.io/name: velcrux-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: velcrux-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: velcrux-operator
+    spec:
+      serviceAccountName: velcrux-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: operator
+          image: ghcr.io/velcrux/velcrux:v0.1.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/velcrux
+            - k8s
+            - operator-run
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

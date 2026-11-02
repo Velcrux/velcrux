@@ -5078,6 +5078,67 @@ velcrux package scoop --version 0.1.0 --output /tmp/velcrux.json
 velcrux package winget --version 0.1.0 --output /tmp/velcrux.yaml
 ```
 
+---
+
+## 47. Kubernetes Operator & Declarative Custom Resources (ADR-063)
+
+Velcrux includes a cloud-native Kubernetes Operator (`ADR-063`) that manages storage clusters and bulk data transfer pipelines declaratively via Custom Resource Definitions (`velcrux.io/v1alpha1`).
+
+### 47.1. Installing CRDs and Operator
+
+```bash
+# Install CustomResourceDefinitions
+kubectl apply -f packaging/k8s/crds/
+
+# Deploy Operator and RBAC permissions
+kubectl apply -f packaging/k8s/operator/
+```
+
+### 47.2. Declarative Transfer Job (`VelcruxTransfer`)
+
+Define transfers as version-controlled Kubernetes manifests:
+
+```yaml
+apiVersion: velcrux.io/v1alpha1
+kind: VelcruxTransfer
+metadata:
+  name: nightly-ai-weights-sync
+  namespace: default
+spec:
+  sourceUrl: "velcrux://primary-storage.velcrux.svc:7443/datasets/llama-weights"
+  destinationPath: "/mnt/models/llama-weights"
+  schedule: "0 2 * * *" # Daily at 02:00 UTC
+  priority: urgent
+  concurrency: 8
+  bdpTuning: auto
+  compression: zstd
+  dedup: true
+  retryPolicy:
+    maxRetries: 5
+    initialBackoffSecs: 10
+    maxBackoffSecs: 300
+```
+
+### 47.3. Operator CLI Utilities
+
+Operators can inspect, validate, and execute dry-run reconciliation passes directly from the CLI:
+
+```bash
+# Output CRDs
+velcrux k8s crd --kind transfer
+
+# Generate Operator bundle
+velcrux k8s operator-manifest --image ghcr.io/velcrux/velcrux:v0.1.0
+
+# Validate declarative transfer specification
+velcrux k8s validate --file transfer.yaml
+
+# Reconcile transfer and simulate failure recovery
+velcrux k8s reconcile --file transfer.yaml
+velcrux k8s reconcile --file transfer.yaml --simulate-failure "Stream timeout"
+```
+
+
 
 
 

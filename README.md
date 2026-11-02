@@ -110,11 +110,16 @@ scoop install velcrux
 winget install Velcrux.Velcrux
 ```
 
-**Kubernetes (Helm Chart):**
+**Kubernetes (Helm Chart & Operator):**
 ```bash
+# Helm Chart
 helm upgrade --install velcrux packaging/helm/velcrux/ \
   --namespace velcrux \
   --create-namespace
+
+# Or install Kubernetes Operator & CRDs
+kubectl apply -f packaging/k8s/crds/
+kubectl apply -f packaging/k8s/operator/
 ```
 
 ### Direct Download & Script Install

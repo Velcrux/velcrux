@@ -1,0 +1,116 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: velcruxtransfers.velcrux.io
+spec:
+  group: velcrux.io
+  names:
+    kind: VelcruxTransfer
+    listKind: VelcruxTransferList
+    plural: velcruxtransfers
+    singular: velcruxtransfer
+    shortNames:
+      - vxtransfer
+      - vxt
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - sourceUrl
+                - destinationPath
+              properties:
+                sourceUrl:
+                  type: string
+                  pattern: ^velcrux://.+
+                destinationPath:
+                  type: string
+                schedule:
+                  type: string
+                priority:
+                  type: string
+                  enum: [urgent, high, normal, low]
+                  default: normal
+                concurrency:
+                  type: integer
+                  minimum: 1
+                  maximum: 16
+                  default: 4
+                bdpTuning:
+                  type: string
+                  enum: [auto, fixed, aggressive, conservative]
+                  default: auto
+                maxBdpWindow:
+                  type: integer
+                  default: 536870912
+                compression:
+                  type: string
+                  enum: [none, zstd]
+                  default: zstd
+                dedup:
+                  type: boolean
+                  default: true
+                tenantId:
+                  type: string
+                secretRef:
+                  type: string
+                retryPolicy:
+                  type: object
+                  properties:
+                    maxRetries:
+                      type: integer
+                      default: 3
+                    initialBackoffSecs:
+                      type: integer
+                      default: 5
+                    maxBackoffSecs:
+                      type: integer
+                      default: 300
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                transferId:
+                  type: string
+                bytesTotal:
+                  type: integer
+                bytesTransferred:
+                  type: integer
+                chunksCompleted:
+                  type: integer
+                chunksTotal:
+                  type: integer
+                dedupRatio:
+                  type: number
+                blake3Hash:
+                  type: string
+                retryCount:
+                  type: integer
+                errorMessage:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Transferred
+          type: integer
+          jsonPath: .status.bytesTransferred
+        - name: Dedup
+          type: number
+          jsonPath: .status.dedupRatio
+        - name: Retries
+          type: integer
+          jsonPath: .status.retryCount
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

@@ -30,6 +30,7 @@ pub mod crypto;
 pub mod did;
 pub mod ec;
 pub mod error;
+pub mod k8s;
 pub mod kms;
 pub mod manifest;
 pub mod netem;
@@ -107,6 +108,13 @@ pub use ec::{
     SHARD_VERSION,
 };
 pub use error::{Result, VelcruxError};
+pub use k8s::{
+    generate_cluster_crd_yaml, generate_operator_deployment_yaml, generate_operator_rbac_yaml,
+    generate_transfer_crd_yaml, ClusterCondition, ClusterPhase, K8sEvent, K8sTransferPriority,
+    ObjectMeta, OperatorReconciler, ReconciliationResult, RetryPolicy, TransferCondition,
+    TransferPhase, VelcruxCluster, VelcruxClusterSpec, VelcruxClusterStatus, VelcruxTransfer,
+    VelcruxTransferSpec, VelcruxTransferStatus, CRD_GROUP, CRD_VERSION,
+};
 pub use kms::{
     hex_decode as kms_hex_decode, hex_encode as kms_hex_encode, HsmKmsBridge, KeyRotationReport,
     KmsBenchmarkReport, KmsBridgeConfig, KmsKeyMetadata, KmsKeyPurpose, KmsProviderType,

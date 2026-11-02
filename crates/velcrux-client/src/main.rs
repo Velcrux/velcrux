@@ -904,6 +904,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: KmsSubCmd,
     },
+    /// Kubernetes Operator & Declarative Custom Resource Definitions (Option CU).
+    K8s {
+        #[command(subcommand)]
+        sub: K8sSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2005,6 +2010,52 @@ enum KmsSubCmd {
         /// Number of benchmark iterations (default: 50).
         #[arg(long, default_value = "50")]
         iterations: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum K8sSubCmd {
+    /// Output OpenAPI v3 CustomResourceDefinition manifest (cluster or transfer).
+    Crd {
+        /// Resource type: "all" (default), "cluster", or "transfer".
+        #[arg(long, default_value = "all")]
+        kind: String,
+        /// Destination file path (writes to stdout if omitted).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Output Velcrux Operator Deployment & RBAC manifest bundle.
+    OperatorManifest {
+        /// Operator container image reference.
+        #[arg(long, default_value = "ghcr.io/velcrux/velcrux:v0.1.0")]
+        image: String,
+        /// Target namespace.
+        #[arg(long, default_value = "velcrux-system")]
+        namespace: String,
+        /// Destination file path (writes to stdout if omitted).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Validate a declarative VelcruxTransfer specification.
+    Validate {
+        /// Path to transfer manifest file (YAML or JSON).
+        #[arg(long, short)]
+        file: PathBuf,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute reconciliation cycle on a VelcruxTransfer manifest.
+    Reconcile {
+        /// Path to transfer manifest file (YAML or JSON).
+        #[arg(long, short)]
+        file: PathBuf,
+        /// Simulate a transient failure to test retry backoff.
+        #[arg(long)]
+        simulate_failure: Option<String>,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4298,6 +4349,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Kms { sub } => {
             run_kms(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::K8s { sub } => {
+            run_k8s(&cli, sub).await?;
             return Ok(());
         }
 
@@ -12249,6 +12304,136 @@ async fn run_kms(cli: &Cli, sub: &KmsSubCmd) -> anyhow::Result<()> {
                     "  Total Elapsed:            {:.2} ms",
                     report.total_elapsed_ms
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_k8s(cli: &Cli, sub: &K8sSubCmd) -> anyhow::Result<()> {
+    let is_json = cli_log_json(cli);
+    match sub {
+        K8sSubCmd::Crd { kind, output } => {
+            let manifest = match kind.to_lowercase().as_str() {
+                "cluster" | "vxc" | "velcruxcluster" => {
+                    velcrux_core::k8s::generate_cluster_crd_yaml()
+                }
+                "transfer" | "vxt" | "velcruxtransfer" => {
+                    velcrux_core::k8s::generate_transfer_crd_yaml()
+                }
+                _ => {
+                    format!(
+                        "{}\n---\n{}",
+                        velcrux_core::k8s::generate_cluster_crd_yaml(),
+                        velcrux_core::k8s::generate_transfer_crd_yaml()
+                    )
+                }
+            };
+            if let Some(dest) = output {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(dest, &manifest)?;
+                eprintln!("Wrote CustomResourceDefinition to {}", dest.display());
+            } else {
+                print!("{manifest}");
+            }
+        }
+        K8sSubCmd::OperatorManifest {
+            image,
+            namespace,
+            output,
+        } => {
+            let rbac = velcrux_core::k8s::generate_operator_rbac_yaml(namespace);
+            let deploy = velcrux_core::k8s::generate_operator_deployment_yaml(image, namespace);
+            let bundle = format!("{rbac}\n---\n{deploy}");
+            if let Some(dest) = output {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(dest, &bundle)?;
+                eprintln!("Wrote Operator Deployment bundle to {}", dest.display());
+            } else {
+                print!("{bundle}");
+            }
+        }
+        K8sSubCmd::Validate { file, json } => {
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("reading manifest file {}", file.display()))?;
+            let transfer = velcrux_core::k8s::OperatorReconciler::parse_transfer_manifest(&content)
+                .map_err(|e| anyhow::anyhow!("Manifest parse error: {e}"))?;
+            let validation = velcrux_core::k8s::OperatorReconciler::validate_spec(&transfer.spec);
+            if *json || is_json {
+                let out = serde_json::json!({
+                    "valid": validation.is_ok(),
+                    "name": transfer.metadata.name,
+                    "namespace": transfer.metadata.namespace,
+                    "error": validation.err(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                match validation {
+                    Ok(()) => println!(
+                        "OK: VelcruxTransfer '{}/{}' spec is valid",
+                        transfer.metadata.namespace, transfer.metadata.name
+                    ),
+                    Err(e) => {
+                        eprintln!(
+                            "ERROR: VelcruxTransfer '{}/{}' invalid: {e}",
+                            transfer.metadata.namespace, transfer.metadata.name
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+        K8sSubCmd::Reconcile {
+            file,
+            simulate_failure,
+            json,
+        } => {
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("reading manifest file {}", file.display()))?;
+            let mut transfer =
+                velcrux_core::k8s::OperatorReconciler::parse_transfer_manifest(&content)
+                    .map_err(|e| anyhow::anyhow!("Manifest parse error: {e}"))?;
+            let current_status = transfer.status.take().unwrap_or_default();
+            let now = velcrux_core::k8s::current_timestamp_secs();
+            let result = if let Some(ref err) = simulate_failure {
+                velcrux_core::k8s::OperatorReconciler::record_failure(
+                    &transfer.spec,
+                    &current_status,
+                    err.clone(),
+                    now,
+                )
+            } else {
+                velcrux_core::k8s::OperatorReconciler::reconcile_transfer(
+                    &transfer.spec,
+                    &current_status,
+                    now,
+                )
+            };
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("=== Velcrux Kubernetes Operator Reconciliation ===");
+                println!(
+                    "  Resource:         {}/{}",
+                    transfer.metadata.namespace, transfer.metadata.name
+                );
+                println!("  Phase:            {}", result.updated_status.phase);
+                if let Some(ref tid) = result.updated_status.transfer_id {
+                    println!("  Transfer ID:      {}", tid);
+                }
+                println!("  Retry Count:      {}", result.updated_status.retry_count);
+                if let Some(requeue) = result.requeue_after_secs {
+                    println!("  Requeue After:    {}s", requeue);
+                }
+                println!("  Events Generated: {}", result.events.len());
+                for ev in &result.events {
+                    println!("    [{}] {}: {}", ev.type_, ev.reason, ev.message);
+                }
             }
         }
     }
