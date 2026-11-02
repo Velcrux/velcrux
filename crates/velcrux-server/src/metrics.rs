@@ -397,6 +397,21 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .bdp_rebalance_hol_prevention_events_total
         .load(Ordering::Relaxed);
 
+    let hsm_kms_ops = stats.hsm_kms_operations_total.load(Ordering::Relaxed);
+    let hsm_kms_failures = stats
+        .hsm_kms_operation_failures_total
+        .load(Ordering::Relaxed);
+    let hsm_kms_wrapped = stats.hsm_kms_keys_wrapped_total.load(Ordering::Relaxed);
+    let hsm_kms_unwrapped = stats.hsm_kms_keys_unwrapped_total.load(Ordering::Relaxed);
+    let hsm_kms_signatures = stats
+        .hsm_kms_signatures_generated_total
+        .load(Ordering::Relaxed);
+    let hsm_kms_provider_id = stats.hsm_kms_active_provider_id.load(Ordering::Relaxed);
+    let hsm_kms_lat_ns = stats
+        .hsm_kms_operation_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let hsm_kms_rotations = stats.hsm_kms_key_rotations_total.load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -1037,7 +1052,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_bdp_rebalance_rebalance_latency_nanoseconds {bdp_reb_lat_ns}\n\n\
          # HELP velcrux_bdp_rebalance_hol_prevention_events_total Total Head-of-Line (HOL) blocking prevention interventions\n\
          # TYPE velcrux_bdp_rebalance_hol_prevention_events_total counter\n\
-         velcrux_bdp_rebalance_hol_prevention_events_total {bdp_reb_hol}\n"
+         velcrux_bdp_rebalance_hol_prevention_events_total {bdp_reb_hol}\n\n\
+         # HELP velcrux_hsm_kms_operations_total Total cryptographic operations processed by HSM / Cloud KMS\n\
+         # TYPE velcrux_hsm_kms_operations_total counter\n\
+         velcrux_hsm_kms_operations_total {hsm_kms_ops}\n\n\
+         # HELP velcrux_hsm_kms_operation_failures_total Total HSM / Cloud KMS operation failures or tamper alerts\n\
+         # TYPE velcrux_hsm_kms_operation_failures_total counter\n\
+         velcrux_hsm_kms_operation_failures_total {hsm_kms_failures}\n\n\
+         # HELP velcrux_hsm_kms_keys_wrapped_total Total key encryption keys (KEKs) wrapped via HSM / Cloud KMS\n\
+         # TYPE velcrux_hsm_kms_keys_wrapped_total counter\n\
+         velcrux_hsm_kms_keys_wrapped_total {hsm_kms_wrapped}\n\n\
+         # HELP velcrux_hsm_kms_keys_unwrapped_total Total key encryption keys (KEKs) unwrapped via HSM / Cloud KMS\n\
+         # TYPE velcrux_hsm_kms_keys_unwrapped_total counter\n\
+         velcrux_hsm_kms_keys_unwrapped_total {hsm_kms_unwrapped}\n\n\
+         # HELP velcrux_hsm_kms_signatures_generated_total Total digital signatures produced by HSM / Cloud KMS\n\
+         # TYPE velcrux_hsm_kms_signatures_generated_total counter\n\
+         velcrux_hsm_kms_signatures_generated_total {hsm_kms_signatures}\n\n\
+         # HELP velcrux_hsm_kms_active_provider_id Active KMS provider identifier (0=SoftwareHsm, 1=AwsKms, 2=GcpCloudKms, 3=AzureKeyVault, 4=HashiCorpVault, 5=NitroEnclaveKms)\n\
+         # TYPE velcrux_hsm_kms_active_provider_id gauge\n\
+         velcrux_hsm_kms_active_provider_id {hsm_kms_provider_id}\n\n\
+         # HELP velcrux_hsm_kms_operation_latency_nanoseconds Latest observed HSM / Cloud KMS operation latency in nanoseconds\n\
+         # TYPE velcrux_hsm_kms_operation_latency_nanoseconds gauge\n\
+         velcrux_hsm_kms_operation_latency_nanoseconds {hsm_kms_lat_ns}\n\n\
+         # HELP velcrux_hsm_kms_key_rotations_total Total master key rotation cycles executed\n\
+         # TYPE velcrux_hsm_kms_key_rotations_total counter\n\
+         velcrux_hsm_kms_key_rotations_total {hsm_kms_rotations}\n"
     )
 }
 

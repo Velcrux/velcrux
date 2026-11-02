@@ -899,6 +899,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: BdpRebalanceSubCmd,
     },
+    /// Hardware Security Module (HSM) PKCS#11 & Cloud KMS Key Orchestration Bridge (Option CS).
+    Kms {
+        #[command(subcommand)]
+        sub: KmsSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1915,6 +1920,91 @@ enum BdpRebalanceSubCmd {
         /// Number of bonded subflows to simulate (default: 4).
         #[arg(long, default_value = "4")]
         subflows: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum KmsSubCmd {
+    /// Show current HSM / Cloud KMS orchestration bridge status, active provider, and key counts.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Wrap a raw 32-byte secret (e.g. staging vault key) into an authenticated ciphertext envelope.
+    Wrap {
+        /// Master key ID configured in HSM / Cloud KMS.
+        #[arg(long, default_value = "velcrux-root-kek-v1")]
+        key_id: String,
+        /// Key usage purpose: staging_vault, recipient_pqc, manifest_signing, transport_session.
+        #[arg(long, default_value = "staging_vault")]
+        purpose: String,
+        /// Plaintext secret in 64-character hexadecimal format (32 bytes). If omitted, a secure 32-byte secret is generated.
+        #[arg(long)]
+        plaintext: Option<String>,
+        /// Associated encryption context key-value pairs (e.g. "tenant_id=tenant-alpha,env=prod").
+        #[arg(long)]
+        context: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Unwrap an authenticated ciphertext envelope, verifying context binding and integrity.
+    Unwrap {
+        /// JSON string containing the wrapped key envelope, or path to envelope JSON file.
+        #[arg(long)]
+        envelope: String,
+        /// Associated encryption context key-value pairs (must match context provided during wrap).
+        #[arg(long)]
+        context: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Produce a digital signature over payload data using the active HSM / Cloud KMS master key.
+    Sign {
+        /// Master key ID configured in HSM / Cloud KMS.
+        #[arg(long, default_value = "velcrux-root-kek-v1")]
+        key_id: String,
+        /// Message payload string or raw data to sign.
+        #[arg(long)]
+        data: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a digital signature produced by HSM / Cloud KMS.
+    Verify {
+        /// Master key ID configured in HSM / Cloud KMS.
+        #[arg(long, default_value = "velcrux-root-kek-v1")]
+        key_id: String,
+        /// Message payload string that was signed.
+        #[arg(long)]
+        data: String,
+        /// Hex-encoded digital signature string or path to signature JSON file.
+        #[arg(long)]
+        signature: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rotate the master key in the HSM / Cloud KMS to a new cryptographic generation.
+    Rotate {
+        /// Master key ID to rotate.
+        #[arg(long, default_value = "velcrux-root-kek-v1")]
+        key_id: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring key wrapping, unwrapping, signing, and verification.
+    Benchmark {
+        /// Number of benchmark iterations (default: 50).
+        #[arg(long, default_value = "50")]
+        iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4204,6 +4294,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::BdpRebalance { sub } => {
             run_bdp_rebalance(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Kms { sub } => {
+            run_kms(&cli, sub).await?;
             return Ok(());
         }
 
@@ -11894,6 +11988,266 @@ async fn run_bdp_rebalance(cli: &Cli, sub: &BdpRebalanceSubCmd) -> anyhow::Resul
                 println!(
                     "  Throughput:               {:.0} cycles/sec",
                     report.throughput_cycles_per_sec
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_kms_context_str(ctx: Option<&str>) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Some(s) = ctx {
+        for part in s.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some((k, v)) = part.split_once('=') {
+                map.insert(k.trim().to_string(), v.trim().to_string());
+            } else {
+                map.insert(part.to_string(), String::new());
+            }
+        }
+    }
+    map
+}
+
+async fn run_kms(cli: &Cli, sub: &KmsSubCmd) -> anyhow::Result<()> {
+    use rand::RngCore;
+    use velcrux_core::kms::{
+        hex_decode, hex_encode, HsmKmsBridge, KmsSignature, WrappedKeyEnvelope, KMS_KEY_LEN,
+    };
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_KMS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_kms"));
+
+    let mut bridge = HsmKmsBridge::new(state_dir, None, None)?;
+
+    match sub {
+        KmsSubCmd::Status { json } => {
+            let status = bridge.status()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== HSM / Cloud KMS Key Orchestration Bridge Status ===");
+                println!("  Master Key ID:       {}", status.master_key_id);
+                println!("  Active Provider:     {:?}", status.provider);
+                println!("  Active Key Version:  {}", status.active_key_version);
+                println!("  Key Fingerprint:     {}", status.master_key_fingerprint);
+                println!("  Security Assurance:  {}", status.security_assurance_level);
+                println!("  Managed Keys Count:  {}", status.managed_keys_count);
+                println!("  Keys Wrapped Total:  {}", status.keys_wrapped_total);
+                println!("  Keys Unwrapped Total:{}", status.keys_unwrapped_total);
+                println!(
+                    "  Signatures Produced: {}",
+                    status.signatures_generated_total
+                );
+                println!("  Key Rotations Total: {}", status.key_rotations_total);
+                println!("  Operation Failures:  {}", status.operation_failures_total);
+            }
+        }
+        KmsSubCmd::Wrap {
+            key_id,
+            purpose: _,
+            plaintext,
+            context,
+            json,
+        } => {
+            let raw_key = if let Some(p) = plaintext {
+                if let Ok(bytes) = hex_decode(p) {
+                    if bytes.len() == KMS_KEY_LEN {
+                        let mut arr = [0u8; KMS_KEY_LEN];
+                        arr.copy_from_slice(&bytes);
+                        arr
+                    } else {
+                        anyhow::bail!(
+                            "Plaintext hex decoded to {} bytes; expected {} bytes",
+                            bytes.len(),
+                            KMS_KEY_LEN
+                        );
+                    }
+                } else {
+                    anyhow::bail!("Invalid hexadecimal string for plaintext secret");
+                }
+            } else {
+                let mut buf = [0u8; KMS_KEY_LEN];
+                rand::rngs::OsRng.fill_bytes(&mut buf);
+                buf
+            };
+
+            let ctx_map = parse_kms_context_str(context.as_deref());
+            let ctx_ref = if ctx_map.is_empty() {
+                None
+            } else {
+                Some(&ctx_map)
+            };
+
+            let envelope = bridge.wrap_key(key_id, &raw_key, ctx_ref)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+            } else {
+                println!("=== Key Successfully Wrapped with Authenticated Context Binding ===");
+                println!("  Key ID:              {}", envelope.key_id);
+                println!("  Provider:            {:?}", envelope.provider);
+                println!("  Key Version:         {}", envelope.key_version);
+                println!("  Algorithm:           {}", envelope.algorithm);
+                println!("  Context Hash:        {}", envelope.context_hash_hex);
+                println!("  Nonce (Hex):         {}", envelope.nonce_hex);
+                println!("  Ciphertext (Hex):    {}", envelope.ciphertext_hex);
+                println!("  Timestamp:           {}", envelope.created_at_epoch_ms);
+            }
+        }
+        KmsSubCmd::Unwrap {
+            envelope,
+            context,
+            json,
+        } => {
+            let env_str = if std::path::Path::new(envelope).exists() {
+                std::fs::read_to_string(envelope)?
+            } else {
+                envelope.to_string()
+            };
+            let parsed_envelope: WrappedKeyEnvelope = serde_json::from_str(&env_str)
+                .map_err(|e| anyhow::anyhow!("Failed to parse wrapped key envelope JSON: {e}"))?;
+
+            let ctx_map = parse_kms_context_str(context.as_deref());
+            let ctx_ref = if ctx_map.is_empty() {
+                None
+            } else {
+                Some(&ctx_map)
+            };
+
+            let unwrapped_key = bridge.unwrap_key(&parsed_envelope, ctx_ref)?;
+            let unwrapped_hex = hex_encode(&unwrapped_key);
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "unwrapped",
+                        "key_id": parsed_envelope.key_id,
+                        "key_version": parsed_envelope.key_version,
+                        "unwrapped_key_hex": unwrapped_hex,
+                    })
+                );
+            } else {
+                println!("=== Key Successfully Unwrapped & Context Verified ===");
+                println!("  Key ID:              {}", parsed_envelope.key_id);
+                println!("  Key Version:         {}", parsed_envelope.key_version);
+                println!("  Unwrapped Key (Hex): {}", unwrapped_hex);
+            }
+        }
+        KmsSubCmd::Sign { key_id, data, json } => {
+            let sig = bridge.sign_digest(key_id, data.as_bytes())?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&sig)?);
+            } else {
+                println!("=== Digital Signature Produced via HSM / Cloud KMS ===");
+                println!("  Key ID:              {}", sig.key_id);
+                println!("  Provider:            {:?}", sig.provider);
+                println!("  Key Version:         {}", sig.key_version);
+                println!("  Algorithm:           {}", sig.algorithm);
+                println!("  Signature (Hex):     {}", sig.signature_hex);
+                println!("  Signer Fingerprint:  {}", sig.signer_fingerprint);
+                println!("  Timestamp:           {}", sig.signed_at_epoch_ms);
+            }
+        }
+        KmsSubCmd::Verify {
+            key_id,
+            data,
+            signature,
+            json,
+        } => {
+            let status = bridge.status()?;
+            let sig: KmsSignature = if let Ok(s) = std::fs::read_to_string(signature) {
+                serde_json::from_str(&s).unwrap_or_else(|_| KmsSignature {
+                    key_id: key_id.clone(),
+                    provider: status.provider,
+                    key_version: status.active_key_version,
+                    algorithm: "HMAC-BLAKE3".to_string(),
+                    signature_hex: s.trim().to_string(),
+                    signer_fingerprint: status.master_key_fingerprint.clone(),
+                    signed_at_epoch_ms: 0,
+                })
+            } else if let Ok(parsed) = serde_json::from_str::<KmsSignature>(signature) {
+                parsed
+            } else {
+                KmsSignature {
+                    key_id: key_id.clone(),
+                    provider: status.provider,
+                    key_version: status.active_key_version,
+                    algorithm: "HMAC-BLAKE3".to_string(),
+                    signature_hex: signature.trim().to_string(),
+                    signer_fingerprint: status.master_key_fingerprint.clone(),
+                    signed_at_epoch_ms: 0,
+                }
+            };
+
+            let valid = bridge.verify_signature(key_id, data.as_bytes(), &sig)?;
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": if valid { "valid" } else { "invalid" },
+                        "key_id": key_id,
+                        "verified": valid,
+                    })
+                );
+            } else {
+                println!("=== Signature Verification Outcome ===");
+                println!("  Key ID:              {}", key_id);
+                println!(
+                    "  Verified:            {}",
+                    if valid { "VALID" } else { "INVALID" }
+                );
+            }
+        }
+        KmsSubCmd::Rotate { key_id, json } => {
+            let report = bridge.rotate_key(key_id)?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Master Key Rotated Successfully ===");
+                println!("  Key ID:           {}", report.key_id);
+                println!("  Previous Version: {}", report.previous_version);
+                println!("  New Version:      {}", report.new_version);
+                println!("  New Fingerprint:  {}", report.new_fingerprint);
+                println!("  Timestamp:        {}", report.rotated_at_epoch_ms);
+            }
+        }
+        KmsSubCmd::Benchmark { iterations, json } => {
+            let report = HsmKmsBridge::run_benchmark(*iterations);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== HSM / Cloud KMS Key Orchestration Bridge Benchmark ===");
+                println!("  Provider:                 {}", report.provider);
+                println!("  Iterations:               {}", report.iterations);
+                println!(
+                    "  Key Wrap Latency:         {:.2} µs/op",
+                    report.key_wrap_latency_us
+                );
+                println!(
+                    "  Key Unwrap Latency:       {:.2} µs/op",
+                    report.key_unwrap_latency_us
+                );
+                println!(
+                    "  Signing Latency:          {:.2} µs/op",
+                    report.signing_latency_us
+                );
+                println!(
+                    "  Verification Latency:     {:.2} µs/op",
+                    report.verification_latency_us
+                );
+                println!(
+                    "  Total Elapsed:            {:.2} ms",
+                    report.total_elapsed_ms
                 );
             }
         }

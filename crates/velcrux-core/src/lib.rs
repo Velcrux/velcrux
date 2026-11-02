@@ -30,6 +30,7 @@ pub mod crypto;
 pub mod did;
 pub mod ec;
 pub mod error;
+pub mod kms;
 pub mod manifest;
 pub mod netem;
 pub mod protocol;
@@ -106,6 +107,11 @@ pub use ec::{
     SHARD_VERSION,
 };
 pub use error::{Result, VelcruxError};
+pub use kms::{
+    hex_decode as kms_hex_decode, hex_encode as kms_hex_encode, HsmKmsBridge, KeyRotationReport,
+    KmsBenchmarkReport, KmsBridgeConfig, KmsKeyMetadata, KmsKeyPurpose, KmsProviderType,
+    KmsSignature, KmsStatusReport, WrappedKeyEnvelope, KMS_KEY_LEN, KMS_NONCE_LEN,
+};
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,

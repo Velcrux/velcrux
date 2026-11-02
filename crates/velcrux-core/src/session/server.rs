@@ -521,6 +521,22 @@ pub struct ServerStats {
     pub bdp_rebalance_rebalance_latency_nanoseconds: AtomicU64,
     /// Total Head-of-Line (HOL) blocking prevention interventions (Option CR).
     pub bdp_rebalance_hol_prevention_events_total: AtomicU64,
+    /// Total cryptographic operations processed by HSM / Cloud KMS (Option CS).
+    pub hsm_kms_operations_total: AtomicU64,
+    /// Total HSM / Cloud KMS operation failures or tamper alerts (Option CS).
+    pub hsm_kms_operation_failures_total: AtomicU64,
+    /// Total key encryption keys (KEKs) wrapped via HSM / Cloud KMS (Option CS).
+    pub hsm_kms_keys_wrapped_total: AtomicU64,
+    /// Total key encryption keys (KEKs) unwrapped via HSM / Cloud KMS (Option CS).
+    pub hsm_kms_keys_unwrapped_total: AtomicU64,
+    /// Total digital signatures produced by HSM / Cloud KMS (Option CS).
+    pub hsm_kms_signatures_generated_total: AtomicU64,
+    /// Active KMS provider code (0=Software, 1=Aws, 2=Gcp, 3=Azure, 4=Vault, 5=Nitro) (Option CS).
+    pub hsm_kms_active_provider_id: AtomicU64,
+    /// Latest observed HSM / Cloud KMS operation latency in nanoseconds (Option CS).
+    pub hsm_kms_operation_latency_nanoseconds: AtomicU64,
+    /// Total master key rotation cycles executed (Option CS).
+    pub hsm_kms_key_rotations_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -753,6 +769,14 @@ impl Default for ServerStats {
             bdp_rebalance_loss_triggered_throttles_total: AtomicU64::new(0),
             bdp_rebalance_rebalance_latency_nanoseconds: AtomicU64::new(0),
             bdp_rebalance_hol_prevention_events_total: AtomicU64::new(0),
+            hsm_kms_operations_total: AtomicU64::new(0),
+            hsm_kms_operation_failures_total: AtomicU64::new(0),
+            hsm_kms_keys_wrapped_total: AtomicU64::new(0),
+            hsm_kms_keys_unwrapped_total: AtomicU64::new(0),
+            hsm_kms_signatures_generated_total: AtomicU64::new(0),
+            hsm_kms_active_provider_id: AtomicU64::new(0),
+            hsm_kms_operation_latency_nanoseconds: AtomicU64::new(0),
+            hsm_kms_key_rotations_total: AtomicU64::new(0),
         }
     }
 }

@@ -4899,6 +4899,108 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_bdp_rebalance_rebalance_latency_nanoseconds` | `gauge` | Latest observed BDP rebalance computation latency in nanoseconds. |
 | `velcrux_bdp_rebalance_hol_prevention_events_total` | `counter` | Total Head-of-Line (HOL) blocking prevention interventions. |
 
+## 66. Hardware Security Module (HSM) PKCS#11 & Cloud KMS Bridge Runbook & Configuration Reference (ADR-061, Option CS)
+
+The Hardware Security Module (HSM) PKCS#11 & Cloud KMS Key Orchestration Bridge (`ADR-061`) establishes an enterprise root-of-trust across Velcrux clusters. It enforces cryptographic separation for staging vault master keys, recipient post-quantum keypairs, and manifest signing credentials, guaranteeing that root Key Encryption Keys (KEKs) remain strictly confined within certified HSM hardware boundaries or Cloud KMS endpoints.
+
+### Operator CLI Reference
+
+#### 1. Inspect HSM / Cloud KMS Bridge Status
+```bash
+# Human-readable status summary
+velcrux kms status
+
+# Machine-readable JSON output
+velcrux --json kms status
+```
+
+#### 2. Wrap Secret with Context Binding
+```bash
+# Wrap a 32-byte secret (DEK) with tenant-specific encryption context
+velcrux kms wrap \
+  --plaintext "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" \
+  --context "tenant_id=tenant-alpha,env=prod,purpose=staging_vault" \
+  --json > envelope.json
+```
+
+#### 3. Unwrap Secret & Authenticate Context
+```bash
+# Unwrap ciphertext envelope, authenticating context against tampering
+velcrux kms unwrap \
+  --envelope envelope.json \
+  --context "tenant_id=tenant-alpha,env=prod,purpose=staging_vault"
+```
+
+#### 4. Produce Digital Signature via HSM / KMS
+```bash
+# Sign manifest or provenance token digest using the root master key
+velcrux kms sign \
+  --data "velcrux-manifest-root-merkle-proof-2026" \
+  --json > signature.json
+```
+
+#### 5. Verify Digital Signature
+```bash
+# Verify signature against payload data
+velcrux kms verify \
+  --data "velcrux-manifest-root-merkle-proof-2026" \
+  --signature signature.json
+```
+
+#### 6. Rotate Master Key Encryption Key
+```bash
+# Atomically rotate master key to a new cryptographic generation
+velcrux kms rotate --key-id "velcrux-root-kek-v1"
+```
+
+#### 7. Microsecond Cryptographic Benchmarking
+```bash
+# Run benchmark measuring wrap, unwrap, sign, verify, and rotate operations
+velcrux kms benchmark --iterations 50
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_KMS_DIR` | `/tmp/velcrux_kms` | Directory where active HSM token state, wrapped envelopes catalog, and key metadata are persisted. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_hsm_kms_operations_total` | `counter` | Total cryptographic operations processed by HSM / Cloud KMS. |
+| `velcrux_hsm_kms_operation_failures_total` | `counter` | Total HSM / Cloud KMS operation failures or tamper alerts. |
+| `velcrux_hsm_kms_keys_wrapped_total` | `counter` | Total key encryption keys (KEKs) wrapped via HSM / Cloud KMS. |
+| `velcrux_hsm_kms_keys_unwrapped_total` | `counter` | Total key encryption keys (KEKs) unwrapped via HSM / Cloud KMS. |
+| `velcrux_hsm_kms_signatures_generated_total` | `counter` | Total digital signatures produced by HSM / Cloud KMS. |
+| `velcrux_hsm_kms_active_provider_id` | `gauge` | Active KMS provider code (0=SoftwareHsm, 1=AwsKms, 2=GcpKms, 3=Azure, 4=Vault, 5=Nitro). |
+| `velcrux_hsm_kms_operation_latency_nanoseconds` | `gauge` | Latest observed HSM / Cloud KMS operation latency in nanoseconds. |
+| `velcrux_hsm_kms_key_rotations_total` | `counter` | Total master key rotation cycles executed. |
+
+### Incident Response Runbooks
+
+#### Runbook 1: Scheduled Master Key Rotation & Staging Vault Verification
+1. Verify cluster health: `velcrux kms status`.
+2. Trigger rotation: `velcrux kms rotate --key-id "velcrux-root-kek-v1"`.
+3. Confirm new version: `velcrux kms status --json | jq .active_key_version`.
+4. Validate test envelope roundtrip:
+   ```bash
+   velcrux kms wrap --context "test=rotation_check" --json > /tmp/rot_test.json
+   velcrux kms unwrap --envelope /tmp/rot_test.json --context "test=rotation_check"
+   ```
+
+#### Runbook 2: Context Replay Tamper Alert Remediation
+- **Symptom**: `velcrux_hsm_kms_operation_failures_total` incrementing rapidly.
+- **Root Cause**: An attacker or misconfigured tenant is attempting to unwrap ciphertext envelopes using mismatched context headers (e.g. forging `tenant_id`).
+- **Remediation**:
+  1. Inspect server audit logs for `context mismatch` or `AEAD authentication tag failure`.
+  2. Verify that requesting client TLS certificate identity matches the `tenant_id` bound in the envelope.
+  3. Quarantining violating source IP or mutual TLS identity at the boundary proxy.
+
+
 
 
 
