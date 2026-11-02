@@ -22,6 +22,7 @@
 #[allow(missing_docs)]
 pub mod audit;
 pub mod auth;
+pub mod bdp_rebalance;
 pub mod chaos;
 pub mod chunking;
 pub mod consensus;
@@ -65,6 +66,13 @@ pub use auth::{
     Authenticator, AuthorizedKeys, Authorizer, CrlStore, FileAuthorizer, Grant,
     HybridAuthenticator, MtlsAuthenticator, Op, PermSet, PubkeyAuthenticator, VerifiedAttestation,
     ATTESTATION_DOMAIN_SEPARATOR, ATTESTATION_VERSION_1, DEFAULT_SIG_EXT,
+};
+pub use bdp_rebalance::{
+    compute_bdp_bytes, BdpRebalanceBenchmarkReport, BdpRebalanceConfig, BdpRebalanceEngine,
+    BdpRebalanceStatusReport, RebalanceDecision, SubflowAllocation, SubflowCongestionState,
+    SubflowFeedback, SubflowRebalanceState, SubflowType, DEFAULT_ANTI_FLAPPING_HYSTERESIS_MS,
+    DEFAULT_LOSS_DEFLECT_PPM, DEFAULT_LOSS_PENALTY_GAMMA, DEFAULT_LOSS_THROTTLE_PPM,
+    DEFAULT_REBALANCE_INTERVAL_MS, MAX_SUBFLOW_BDP_CEILING_BYTES, MIN_SUBFLOW_BDP_FLOOR_BYTES,
 };
 pub use chaos::{
     run_chaos_benchmark, ChaosBenchmarkReport, ChaosConfig, ChaosEngine, ChaosOutcome, ChaosPrng,

@@ -4822,6 +4822,84 @@ Exposed under `/metrics` on all Velcrux nodes:
 | `velcrux_vault_seal_latency_nanoseconds` | `gauge` | Latest observed vault seal latency in nanoseconds. |
 | `velcrux_vault_unseal_latency_nanoseconds` | `gauge` | Latest observed vault unseal latency in nanoseconds. |
 
+---
+
+## 65. Autonomous Dynamic BDP Multi-Path Re-balancing Runbook & Configuration Reference (ADR-060, Option CR)
+
+Velcrux incorporates an Autonomous Dynamic BDP Multi-Path Re-balancing Engine (`ADR-060`) to continuously optimize bandwidth utilization, prevent Head-of-Line (HOL) blocking, and dynamically steer traffic away from degrading links across heterogeneous bonded WAN networks (terrestrial fiber, enterprise Ethernet, Starlink satellite, and 5G cellular).
+
+### Operator CLI Runbook
+
+#### 1. Inspect Controller Status
+```bash
+# View human-readable summary of active bonded subflows, aggregate BDP, and deflections
+velcrux bdp-rebalance status
+
+# Structured JSON output for automated orchestration
+velcrux --json bdp-rebalance status
+```
+
+#### 2. Trigger Real-Time Rebalance Evaluation
+```bash
+# Run a single evaluation cycle recalculating per-subflow BDP windows and D-DWRR weights
+velcrux bdp-rebalance evaluate
+
+# Machine-readable JSON allocation report
+velcrux --json bdp-rebalance evaluate
+```
+
+#### 3. Proactively Deflect Traffic Away from a Degraded Link
+```bash
+# Deflect traffic away from a fading satellite link to the best healthy terrestrial link
+velcrux bdp-rebalance deflect --from wan-starlink-backup
+
+# Explicitly steer traffic to a designated fiber link
+velcrux bdp-rebalance deflect --from wan-cellular-5g --to wan-fiber-primary
+```
+
+#### 4. List All Registered Subflows & Real-Time Telemetry
+```bash
+# Inspect all bonded interfaces, SRTT, loss ratios, allocated BDP, and congestion states
+velcrux bdp-rebalance subflows
+
+# Machine-readable telemetry array
+velcrux --json bdp-rebalance subflows
+```
+
+#### 5. Reset Subflow Allocations to Nominal Baseline
+```bash
+# Reset all subflows, clearing throttles and deflections back to factory baseline
+velcrux bdp-rebalance reset
+```
+
+#### 6. Microsecond Performance Benchmarking
+```bash
+# Benchmark feedback ingestion, D-DWRR calculation, and deflection latency across 100 iterations
+velcrux bdp-rebalance benchmark --iterations 100 --subflows 4
+```
+
+### Environment Configuration
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `VELCRUX_BDP_REBALANCE_DIR` | `/tmp/velcrux_bdp_rebalance` | Directory where active multi-path BDP configuration and subflows state are persisted. |
+
+### Prometheus Observability
+
+Exposed under `/metrics` on all Velcrux nodes:
+
+| Metric Name | Type | Description |
+| :--- | :--- | :--- |
+| `velcrux_bdp_rebalance_cycles_total` | `counter` | Total dynamic BDP multi-path rebalance evaluation cycles completed. |
+| `velcrux_bdp_rebalance_subflow_deflections_total` | `counter` | Total subflow traffic deflections triggered due to loss or delay inflation. |
+| `velcrux_bdp_rebalance_active_subflows` | `gauge` | Current count of active bonded WAN subflows. |
+| `velcrux_bdp_rebalance_aggregate_bdp_bytes` | `gauge` | Aggregate bonded BDP window in bytes across all subflows. |
+| `velcrux_bdp_rebalance_fast_link_utilization_ratio` | `gauge` | Ratio of aggregate BDP carried on fast terrestrial/fiber paths. |
+| `velcrux_bdp_rebalance_loss_triggered_throttles_total` | `counter` | Total subflow window throttling events triggered by packet loss. |
+| `velcrux_bdp_rebalance_rebalance_latency_nanoseconds` | `gauge` | Latest observed BDP rebalance computation latency in nanoseconds. |
+| `velcrux_bdp_rebalance_hol_prevention_events_total` | `counter` | Total Head-of-Line (HOL) blocking prevention interventions. |
+
+
 
 
 

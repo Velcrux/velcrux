@@ -375,6 +375,28 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
         .vault_unseal_latency_nanoseconds
         .load(Ordering::Relaxed);
 
+    let bdp_reb_cycles = stats.bdp_rebalance_cycles_total.load(Ordering::Relaxed);
+    let bdp_reb_deflections = stats
+        .bdp_rebalance_subflow_deflections_total
+        .load(Ordering::Relaxed);
+    let bdp_reb_subflows = stats.bdp_rebalance_active_subflows.load(Ordering::Relaxed);
+    let bdp_reb_agg_bytes = stats
+        .bdp_rebalance_aggregate_bdp_bytes
+        .load(Ordering::Relaxed);
+    let bdp_reb_fast_ratio = stats
+        .bdp_rebalance_fast_link_utilization_ratio_ppm
+        .load(Ordering::Relaxed) as f64
+        / 1_000_000.0;
+    let bdp_reb_throttles = stats
+        .bdp_rebalance_loss_triggered_throttles_total
+        .load(Ordering::Relaxed);
+    let bdp_reb_lat_ns = stats
+        .bdp_rebalance_rebalance_latency_nanoseconds
+        .load(Ordering::Relaxed);
+    let bdp_reb_hol = stats
+        .bdp_rebalance_hol_prevention_events_total
+        .load(Ordering::Relaxed);
+
     let loss_ratio = stats.quic_loss_ratio_ppm.load(Ordering::Relaxed) as f64 / 1_000_000.0;
     let bytes_in_flight = stats.quic_bytes_in_flight.load(Ordering::Relaxed);
 
@@ -991,7 +1013,31 @@ pub fn format_prometheus_metrics(stats: &ServerStats) -> String {
          velcrux_vault_seal_latency_nanoseconds {vault_seal_lat_ns}\n\n\
          # HELP velcrux_vault_unseal_latency_nanoseconds Latest observed vault unseal latency in nanoseconds\n\
          # TYPE velcrux_vault_unseal_latency_nanoseconds gauge\n\
-         velcrux_vault_unseal_latency_nanoseconds {vault_unseal_lat_ns}\n"
+         velcrux_vault_unseal_latency_nanoseconds {vault_unseal_lat_ns}\n\n\
+         # HELP velcrux_bdp_rebalance_cycles_total Total dynamic BDP multi-path rebalance evaluation cycles completed\n\
+         # TYPE velcrux_bdp_rebalance_cycles_total counter\n\
+         velcrux_bdp_rebalance_cycles_total {bdp_reb_cycles}\n\n\
+         # HELP velcrux_bdp_rebalance_subflow_deflections_total Total subflow traffic deflections triggered due to loss or delay inflation\n\
+         # TYPE velcrux_bdp_rebalance_subflow_deflections_total counter\n\
+         velcrux_bdp_rebalance_subflow_deflections_total {bdp_reb_deflections}\n\n\
+         # HELP velcrux_bdp_rebalance_active_subflows Current count of active bonded WAN subflows\n\
+         # TYPE velcrux_bdp_rebalance_active_subflows gauge\n\
+         velcrux_bdp_rebalance_active_subflows {bdp_reb_subflows}\n\n\
+         # HELP velcrux_bdp_rebalance_aggregate_bdp_bytes Aggregate bonded BDP window in bytes across all subflows\n\
+         # TYPE velcrux_bdp_rebalance_aggregate_bdp_bytes gauge\n\
+         velcrux_bdp_rebalance_aggregate_bdp_bytes {bdp_reb_agg_bytes}\n\n\
+         # HELP velcrux_bdp_rebalance_fast_link_utilization_ratio Ratio of aggregate BDP carried on fast terrestrial/fiber paths\n\
+         # TYPE velcrux_bdp_rebalance_fast_link_utilization_ratio gauge\n\
+         velcrux_bdp_rebalance_fast_link_utilization_ratio {bdp_reb_fast_ratio:.6}\n\n\
+         # HELP velcrux_bdp_rebalance_loss_triggered_throttles_total Total subflow window throttling events triggered by packet loss\n\
+         # TYPE velcrux_bdp_rebalance_loss_triggered_throttles_total counter\n\
+         velcrux_bdp_rebalance_loss_triggered_throttles_total {bdp_reb_throttles}\n\n\
+         # HELP velcrux_bdp_rebalance_rebalance_latency_nanoseconds Latest observed BDP rebalance computation latency in nanoseconds\n\
+         # TYPE velcrux_bdp_rebalance_rebalance_latency_nanoseconds gauge\n\
+         velcrux_bdp_rebalance_rebalance_latency_nanoseconds {bdp_reb_lat_ns}\n\n\
+         # HELP velcrux_bdp_rebalance_hol_prevention_events_total Total Head-of-Line (HOL) blocking prevention interventions\n\
+         # TYPE velcrux_bdp_rebalance_hol_prevention_events_total counter\n\
+         velcrux_bdp_rebalance_hol_prevention_events_total {bdp_reb_hol}\n"
     )
 }
 

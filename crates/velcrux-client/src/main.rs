@@ -894,6 +894,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: VaultSubCmd,
     },
+    /// Autonomous dynamic BDP multi-path re-balancing with real-time loss feedback (Option CR).
+    BdpRebalance {
+        #[command(subcommand)]
+        sub: BdpRebalanceSubCmd,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1858,6 +1863,58 @@ enum VaultSubCmd {
         /// Payload chunk size in bytes (default: 65536).
         #[arg(long, default_value = "65536")]
         chunk_size: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum BdpRebalanceSubCmd {
+    /// Show current multi-path BDP re-balancing configuration, aggregate windows, and metrics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate subflow telemetry, recompute BDP allocations, and update D-DWRR weights.
+    Evaluate {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Proactively deflect traffic from a degraded subflow to a designated or best healthy link.
+    Deflect {
+        /// Degraded subflow path ID to deflect from.
+        #[arg(long)]
+        from: String,
+        /// Optional target subflow path ID to deflect to (defaults to best healthy link).
+        #[arg(long)]
+        to: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all registered multi-path subflows and their current BDP allocations and loss states.
+    Subflows {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reset all subflows to nominal baseline bandwidth, delay, and BDP allocations.
+    Reset {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run microsecond performance benchmark measuring feedback ingestion, D-DWRR calculation, and deflection.
+    Benchmark {
+        /// Number of benchmark iterations (default: 100).
+        #[arg(long, default_value = "100")]
+        iterations: usize,
+        /// Number of bonded subflows to simulate (default: 4).
+        #[arg(long, default_value = "4")]
+        subflows: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4143,6 +4200,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Vault { sub } => {
             run_vault(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::BdpRebalance { sub } => {
+            run_bdp_rebalance(&cli, sub).await?;
             return Ok(());
         }
 
@@ -11644,6 +11705,196 @@ async fn run_vault(cli: &Cli, sub: &VaultSubCmd) -> anyhow::Result<()> {
                     report.e2e_unseal_latency_us
                 );
                 println!("  Total Elapsed Time:   {:.2} ms", report.total_elapsed_ms);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_bdp_rebalance(cli: &Cli, sub: &BdpRebalanceSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::bdp_rebalance::BdpRebalanceEngine;
+
+    let is_json = cli_log_json(cli);
+    let state_dir = std::env::var("VELCRUX_BDP_REBALANCE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("velcrux_bdp_rebalance"));
+
+    let mut engine = BdpRebalanceEngine::new(state_dir, None, None)?;
+
+    match sub {
+        BdpRebalanceSubCmd::Status { json } => {
+            let status = engine.status()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Autonomous Dynamic BDP Multi-Path Re-balancing Status ===");
+                println!(
+                    "  Controller State:        {}",
+                    if status.enabled {
+                        "ACTIVE (Autonomous)"
+                    } else {
+                        "DISABLED"
+                    }
+                );
+                println!(
+                    "  Active Bonded Subflows:  {}",
+                    status.active_subflows_count
+                );
+                println!(
+                    "  Aggregate Bonded BDP:    {:.2} MB ({} bytes)",
+                    status.aggregate_bdp_bytes as f64 / (1024.0 * 1024.0),
+                    status.aggregate_bdp_bytes
+                );
+                println!(
+                    "  Rebalance Cycles Total:  {}",
+                    status.total_rebalance_cycles
+                );
+                println!("  Traffic Deflections:     {}", status.total_deflections);
+                println!(
+                    "  Loss-Triggered Throttles:{}",
+                    status.loss_triggered_throttles
+                );
+                println!(
+                    "  Fast-Link Ratio:         {:.2}%",
+                    status.fast_link_utilization_ratio_ppm as f64 / 10_000.0
+                );
+                println!(
+                    "  Latest Cycle Latency:    {:.2} µs",
+                    status.mean_rebalance_latency_ns as f64 / 1_000.0
+                );
+            }
+        }
+        BdpRebalanceSubCmd::Evaluate { json } => {
+            let decision = engine.evaluate_rebalance()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&decision)?);
+            } else {
+                println!("=== Dynamic BDP Rebalance Decision Cycle ===");
+                println!(
+                    "  Aggregate BDP:         {:.2} MB",
+                    decision.aggregate_bdp_bytes as f64 / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  Deflections Executed:  {}",
+                    decision.deflections_triggered
+                );
+                println!(
+                    "  HOL Prevention Active: {}",
+                    if decision.hol_prevention_active {
+                        "YES (Slices Deflected)"
+                    } else {
+                        "NO (Nominal Flow)"
+                    }
+                );
+                println!(
+                    "  Cycle Compute Latency: {:.2} µs",
+                    decision.rebalance_latency_nanos as f64 / 1_000.0
+                );
+                println!("--- Subflow Allocations & D-DWRR Weights ---");
+                for alloc in &decision.allocations {
+                    println!(
+                        "  [{}] BDP: {} -> {} bytes | Weight: {} -> {} | State: {} | Deflected: {}",
+                        alloc.path_id,
+                        alloc.previous_bdp_bytes,
+                        alloc.new_bdp_bytes,
+                        alloc.previous_weight,
+                        alloc.new_weight,
+                        alloc.congestion_state,
+                        alloc.is_deflected
+                    );
+                }
+            }
+        }
+        BdpRebalanceSubCmd::Deflect { from, to, json } => {
+            let total = engine.proactively_deflect_traffic(from, to.as_deref())?;
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "deflected",
+                        "from_path": from,
+                        "to_path": to,
+                        "total_deflections": total,
+                    })
+                );
+            } else {
+                println!("=== Proactive Traffic Deflection Executed ===");
+                println!("  Deflected traffic away from '{}'", from);
+                if let Some(ref target) = to {
+                    println!("  Traffic rerouted to target subflow '{}'", target);
+                } else {
+                    println!("  Traffic rerouted to highest-capacity healthy subflow");
+                }
+                println!("  Total Deflections Recorded: {}", total);
+            }
+        }
+        BdpRebalanceSubCmd::Subflows { json } => {
+            let list = engine.list_subflows()?;
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else {
+                println!("=== Bonded Multi-Path Subflows Telemetry & Allocations ===");
+                for s in &list {
+                    println!(
+                        "  [{}] Type: {:?} | BDP: {:.2} MB | SRTT: {:.2} ms | MinRTT: {:.2} ms | BW: {:.1} Mbps | Loss: {:.2}% | Weight: {} | State: {}",
+                        s.path_id,
+                        s.subflow_type,
+                        s.allocated_bdp_window_bytes as f64 / (1024.0 * 1024.0),
+                        s.smoothed_rtt_micros as f64 / 1_000.0,
+                        s.min_rtt_micros as f64 / 1_000.0,
+                        s.estimated_bandwidth_bps as f64 / 1_000_000.0,
+                        s.smoothed_loss_ratio_ppm as f64 / 10_000.0,
+                        s.scheduler_weight,
+                        s.congestion_state
+                    );
+                }
+            }
+        }
+        BdpRebalanceSubCmd::Reset { json } => {
+            engine.reset()?;
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "status": "reset", "nominal": true })
+                );
+            } else {
+                println!("=== Multi-Path Subflows Reset to Nominal Baseline ===");
+                println!("  All BDP windows, weights, and loss states restored to initial configuration.");
+            }
+        }
+        BdpRebalanceSubCmd::Benchmark {
+            iterations,
+            subflows,
+            json,
+        } => {
+            let report = BdpRebalanceEngine::run_benchmark(*iterations, *subflows);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Autonomous Dynamic BDP Re-balancing Benchmark ===");
+                println!("  Iterations:               {}", report.iterations);
+                println!("  Simulated Subflows:       {}", report.subflow_count);
+                println!(
+                    "  Feedback Ingestion:       {:.2} ns/subflow",
+                    report.feedback_ingestion_latency_ns
+                );
+                println!(
+                    "  D-DWRR Rebalance Calc:    {:.2} ns/cycle",
+                    report.d_dwrr_rebalance_calc_latency_ns
+                );
+                println!(
+                    "  Proactive Deflection:     {:.2} ns/event",
+                    report.proactive_deflection_latency_ns
+                );
+                println!(
+                    "  Full Cycle Latency:       {:.2} ns",
+                    report.full_cycle_latency_ns
+                );
+                println!(
+                    "  Throughput:               {:.0} cycles/sec",
+                    report.throughput_cycles_per_sec
+                );
             }
         }
     }

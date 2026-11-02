@@ -505,6 +505,22 @@ pub struct ServerStats {
     pub vault_seal_latency_nanoseconds: AtomicU64,
     /// Latest observed vault unseal latency in nanoseconds (Option CQ).
     pub vault_unseal_latency_nanoseconds: AtomicU64,
+    /// Total dynamic BDP multi-path rebalance evaluation cycles completed (Option CR).
+    pub bdp_rebalance_cycles_total: AtomicU64,
+    /// Total subflow traffic deflections triggered due to loss or delay inflation (Option CR).
+    pub bdp_rebalance_subflow_deflections_total: AtomicU64,
+    /// Current count of active bonded WAN subflows (Option CR).
+    pub bdp_rebalance_active_subflows: AtomicU64,
+    /// Aggregate bonded BDP window in bytes across all subflows (Option CR).
+    pub bdp_rebalance_aggregate_bdp_bytes: AtomicU64,
+    /// Ratio of aggregate BDP carried on fast terrestrial/fiber paths in PPM (Option CR).
+    pub bdp_rebalance_fast_link_utilization_ratio_ppm: AtomicU64,
+    /// Total subflow window throttling events triggered by packet loss (Option CR).
+    pub bdp_rebalance_loss_triggered_throttles_total: AtomicU64,
+    /// Latest observed BDP rebalance computation latency in nanoseconds (Option CR).
+    pub bdp_rebalance_rebalance_latency_nanoseconds: AtomicU64,
+    /// Total Head-of-Line (HOL) blocking prevention interventions (Option CR).
+    pub bdp_rebalance_hol_prevention_events_total: AtomicU64,
 }
 
 impl Default for ServerStats {
@@ -729,6 +745,14 @@ impl Default for ServerStats {
             vault_verification_failures_total: AtomicU64::new(0),
             vault_seal_latency_nanoseconds: AtomicU64::new(0),
             vault_unseal_latency_nanoseconds: AtomicU64::new(0),
+            bdp_rebalance_cycles_total: AtomicU64::new(0),
+            bdp_rebalance_subflow_deflections_total: AtomicU64::new(0),
+            bdp_rebalance_active_subflows: AtomicU64::new(4),
+            bdp_rebalance_aggregate_bdp_bytes: AtomicU64::new(32 * 1024 * 1024),
+            bdp_rebalance_fast_link_utilization_ratio_ppm: AtomicU64::new(850_000),
+            bdp_rebalance_loss_triggered_throttles_total: AtomicU64::new(0),
+            bdp_rebalance_rebalance_latency_nanoseconds: AtomicU64::new(0),
+            bdp_rebalance_hol_prevention_events_total: AtomicU64::new(0),
         }
     }
 }
