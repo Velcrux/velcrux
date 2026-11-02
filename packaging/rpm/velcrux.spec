@@ -70,3 +70,4 @@ exit 0
 %changelog
 * Mon Nov 02 2026 Velcrux Core Team <maintainers@velcrux.io> - 0.1.0-1
 - Initial production release v0.1.0 of Velcrux and Velcruxd
+

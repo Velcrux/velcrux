@@ -59,3 +59,4 @@ class Velcrux < Formula
     assert_match "velcruxd server daemon", shell_output("#{bin}/velcruxd --help")
   end
 end
+

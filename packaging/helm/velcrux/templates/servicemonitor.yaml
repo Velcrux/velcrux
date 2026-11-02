@@ -21,3 +21,4 @@ spec:
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
       path: /metrics
 {{- end }}
+

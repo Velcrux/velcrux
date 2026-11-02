@@ -18,3 +18,4 @@ Installers:
         PortableCommandAlias: velcruxd
 ManifestType: singleton
 ManifestVersion: 1.6.0
+

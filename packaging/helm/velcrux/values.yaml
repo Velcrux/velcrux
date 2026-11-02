@@ -94,3 +94,4 @@ server:
     stateDb: "/var/lib/velcrux/state.db"
     preallocate: true
     minFreeBytes: 10737418240 # 10 GiB
+

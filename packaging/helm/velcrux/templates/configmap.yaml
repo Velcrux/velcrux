@@ -36,3 +36,4 @@ data:
     identity = "admin"
     role = "admin"
     paths = ["/"]
+
