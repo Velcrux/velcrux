@@ -31,3 +31,4 @@ subjects:
   - kind: ServiceAccount
     name: velcrux-operator
     namespace: velcrux-system
+

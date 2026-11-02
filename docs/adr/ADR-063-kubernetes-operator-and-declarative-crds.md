@@ -79,3 +79,4 @@ As Velcrux is deployed in modern cloud-native environments (AWS EKS, GCP GKE, Az
   - `velcrux k8s validate --file <manifest> --json`
   - `velcrux k8s reconcile --file <manifest> --json`
   - `velcrux k8s reconcile --simulate-failure <err> --json`
+
