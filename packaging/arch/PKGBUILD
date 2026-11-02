@@ -1,0 +1,37 @@
+# Maintainer: Velcrux Core Team <maintainers@velcrux.io>
+pkgname=velcrux-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="High-throughput, resumable, verifiable bulk data transfer over QUIC"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Velcrux/velcrux"
+license=('Apache-2.0' 'MIT')
+provides=('velcrux' 'velcruxd')
+conflicts=('velcrux')
+depends=('glibc' 'ca-certificates')
+optdepends=(
+    'systemd: for managing velcruxd as a background daemon service'
+)
+source_x86_64=("https://github.com/Velcrux/velcrux/releases/download/v${pkgver}/velcrux-v${pkgver}-linux-amd64.tar.gz")
+source_aarch64=("https://github.com/Velcrux/velcrux/releases/download/v${pkgver}/velcrux-v${pkgver}-linux-arm64.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    cd "${srcdir}/velcrux-v${pkgver}-linux-${CARCH/x86_64/amd64}" 2>/dev/null || cd "${srcdir}"
+
+    install -Dm755 velcrux "${pkgdir}/usr/bin/velcrux"
+    install -Dm755 velcruxd "${pkgdir}/usr/bin/velcruxd"
+
+    # Shell completions
+    if [ -d completions ]; then
+        install -Dm644 completions/velcrux.bash "${pkgdir}/usr/share/bash-completion/completions/velcrux"
+        install -Dm644 completions/_velcrux "${pkgdir}/usr/share/zsh/site-functions/_velcrux"
+        install -Dm644 completions/velcrux.fish "${pkgdir}/usr/share/fish/vendor_completions.d/velcrux.fish"
+    fi
+
+    # Documentation and Licenses
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+    install -Dm644 LICENSE-APACHE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-APACHE"
+    install -Dm644 LICENSE-MIT "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
+}

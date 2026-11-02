@@ -88,7 +88,36 @@ Download Pipeline:
 
 ## Installation and Build
 
-### Quick Install (Pre-built Binaries)
+### Package Managers & Kubernetes
+
+**Homebrew (macOS & Linux):**
+```bash
+brew install velcrux/tap/velcrux
+brew services start velcrux   # optional: run velcruxd background daemon
+```
+
+**Debian / Ubuntu:**
+```bash
+curl -fsSLO https://github.com/Velcrux/velcrux/releases/latest/download/velcrux_0.1.0_amd64.deb
+sudo dpkg -i velcrux_0.1.0_amd64.deb
+sudo systemctl enable --now velcruxd
+```
+
+**Windows (Scoop & Winget):**
+```powershell
+scoop install velcrux
+# or
+winget install Velcrux.Velcrux
+```
+
+**Kubernetes (Helm Chart):**
+```bash
+helm upgrade --install velcrux packaging/helm/velcrux/ \
+  --namespace velcrux \
+  --create-namespace
+```
+
+### Direct Download & Script Install
 
 **Linux & macOS:**
 ```bash
@@ -100,11 +129,13 @@ curl -fsSL https://raw.githubusercontent.com/Velcrux/velcrux/main/install.sh | b
 irm https://raw.githubusercontent.com/Velcrux/velcrux/main/install.ps1 | iex
 ```
 
-Or download the pre-compiled binary archives directly from [GitHub Releases](https://github.com/Velcrux/velcrux/releases). Each release contains:
+Or download pre-compiled binary archives directly from [GitHub Releases](https://github.com/Velcrux/velcrux/releases). Each release contains:
 - `velcrux` / `velcrux.exe` (CLI client)
 - `velcruxd` / `velcruxd.exe` (Server daemon)
 - Pre-generated shell completions (`bash`, `zsh`, `fish`, `powershell`)
-- Cryptographic checksums (`SHA256SUMS.txt`)
+- Debian packages (`.deb`) and Helm chart archive (`.tgz`)
+- Cryptographic checksums (`SHA256SUMS.txt` and `BLAKE3SUMS.txt`)
+- Multi-arch Docker container images at `ghcr.io/velcrux/velcrux`
 
 ### Platform Support
 

@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "velcrux.fullname" . }}-config
+  labels:
+    {{- include "velcrux.labels" . | nindent 4 }}
+data:
+  server.toml: |
+    [network]
+    listen = "0.0.0.0:{{ .Values.service.quicPort }}"
+    max_bdp_window = {{ .Values.server.quic.maxBdpWindow }}
+    max_concurrent_streams = {{ .Values.server.quic.maxConcurrentStreams }}
+    idle_timeout_ms = {{ .Values.server.quic.idleTimeoutMs }}
+
+    [storage]
+    backend = "{{ .Values.server.storage.backend }}"
+    data_dir = "{{ .Values.server.storage.dataDir }}"
+    staging_dir = "{{ .Values.server.storage.stagingDir }}"
+    chunk_store_dir = "{{ .Values.server.storage.chunkStoreDir }}"
+    state_db = "{{ .Values.server.storage.stateDb }}"
+    preallocate = {{ .Values.server.storage.preallocate }}
+    min_free_bytes = {{ .Values.server.storage.minFreeBytes }}
+
+    [telemetry]
+    metrics_listen = "0.0.0.0:{{ .Values.service.metricsPort }}"
+    prometheus = true
+
+    [auth]
+    mode = "mtls"
+    allow_anonymous = false
+    grants_file = "/etc/velcrux/grants.toml"
+
+  grants.toml: |
+    # Default permissive local grants for authorized tenants
+    [[grants]]
+    identity = "admin"
+    role = "admin"
+    paths = ["/"]

@@ -133,3 +133,103 @@ fn test_execute_package_target_writes_file() {
     assert!(content.contains("[Service]"));
     assert!(content.contains("velcruxd run"));
 }
+
+#[test]
+fn test_helm_values_structure() {
+    let helm = velcrux_client::package::generate_helm_values();
+    assert!(helm.contains("replicaCount: 1"));
+    assert!(helm.contains("repository: ghcr.io/velcrux/velcrux"));
+    assert!(helm.contains("quicPort: 7443"));
+    assert!(helm.contains("metricsPort: 9443"));
+    assert!(helm.contains("backend: \"local\""));
+}
+
+#[test]
+fn test_homebrew_formula_structure() {
+    let brew = velcrux_client::package::generate_homebrew_formula("0.2.0");
+    assert!(brew.contains("class Velcrux < Formula"));
+    assert!(brew.contains("version \"0.2.0\""));
+    assert!(brew.contains("bin.install \"velcrux\""));
+    assert!(brew.contains("bin.install \"velcruxd\""));
+    assert!(brew.contains("service do"));
+}
+
+#[test]
+fn test_debian_control_structure() {
+    let deb = velcrux_client::package::generate_debian_control("0.2.0", "arm64");
+    assert!(deb.contains("Package: velcrux"));
+    assert!(deb.contains("Version: 0.2.0"));
+    assert!(deb.contains("Architecture: arm64"));
+    assert!(deb.contains("Maintainer: Velcrux Core Team"));
+}
+
+#[test]
+fn test_rpm_spec_structure() {
+    let rpm = velcrux_client::package::generate_rpm_spec("0.2.0");
+    assert!(rpm.contains("Name:           velcrux"));
+    assert!(rpm.contains("Version:        0.2.0"));
+    assert!(rpm.contains("Summary:        High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC"));
+    assert!(rpm.contains("%{_bindir}/velcrux"));
+    assert!(rpm.contains("%{_bindir}/velcruxd"));
+}
+
+#[test]
+fn test_scoop_manifest_structure() {
+    let scoop = velcrux_client::package::generate_scoop_manifest("0.2.0");
+    assert!(scoop.contains("\"version\": \"0.2.0\""));
+    assert!(scoop.contains("\"velcrux.exe\""));
+    assert!(scoop.contains("\"velcruxd.exe\""));
+}
+
+#[test]
+fn test_winget_manifest_structure() {
+    let winget = velcrux_client::package::generate_winget_manifest("0.2.0");
+    assert!(winget.contains("PackageIdentifier: Velcrux.Velcrux"));
+    assert!(winget.contains("PackageVersion: 0.2.0"));
+    assert!(winget.contains("InstallerType: zip"));
+    assert!(winget.contains("PortableCommandAlias: velcrux"));
+}
+
+#[test]
+fn test_execute_package_target_writes_all_targets() {
+    let temp_dir = tempdir().unwrap();
+
+    let targets = vec![
+        velcrux_client::package::PackageTarget::Helm {
+            output: Some(temp_dir.path().join("values.yaml")),
+        },
+        velcrux_client::package::PackageTarget::Homebrew {
+            version: "0.1.0".into(),
+            output: Some(temp_dir.path().join("velcrux.rb")),
+        },
+        velcrux_client::package::PackageTarget::Debian {
+            version: "0.1.0".into(),
+            arch: "amd64".into(),
+            output: Some(temp_dir.path().join("control")),
+        },
+        velcrux_client::package::PackageTarget::Rpm {
+            version: "0.1.0".into(),
+            output: Some(temp_dir.path().join("velcrux.spec")),
+        },
+        velcrux_client::package::PackageTarget::Scoop {
+            version: "0.1.0".into(),
+            output: Some(temp_dir.path().join("velcrux.json")),
+        },
+        velcrux_client::package::PackageTarget::Winget {
+            version: "0.1.0".into(),
+            output: Some(temp_dir.path().join("velcrux.yaml")),
+        },
+    ];
+
+    for target in targets {
+        let res = velcrux_client::package::execute_package_target(target, false);
+        assert!(res.is_ok());
+    }
+
+    assert!(temp_dir.path().join("values.yaml").exists());
+    assert!(temp_dir.path().join("velcrux.rb").exists());
+    assert!(temp_dir.path().join("control").exists());
+    assert!(temp_dir.path().join("velcrux.spec").exists());
+    assert!(temp_dir.path().join("velcrux.json").exists());
+    assert!(temp_dir.path().join("velcrux.yaml").exists());
+}

@@ -569,4 +569,6 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-059](adr/ADR-059-post-quantum-encrypted-staging-vault-envelope-encryption.md) | Post-Quantum Encrypted Staging Vault with Kyber/Dilithium Envelope Encryption | Accepted | Pure safe Rust ML-KEM-768 key encapsulation, ChaCha20-Poly1305 AEAD, ML-DSA-65 manifest signing, active multi-pass key shredding, memory zeroization |
 | [ADR-060](adr/ADR-060-autonomous-dynamic-bdp-multipath-rebalancing.md) | Autonomous Dynamic BDP Multi-Path Re-balancing with Real-Time Loss Feedback | Accepted | Pure safe Rust real-time subflow feedback loop, dynamic BDP window sizing, D-DWRR scheduling, proactive traffic deflection, anti-flapping hysteresis |
 | [ADR-061](adr/ADR-061-hardware-security-module-pkcs11-cloud-kms-bridge.md) | Hardware Security Module (HSM) PKCS#11 & Cloud KMS Key Orchestration Bridge | Accepted | Pure safe Rust enterprise root-of-trust orchestration, PKCS#11 software token emulation, multi-cloud KMS envelope encryption, AAD context binding, master key rotation |
+| [ADR-062](adr/ADR-062-automated-multi-platform-packaging-and-release-orchestration.md) | Automated Multi-Platform Packaging, Distribution & Release Orchestration | Accepted | Turnkey Homebrew, Debian, RPM, Arch, Scoop, Winget, Kubernetes Helm chart v2, and multi-arch OCI publishing |
+
 

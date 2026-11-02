@@ -1,0 +1,96 @@
+# Default values for Velcrux server deployment.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/velcrux/velcrux
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: LoadBalancer
+  annotations: {}
+  quicPort: 7443
+  metricsPort: 9443
+  loadBalancerIP: ""
+
+ingress:
+  enabled: false
+
+resources:
+  limits:
+    cpu: 8000m
+    memory: 8Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Persistent Volume Storage for Transfer Staging and Deduplication
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  dataSize: 1Ti
+  stateSize: 50Gi
+
+# Prometheus Telemetry ServiceMonitor for Prometheus Operator
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+  namespace: ""
+  labels: {}
+
+# Server Configuration options
+server:
+  logLevel: "info,velcrux_server=debug,velcrux_core=debug"
+  quic:
+    maxBdpWindow: 536870912 # 512 MiB
+    maxConcurrentStreams: 128
+    idleTimeoutMs: 30000
+  storage:
+    backend: "local"
+    dataDir: "/data/velcrux/files"
+    stagingDir: "/data/velcrux/files/.velcrux-staging"
+    chunkStoreDir: "/data/velcrux/chunks"
+    stateDb: "/var/lib/velcrux/state.db"
+    preallocate: true
+    minFreeBytes: 10737418240 # 10 GiB

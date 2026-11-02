@@ -78,6 +78,60 @@ pub enum PackageTarget {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Generate Kubernetes Helm chart values.yaml.
+    Helm {
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Generate macOS/Linux Homebrew formula (velcrux.rb).
+    Homebrew {
+        /// Version string (default: 0.1.0).
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Generate Debian/Ubuntu packaging control file.
+    Debian {
+        /// Version string (default: 0.1.0).
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Architecture (default: amd64).
+        #[arg(long, default_value = "amd64")]
+        arch: String,
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Generate RPM spec file (velcrux.spec).
+    Rpm {
+        /// Version string (default: 0.1.0).
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Generate Windows Scoop bucket manifest (velcrux.json).
+    Scoop {
+        /// Version string (default: 0.1.0).
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Generate Windows Package Manager (Winget) manifest.
+    Winget {
+        /// Version string (default: 0.1.0).
+        #[arg(long, default_value = "0.1.0")]
+        version: String,
+        /// Write directly to destination file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 /// Generate a production-hardened systemd service unit.
@@ -354,6 +408,232 @@ CMD ["run", "--config", "/etc/velcrux/server.toml"]
     .to_string()
 }
 
+/// Generate Kubernetes Helm chart values.yaml.
+pub fn generate_helm_values() -> String {
+    r#"# Default values for Velcrux server deployment.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/velcrux/velcrux
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+
+service:
+  type: LoadBalancer
+  quicPort: 7443
+  metricsPort: 9443
+
+resources:
+  limits:
+    cpu: 8000m
+    memory: 8Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  dataSize: 1Ti
+  stateSize: 50Gi
+
+server:
+  logLevel: "info,velcrux_server=debug,velcrux_core=debug"
+  quic:
+    maxBdpWindow: 536870912
+    maxConcurrentStreams: 128
+    idleTimeoutMs: 30000
+  storage:
+    backend: "local"
+    dataDir: "/data/velcrux/files"
+    stagingDir: "/data/velcrux/files/.velcrux-staging"
+    chunkStoreDir: "/data/velcrux/chunks"
+    stateDb: "/var/lib/velcrux/state.db"
+    preallocate: true
+    minFreeBytes: 10737418240
+"#
+    .to_string()
+}
+
+/// Generate macOS / Linux Homebrew formula (velcrux.rb).
+pub fn generate_homebrew_formula(version: &str) -> String {
+    format!(
+        r##"class Velcrux < Formula
+  desc "High-throughput, resumable, verifiable bulk data transfer over QUIC"
+  homepage "https://github.com/Velcrux/velcrux"
+  version "{version}"
+  license "Apache-2.0 OR MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/Velcrux/velcrux/releases/download/v#{{version}}/velcrux-v#{{version}}-darwin-arm64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    else
+      url "https://github.com/Velcrux/velcrux/releases/download/v#{{version}}/velcrux-v#{{version}}-darwin-amd64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/Velcrux/velcrux/releases/download/v#{{version}}/velcrux-v#{{version}}-linux-arm64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    else
+      url "https://github.com/Velcrux/velcrux/releases/download/v#{{version}}/velcrux-v#{{version}}-linux-amd64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
+
+  def install
+    bin.install "velcrux"
+    bin.install "velcruxd"
+
+    if File.directory?("completions")
+      bash_completion.install "completions/velcrux.bash" => "velcrux" if File.exist?("completions/velcrux.bash")
+      zsh_completion.install "completions/_velcrux" => "_velcrux" if File.exist?("completions/_velcrux")
+      fish_completion.install "completions/velcrux.fish" => "velcrux.fish" if File.exist?("completions/velcrux.fish")
+    end
+
+    (etc/"velcrux").mkpath
+    (var/"lib/velcrux").mkpath
+    (var/"log/velcrux").mkpath
+  end
+
+  service do
+    run [opt_bin/"velcruxd", "run", "--config", etc/"velcrux/server.toml"]
+    keep_alive true
+    working_dir var/"lib/velcrux"
+    log_path var/"log/velcrux/velcruxd.log"
+    error_log_path var/"log/velcrux/velcruxd.err"
+  end
+
+  test do
+    assert_match "velcrux client CLI", shell_output("#{{bin}}/velcrux --help")
+  end
+end
+"##
+    )
+}
+
+/// Generate Debian/Ubuntu packaging control file.
+pub fn generate_debian_control(version: &str, arch: &str) -> String {
+    format!(
+        r#"Package: velcrux
+Version: {version}
+Section: utils
+Priority: optional
+Architecture: {arch}
+Maintainer: Velcrux Core Team <maintainers@velcrux.io>
+Depends: ca-certificates
+Homepage: https://github.com/Velcrux/velcrux
+Description: High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC
+ Velcrux is a high-performance transport system engineered for high
+ Bandwidth-Delay Product (BDP) environments (1-10 Gbps, 50-300ms RTT) over QUIC
+ with TLS 1.3 mTLS, FastCDC content-defined chunking, and BLAKE3 verification.
+"#
+    )
+}
+
+/// Generate RPM spec file.
+pub fn generate_rpm_spec(version: &str) -> String {
+    format!(
+        r#"Name:           velcrux
+Version:        {version}
+Release:        1%{{?dist}}
+Summary:        High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC
+
+License:        Apache-2.0 OR MIT
+URL:            https://github.com/Velcrux/velcrux
+Source0:        velcrux-%{{version}}.tar.gz
+
+BuildRequires:  systemd-rpm-macros
+Requires:       ca-certificates
+
+%description
+Velcrux is an open-source bulk data transfer system engineered for high
+Bandwidth-Delay Product (BDP) environments over QUIC with TLS 1.3 mTLS,
+FastCDC content-defined chunking, and whole-file BLAKE3 verification.
+
+%install
+rm -rf %{{buildroot}}
+mkdir -p %{{buildroot}}%{{_bindir}}
+mkdir -p %{{buildroot}}%{{_unitdir}}
+mkdir -p %{{buildroot}}%{{_sysconfdir}}/velcrux
+
+install -m 0755 velcrux %{{buildroot}}%{{_bindir}}/velcrux
+install -m 0755 velcruxd %{{buildroot}}%{{_bindir}}/velcruxd
+
+%files
+%license LICENSE-APACHE LICENSE-MIT
+%doc README.md
+%{{_bindir}}/velcrux
+%{{_bindir}}/velcruxd
+"#
+    )
+}
+
+/// Generate Windows Scoop manifest.
+pub fn generate_scoop_manifest(version: &str) -> String {
+    format!(
+        r#"{{
+    "version": "{version}",
+    "description": "High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC",
+    "homepage": "https://github.com/Velcrux/velcrux",
+    "license": {{
+        "identifier": "Apache-2.0 OR MIT",
+        "url": "https://github.com/Velcrux/velcrux/blob/main/LICENSE-APACHE"
+    }},
+    "architecture": {{
+        "64bit": {{
+            "url": "https://github.com/Velcrux/velcrux/releases/download/v{version}/velcrux-v{version}-windows-amd64.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }}
+    }},
+    "bin": [
+        "velcrux.exe",
+        "velcruxd.exe"
+    ],
+    "persist": "data",
+    "checkver": "github",
+    "autoupdate": {{
+        "architecture": {{
+            "64bit": {{
+                "url": "https://github.com/Velcrux/velcrux/releases/download/v$version/velcrux-v$version-windows-amd64.zip"
+            }}
+        }}
+    }}
+}}
+"#
+    )
+}
+
+/// Generate Windows Winget manifest.
+pub fn generate_winget_manifest(version: &str) -> String {
+    format!(
+        r#"PackageIdentifier: Velcrux.Velcrux
+PackageVersion: {version}
+PackageName: Velcrux
+Publisher: Velcrux Core Team
+License: Apache-2.0 OR MIT
+ShortDescription: High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC
+PackageUrl: https://github.com/Velcrux/velcrux
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/Velcrux/velcrux/releases/download/v{version}/velcrux-v{version}-windows-amd64.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: velcrux.exe
+        PortableCommandAlias: velcrux
+      - RelativeFilePath: velcruxd.exe
+        PortableCommandAlias: velcruxd
+ManifestType: singleton
+ManifestVersion: 1.6.0
+"#
+    )
+}
+
 /// Execute packaging target.
 pub fn execute_package_target(target: PackageTarget, json: bool) -> Result<()> {
     let (rendered, output_path, target_name) = match target {
@@ -391,6 +671,34 @@ pub fn execute_package_target(target: PackageTarget, json: bool) -> Result<()> {
             "k8s",
         ),
         PackageTarget::Docker { output } => (generate_dockerfile(), output, "docker"),
+        PackageTarget::Helm { output } => (generate_helm_values(), output, "helm"),
+        PackageTarget::Homebrew { version, output } => (
+            generate_homebrew_formula(&version),
+            output,
+            "homebrew",
+        ),
+        PackageTarget::Debian {
+            version,
+            arch,
+            output,
+        } => (
+            generate_debian_control(&version, &arch),
+            output,
+            "debian",
+        ),
+        PackageTarget::Rpm { version, output } => {
+            (generate_rpm_spec(&version), output, "rpm")
+        }
+        PackageTarget::Scoop { version, output } => (
+            generate_scoop_manifest(&version),
+            output,
+            "scoop",
+        ),
+        PackageTarget::Winget { version, output } => (
+            generate_winget_manifest(&version),
+            output,
+            "winget",
+        ),
     };
 
     if let Some(dest) = output_path {

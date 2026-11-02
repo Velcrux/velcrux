@@ -5000,6 +5000,85 @@ Exposed under `/metrics` on all Velcrux nodes:
   2. Verify that requesting client TLS certificate identity matches the `tenant_id` bound in the envelope.
   3. Quarantining violating source IP or mutual TLS identity at the boundary proxy.
 
+---
+
+## 46. Enterprise Multi-Platform Packaging, Distribution & Helm Deployment (ADR-062)
+
+Velcrux provides native packaging formats and package manager configurations for cloud-native, enterprise Linux, macOS, and Windows environments.
+
+### 46.1. Kubernetes Helm Chart Deployment
+
+The Helm chart packages the `velcruxd` StatefulSet, service discovery, PersistentVolumeClaims, and Prometheus ServiceMonitor:
+
+```bash
+# Add or package local chart
+helm package packaging/helm/velcrux/ -d dist/
+
+# Install or upgrade Velcrux server
+helm upgrade --install velcrux packaging/helm/velcrux/ \
+  --namespace velcrux \
+  --create-namespace \
+  --set persistence.dataSize=2Ti \
+  --set service.type=LoadBalancer
+```
+
+### 46.2. macOS & Linux Homebrew
+
+```bash
+# Tap and install
+brew install velcrux/tap/velcrux
+
+# Run server as a managed background service
+brew services start velcrux
+```
+
+### 46.3. Debian & Ubuntu (.deb)
+
+```bash
+# Build .deb archive
+./packaging/build-deb.sh amd64 0.1.0 target/release dist/
+
+# Install package with system user and systemd unit setup
+sudo dpkg -i dist/velcrux_0.1.0_amd64.deb
+sudo systemctl enable --now velcruxd
+```
+
+### 46.4. Red Hat / Fedora / Rocky Linux (RPM)
+
+```bash
+# Build RPM from spec file
+rpmbuild -ba packaging/rpm/velcrux.spec
+
+# Install with systemd integration
+sudo dnf install velcrux-0.1.0-1.el9.x86_64.rpm
+sudo systemctl enable --now velcruxd
+```
+
+### 46.5. Windows Package Managers (Scoop & Winget)
+
+```powershell
+# Scoop
+scoop bucket add velcrux https://github.com/Velcrux/velcrux
+scoop install velcrux
+
+# Winget
+winget install Velcrux.Velcrux
+```
+
+### 46.6. Manifest Generation via CLI
+
+Operators can dynamically generate deployment specifications directly from the binary:
+
+```bash
+velcrux package helm --output /tmp/values.yaml
+velcrux package homebrew --version 0.1.0 --output /tmp/velcrux.rb
+velcrux package debian --version 0.1.0 --arch amd64 --output /tmp/control
+velcrux package rpm --version 0.1.0 --output /tmp/velcrux.spec
+velcrux package scoop --version 0.1.0 --output /tmp/velcrux.json
+velcrux package winget --version 0.1.0 --output /tmp/velcrux.yaml
+```
+
+
 
 
 

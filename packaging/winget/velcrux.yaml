@@ -1,0 +1,20 @@
+PackageIdentifier: Velcrux.Velcrux
+PackageVersion: 0.1.0
+PackageName: Velcrux
+Publisher: Velcrux Core Team
+License: Apache-2.0 OR MIT
+ShortDescription: High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC
+PackageUrl: https://github.com/Velcrux/velcrux
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/Velcrux/velcrux/releases/download/v0.1.0/velcrux-v0.1.0-windows-amd64.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: velcrux.exe
+        PortableCommandAlias: velcrux
+      - RelativeFilePath: velcruxd.exe
+        PortableCommandAlias: velcruxd
+ManifestType: singleton
+ManifestVersion: 1.6.0

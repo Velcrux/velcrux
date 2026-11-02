@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+# Create unprivileged system user/group
+if ! getent group velcrux >/dev/null 2>&1; then
+    groupadd --system velcrux
+fi
+
+if ! getent passwd velcrux >/dev/null 2>&1; then
+    useradd --system -g velcrux -d /var/lib/velcrux -s /usr/sbin/nologin -c "Velcrux transfer daemon" velcrux
+fi
+
+# Ensure storage directories
+mkdir -p /var/lib/velcrux /data/velcrux/files/.velcrux-staging /data/velcrux/chunks /etc/velcrux /var/log/velcrux
+chown -R velcrux:velcrux /var/lib/velcrux /data/velcrux /etc/velcrux /var/log/velcrux
+chmod 750 /var/lib/velcrux /data/velcrux /etc/velcrux /var/log/velcrux
+
+# Reload systemd if present
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0

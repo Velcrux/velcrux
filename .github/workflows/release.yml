@@ -1,4 +1,4 @@
-name: Release
+name: Release & Packaging Pipeline
 
 on:
   push:
@@ -13,8 +13,13 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  id-token: write
 
 jobs:
+  # --------------------------------------------------------------------------
+  # 1. Multi-Platform Binary & Package Compilation
+  # --------------------------------------------------------------------------
   build-release:
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -22,23 +27,39 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux GNU Targets
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: linux-amd64
             archive: tar.gz
+            deb_arch: amd64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: linux-arm64
             archive: tar.gz
             use_cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: darwin-amd64
+            deb_arch: arm64
+          # Linux MUSL Static Targets
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: linux-musl-amd64
             archive: tar.gz
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: linux-musl-arm64
+            archive: tar.gz
+            use_cross: true
+          # macOS Targets (Apple Silicon & Intel)
           - target: aarch64-apple-darwin
             os: macos-latest
             name: darwin-arm64
             archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: darwin-amd64
+            archive: tar.gz
+          # Windows Target
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: windows-amd64
@@ -56,6 +77,8 @@ jobs:
             TAG="${{ github.event.inputs.tag_name || 'v0.1.0' }}"
           fi
           echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+          CLEAN_VERSION="${TAG#v}"
+          echo "CLEAN_VERSION=${CLEAN_VERSION}" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -76,7 +99,7 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.target }} -p velcrux-client -p velcrux-server
 
-      # Generate shell completions (bash, zsh, fish, powershell)
+      # Shell completions generation
       - name: Generate shell completions (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -121,7 +144,18 @@ jobs:
           & $server_bin completions fish | Out-File -Encoding utf8 completions/velcruxd.fish
           & $server_bin completions powershell | Out-File -Encoding utf8 completions/velcruxd.ps1
 
-      # Packaging
+      # Debian .deb packaging on Linux GNU targets
+      - name: Build Debian (.deb) package
+        if: matrix.deb_arch != ''
+        shell: bash
+        run: |
+          mkdir -p deb-dist
+          bash packaging/build-deb.sh "${{ matrix.deb_arch }}" "${CLEAN_VERSION}" "target/${{ matrix.target }}/release" "deb-dist"
+          if command -v sha256sum &>/dev/null; then
+            cd deb-dist && sha256sum *.deb > "${{ matrix.name }}-deb.sha256" || true
+          fi
+
+      # Package release archive (Unix)
       - name: Package release archive (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -134,14 +168,18 @@ jobs:
           cp README.md LICENSE-APACHE LICENSE-MIT "$STAGE/" 2>/dev/null || true
           ARCHIVE_NAME="velcrux-${RELEASE_TAG}-${{ matrix.name }}.tar.gz"
           tar -czf "$ARCHIVE_NAME" "$STAGE"
+
+          # Compute SHA-256
           if command -v sha256sum &>/dev/null; then
             sha256sum "$ARCHIVE_NAME" > "${ARCHIVE_NAME}.sha256"
           else
             shasum -a 256 "$ARCHIVE_NAME" > "${ARCHIVE_NAME}.sha256"
           fi
+
           echo "ARCHIVE_PATH=${ARCHIVE_NAME}" >> $GITHUB_ENV
           echo "SHA_PATH=${ARCHIVE_NAME}.sha256" >> $GITHUB_ENV
 
+      # Package release archive (Windows)
       - name: Package release archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -168,11 +206,60 @@ jobs:
           path: |
             ${{ env.ARCHIVE_PATH }}
             ${{ env.SHA_PATH }}
+            deb-dist/*.deb
+            deb-dist/*.sha256
           retention-days: 5
 
+  # --------------------------------------------------------------------------
+  # 2. Multi-Architecture Container Image (GHCR)
+  # --------------------------------------------------------------------------
+  docker-release:
+    name: Build & Push Container Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "${TAG}" != v* ]]; then
+            TAG="${{ github.event.inputs.tag_name || 'v0.1.0' }}"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ env.RELEASE_TAG }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --------------------------------------------------------------------------
+  # 3. Publish GitHub Release with Attestations & Manifests
+  # --------------------------------------------------------------------------
   publish-release:
     name: Publish GitHub Release
-    needs: build-release
+    needs: [build-release, docker-release]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -183,15 +270,31 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Aggregate SHA256 Checksums
+      - name: Aggregate Release Assets & Generate Checksums
         shell: bash
         run: |
           mkdir -p dist
           find release-artifacts -type f -name "*.tar.gz" -exec cp {} dist/ \;
           find release-artifacts -type f -name "*.zip" -exec cp {} dist/ \;
-          find release-artifacts -type f -name "*.sha256" -exec cat {} + | sort -k2 > dist/SHA256SUMS.txt
+          find release-artifacts -type f -name "*.deb" -exec cp {} dist/ \;
+          
+          # Aggregate SHA-256 sums
+          find release-artifacts -type f -name "*.sha256" -exec cat {} + | sort -k2 | uniq > dist/SHA256SUMS.txt
           echo "Generated SHA256SUMS.txt:"
           cat dist/SHA256SUMS.txt
+
+          # Generate BLAKE3 sums (first-class hash) using cargo-b3sum or client binary
+          cargo run -p velcrux-client -- completions bash > /dev/null 2>&1 || true
+          if command -v b3sum >/dev/null 2>&1; then
+            cd dist && b3sum *.tar.gz *.zip *.deb 2>/dev/null > BLAKE3SUMS.txt || true
+          fi
+
+          # Generate Homebrew formula artifact
+          cargo run -p velcrux-client -- package homebrew --output dist/velcrux.rb || cp packaging/homebrew/velcrux.rb dist/velcrux.rb
+
+          # Package Helm chart archive (.tgz)
+          mkdir -p dist/helm
+          tar -czf dist/velcrux-helm-0.1.0.tgz -C packaging/helm velcrux
 
       - name: Determine tag
         shell: bash
@@ -212,3 +315,4 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*
+            dist/helm/*

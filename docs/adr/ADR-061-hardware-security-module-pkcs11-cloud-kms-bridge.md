@@ -165,3 +165,4 @@ Operators interact with the bridge via `velcrux kms`:
 ### Negative / Mitigations
 - **Network Latency for Remote Cloud KMS**: Remote HTTP round-trips to AWS/GCP/Azure KMS can add 15-45 ms during cold key unwrap.
   *Mitigation*: Node in-memory session key caching keeps hot path latency under 1 µs; remote KMS is only consulted once per staging vault session initialization.
+

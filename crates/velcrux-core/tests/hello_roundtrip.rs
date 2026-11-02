@@ -20,7 +20,7 @@ use tracing_subscriber::EnvFilter;
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ClientSession, ServerConn, ServerStats};
 use velcrux_core::transport::quic::{
-    ClientBuilder, ClientIdentity, QuicConnection, QuicTransport, ServerBuilder,
+    ClientBuilder, ClientIdentity, QuicConnection, ServerBuilder,
     TransportConfigTunables,
 };
 use velcrux_core::transport::Transport;
@@ -60,6 +60,7 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+#[allow(dead_code)]
 fn wrap_64(s: &str) -> Vec<String> {
     s.as_bytes()
         .chunks(64)
@@ -72,6 +73,7 @@ fn wrap_64(s: &str) -> Vec<String> {
 /// round-tripping through the PEM.
 struct DevCa {
     cert_pem: String,
+    #[allow(dead_code)]
     key_der: Vec<u8>,
     ca_cert: rcgen::Certificate,
     ca_key: rcgen::KeyPair,

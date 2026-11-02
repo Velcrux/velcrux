@@ -1,0 +1,20 @@
+apiVersion: v2
+name: velcrux
+description: High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC (Raven Protocol)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - bulk-transfer
+  - quic
+  - fastcdc
+  - storage
+  - replication
+  - high-throughput
+home: https://github.com/Velcrux/velcrux
+sources:
+  - https://github.com/Velcrux/velcrux
+maintainers:
+  - name: Velcrux Core Team
+    email: maintainers@velcrux.io
+icon: https://raw.githubusercontent.com/Velcrux/velcrux/main/docs/assets/logo.png

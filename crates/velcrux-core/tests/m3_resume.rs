@@ -26,7 +26,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
-use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
 
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
@@ -35,7 +34,7 @@ use velcrux_core::protocol::frame::{
     DataFrameFlags, DataPreamble, DATA_FRAME_HEADER_LEN, DATA_PREAMBLE_LEN,
 };
 use velcrux_core::protocol::message::{
-    Bye as ByeMsg, Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message,
+    Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message,
     TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan, Verify as VerifyMsg,
     VerifyResult as VerifyResultMsg,
 };

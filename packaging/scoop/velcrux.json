@@ -1,0 +1,28 @@
+{
+    "version": "0.1.0",
+    "description": "High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC",
+    "homepage": "https://github.com/Velcrux/velcrux",
+    "license": {
+        "identifier": "Apache-2.0 OR MIT",
+        "url": "https://github.com/Velcrux/velcrux/blob/main/LICENSE-APACHE"
+    },
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Velcrux/velcrux/releases/download/v0.1.0/velcrux-v0.1.0-windows-amd64.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    },
+    "bin": [
+        "velcrux.exe",
+        "velcruxd.exe"
+    ],
+    "persist": "data",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/Velcrux/velcrux/releases/download/v$version/velcrux-v$version-windows-amd64.zip"
+            }
+        }
+    }
+}
