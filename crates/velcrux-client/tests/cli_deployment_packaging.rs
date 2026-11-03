@@ -168,7 +168,9 @@ fn test_rpm_spec_structure() {
     let rpm = velcrux_client::package::generate_rpm_spec("0.2.0");
     assert!(rpm.contains("Name:           velcrux"));
     assert!(rpm.contains("Version:        0.2.0"));
-    assert!(rpm.contains("Summary:        High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC"));
+    assert!(rpm.contains(
+        "Summary:        High-Throughput, Resumable, Verifiable Bulk Data Transfer over QUIC"
+    ));
     assert!(rpm.contains("%{_bindir}/velcrux"));
     assert!(rpm.contains("%{_bindir}/velcruxd"));
 }

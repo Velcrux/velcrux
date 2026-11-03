@@ -628,7 +628,9 @@ impl OperatorReconciler {
         if retry_count == 0 {
             return policy.initial_backoff_secs;
         }
-        let exp = 1u64.checked_shl(retry_count.saturating_sub(1)).unwrap_or(u64::MAX);
+        let exp = 1u64
+            .checked_shl(retry_count.saturating_sub(1))
+            .unwrap_or(u64::MAX);
         let backoff = policy.initial_backoff_secs.saturating_mul(exp);
         backoff.min(policy.max_backoff_secs)
     }
@@ -780,7 +782,10 @@ impl OperatorReconciler {
 
             events.push(K8sEvent::warning(
                 "TransferMaxRetriesExceeded",
-                format!("Exceeded max retries ({}). Transfer failed: {error}", spec.retry_policy.max_retries),
+                format!(
+                    "Exceeded max retries ({}). Transfer failed: {error}",
+                    spec.retry_policy.max_retries
+                ),
             ));
 
             ReconciliationResult {
@@ -1249,7 +1254,8 @@ mod tests {
         };
 
         // Failure 1: Retrying with retry_count = 1, backoff = 5s
-        let r1 = OperatorReconciler::record_failure(&spec, &status, "QUIC stream timeout".into(), now);
+        let r1 =
+            OperatorReconciler::record_failure(&spec, &status, "QUIC stream timeout".into(), now);
         assert_eq!(r1.updated_status.phase, TransferPhase::Retrying);
         assert_eq!(r1.updated_status.retry_count, 1);
         assert_eq!(r1.updated_status.next_retry_timestamp, Some(now + 5));
@@ -1260,14 +1266,20 @@ mod tests {
         status = r_retry.updated_status;
 
         // Failure 2: Retrying with retry_count = 2, backoff = 10s
-        let r2 = OperatorReconciler::record_failure(&spec, &status, "Connection reset".into(), now + 10);
+        let r2 =
+            OperatorReconciler::record_failure(&spec, &status, "Connection reset".into(), now + 10);
         assert_eq!(r2.updated_status.phase, TransferPhase::Retrying);
         assert_eq!(r2.updated_status.retry_count, 2);
         assert_eq!(r2.updated_status.next_retry_timestamp, Some(now + 20));
         status = r2.updated_status;
 
         // Failure 3: retry_count = 3 > max_retries (2) -> Terminal Failed
-        let r3 = OperatorReconciler::record_failure(&spec, &status, "Auth token expired".into(), now + 25);
+        let r3 = OperatorReconciler::record_failure(
+            &spec,
+            &status,
+            "Auth token expired".into(),
+            now + 25,
+        );
         assert_eq!(r3.updated_status.phase, TransferPhase::Failed);
         assert_eq!(r3.updated_status.retry_count, 3);
         assert!(r3.events[0].reason.contains("MaxRetriesExceeded"));
@@ -1292,7 +1304,8 @@ mod tests {
         assert!(rbac.contains("namespace: velcrux-system"));
         assert!(rbac.contains("resources: [\"velcruxclusters\""));
 
-        let deploy = generate_operator_deployment_yaml("ghcr.io/velcrux/velcrux:v0.1.0", "velcrux-system");
+        let deploy =
+            generate_operator_deployment_yaml("ghcr.io/velcrux/velcrux:v0.1.0", "velcrux-system");
         assert!(deploy.contains("kind: Deployment"));
         assert!(deploy.contains("image: ghcr.io/velcrux/velcrux:v0.1.0"));
         assert!(deploy.contains("namespace: velcrux-system"));

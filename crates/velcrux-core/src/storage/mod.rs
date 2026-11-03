@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 pub mod azure;
 pub mod cas_gc;
 pub mod chunk_store;
+pub mod cloud_client;
+pub mod cloud_wire_mock;
 pub mod cluster;
 pub mod compaction;
 pub mod dedup_defense;
@@ -48,6 +50,8 @@ pub use cas_gc::{
     CasGenerationalGcReport, CasStoreStatus, CasTombstone, GenerationalCasManager,
 };
 pub use chunk_store::{ChunkPin, ChunkStore, LocalChunkStore, PrunePolicy, PruneReport};
+pub use cloud_client::{CloudHttpClient, HttpRequest, HttpResponse};
+pub use cloud_wire_mock::WireCloudServer;
 pub use cluster::{
     ClusterNode, ClusterNodeState, ClusterReport, ClusteredChunkStore, ConsistentHashRing,
     QuorumPolicy, ReplicationReport,
@@ -79,7 +83,9 @@ pub use gc::{
 };
 pub use gcs::{GcsConfig, GcsError, GcsObjectMeta, GcsStorageBackend, GcsSyncReport};
 pub use memory::{MemoryFile, MemoryStorageBackend};
-pub use s3::{S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer};
+pub use s3::{
+    S3ChunkStore, S3Config, S3Error, S3ObjectMeta, S3StorageBackend, S3SyncReport, SigV4Signer,
+};
 pub use scrub::{
     BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
     ScrubOptions, ScrubReport,

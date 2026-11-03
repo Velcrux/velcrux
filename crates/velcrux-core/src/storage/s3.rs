@@ -12,13 +12,15 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::error::{ProtocolError, VelcruxError};
+use crate::storage::chunk_store::ChunkStore;
+use crate::storage::cloud_client::{CloudHttpClient, HttpRequest};
 use crate::storage::{AsyncRandomRead, FileMeta, Staging, StagingWriter, StorageBackend, VPath};
 use crate::util::Hash;
 
@@ -91,6 +93,8 @@ pub struct S3Config {
     pub part_size_bytes: usize,
     /// Maximum retry attempts on network error.
     pub max_retries: usize,
+    /// Whether to execute live HTTP/1.1 requests to endpoint over TCP sockets.
+    pub live_mode: bool,
 }
 
 impl S3Config {
@@ -107,6 +111,7 @@ impl S3Config {
             path_style: true,
             part_size_bytes: 8 * 1024 * 1024,
             max_retries: 3,
+            live_mode: false,
         }
     }
 
@@ -133,8 +138,25 @@ impl S3Config {
         {
             cfg.endpoint = ep;
         }
+        if let Ok(val) = std::env::var("VELCRUX_S3_LIVE") {
+            if val == "1" || val.eq_ignore_ascii_case("true") {
+                cfg.live_mode = true;
+            }
+        }
+        if let Ok(ep) = std::env::var("VELCRUX_S3_TEST_ENDPOINT")
+            .or_else(|_| std::env::var("VELCRUX_S3_ENDPOINT"))
+        {
+            cfg.endpoint = ep;
+            cfg.live_mode = true;
+        }
 
         Ok(cfg)
+    }
+
+    /// Set live network mode.
+    pub fn with_live_mode(mut self, live: bool) -> Self {
+        self.live_mode = live;
+        self
     }
 
     /// Parse an S3 URL (`s3://bucket/optional/prefix`) into bucket and prefix.
@@ -267,15 +289,17 @@ impl SigV4Signer {
         let date = &datetime[..8]; // YYYYMMDD
 
         // 1. Canonical Headers & Signed Headers
+        let mut normalized_headers = BTreeMap::new();
+        for (k, v) in headers {
+            normalized_headers.insert(k.to_ascii_lowercase(), v.trim().to_string());
+        }
         let mut canonical_headers = String::new();
         let mut signed_headers_list = Vec::new();
 
-        for (k, v) in headers {
-            let lower_k = k.to_ascii_lowercase();
-            canonical_headers.push_str(&format!("{}:{}\n", lower_k, v.trim()));
-            signed_headers_list.push(lower_k);
+        for (lower_k, v) in &normalized_headers {
+            canonical_headers.push_str(&format!("{}:{}\n", lower_k, v));
+            signed_headers_list.push(lower_k.clone());
         }
-        signed_headers_list.sort();
         let signed_headers = signed_headers_list.join(";");
 
         // 2. Canonical Request
@@ -367,6 +391,7 @@ pub struct S3StorageBackend {
     config: S3Config,
     mock: Arc<RwLock<MockS3Bucket>>,
     staging_root: PathBuf,
+    http_client: CloudHttpClient,
 }
 
 impl S3StorageBackend {
@@ -375,11 +400,115 @@ impl S3StorageBackend {
         let staging = std::env::temp_dir().join(format!("velcrux_s3_staging_{}", config.bucket));
         let _ = std::fs::create_dir_all(staging.join("objects"));
         let _ = std::fs::create_dir_all(staging.join("meta"));
+        let http_client = CloudHttpClient::new(Duration::from_secs(15), config.max_retries);
         Self {
             config,
             mock: Arc::new(RwLock::new(MockS3Bucket::default())),
             staging_root: staging,
+            http_client,
         }
+    }
+
+    /// Enable or disable live network execution.
+    pub fn with_live_mode(mut self, live: bool) -> Self {
+        self.config.live_mode = live;
+        self
+    }
+
+    /// Whether backend executes live HTTP requests over the network.
+    pub fn is_live(&self) -> bool {
+        self.config.live_mode
+    }
+
+    /// Convert backend into a content-addressed chunk store (`S3ChunkStore`).
+    pub fn as_chunk_store(&self, prefix: &str) -> S3ChunkStore {
+        S3ChunkStore::new(self.clone(), prefix)
+    }
+
+    fn signer(&self) -> SigV4Signer {
+        SigV4Signer::new(
+            &self.config.region,
+            &self.config.access_key_id,
+            &self.config.secret_access_key,
+        )
+    }
+
+    fn build_url(&self, path_with_slash: &str, query: &str) -> (String, String) {
+        let ep = self.config.endpoint.trim_end_matches('/');
+        let url = if query.is_empty() {
+            format!("{}{}", ep, path_with_slash)
+        } else {
+            format!("{}{}?{}", ep, path_with_slash, query)
+        };
+
+        let host_hdr = if let Ok(parsed) = url::Url::parse(ep) {
+            let h = parsed.host_str().unwrap_or("localhost");
+            if let Some(p) = parsed.port() {
+                format!("{}:{}", h, p)
+            } else {
+                h.to_string()
+            }
+        } else {
+            "localhost".to_string()
+        };
+
+        (url, host_hdr)
+    }
+
+    /// Ensure that the configured bucket exists on the live S3/MinIO endpoint.
+    pub async fn ensure_bucket_exists(&self) -> Result<(), S3Error> {
+        if !self.config.live_mode {
+            return Ok(());
+        }
+        let path = format!("/{}", self.config.bucket);
+        let (url, host_hdr) = self.build_url(&path, "");
+        let now_sec = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let (_d, dt) = current_iso8601_date(now_sec);
+        let payload_hash = sha256_hex(b"");
+
+        // 1. HEAD /{bucket}
+        let mut head_headers = BTreeMap::new();
+        head_headers.insert("host".to_string(), host_hdr.clone());
+        head_headers.insert("x-amz-date".to_string(), dt.clone());
+        head_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+        let (auth, _) =
+            self.signer()
+                .sign_request("HEAD", &path, "", &head_headers, &payload_hash, &dt);
+
+        let head_req = HttpRequest::new("HEAD", &url)
+            .with_header("Host", host_hdr.clone())
+            .with_header("Authorization", auth)
+            .with_header("x-amz-date", dt.clone())
+            .with_header("x-amz-content-sha256", payload_hash.clone());
+
+        if let Ok(resp) = self.http_client.send(&head_req).await {
+            if resp.status == 200 {
+                return Ok(());
+            }
+        }
+
+        // 2. PUT /{bucket} to create bucket
+        let mut put_headers = BTreeMap::new();
+        put_headers.insert("host".to_string(), host_hdr.clone());
+        put_headers.insert("x-amz-date".to_string(), dt.clone());
+        put_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+        let (put_auth, _) =
+            self.signer()
+                .sign_request("PUT", &path, "", &put_headers, &payload_hash, &dt);
+
+        let put_req = HttpRequest::new("PUT", &url)
+            .with_header("Host", host_hdr)
+            .with_header("Authorization", put_auth)
+            .with_header("x-amz-date", dt)
+            .with_header("x-amz-content-sha256", payload_hash);
+
+        let _ = self.http_client.send(&put_req).await;
+        Ok(())
     }
 
     fn object_file_path(&self, key: &str) -> PathBuf {
@@ -423,11 +552,61 @@ impl S3StorageBackend {
         blake3_hash: Option<Hash>,
     ) -> Result<S3ObjectMeta, S3Error> {
         let full_key = self.resolve_key(key);
-        let etag = format!("\"{}\"", sha256_hex(data));
         let now_sec = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
+
+        let mut etag = format!("\"{}\"", sha256_hex(data));
+
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let (_d, dt) = current_iso8601_date(now_sec as u64);
+            let payload_hash = sha256_hex(data);
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+            if let Some(h) = blake3_hash {
+                sign_headers.insert("x-amz-meta-blake3".to_string(), h.to_hex());
+            }
+            sign_headers.insert("x-amz-meta-mode".to_string(), "100644".to_string());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("PUT", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let mut req = HttpRequest::new("PUT", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash)
+                .with_header("x-amz-meta-mode", "100644")
+                .with_body(data.to_vec());
+            if let Some(h) = blake3_hash {
+                req = req.with_header("x-amz-meta-blake3", h.to_hex());
+            }
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+
+            if !resp.is_success() {
+                return Err(S3Error::Protocol(format!(
+                    "S3 live PUT failed with status {}: {}",
+                    resp.status,
+                    String::from_utf8_lossy(&resp.body)
+                )));
+            }
+
+            if let Some(resp_etag) = resp.get_header("etag") {
+                etag = resp_etag.to_string();
+            }
+        }
 
         let meta = S3ObjectMeta {
             key: full_key.clone(),
@@ -468,6 +647,53 @@ impl S3StorageBackend {
     /// Initiate a multipart upload session.
     pub async fn initiate_multipart_upload(&self, key: &str) -> Result<String, S3Error> {
         let full_key = self.resolve_key(key);
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let query = "uploads";
+            let (url, host_hdr) = self.build_url(&path, query);
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("POST", &path, query, &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("POST", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.is_success() {
+                let xml = String::from_utf8_lossy(&resp.body);
+                if let Some(upload_id) = extract_xml_tag(&xml, "UploadId") {
+                    let mut bucket = self.mock.write().await;
+                    bucket
+                        .multipart_uploads
+                        .insert(upload_id.clone(), (full_key, BTreeMap::new()));
+                    return Ok(upload_id);
+                }
+            }
+            return Err(S3Error::Multipart(format!(
+                "failed to initiate multipart upload, status {}",
+                resp.status
+            )));
+        }
+
         let upload_id = format!(
             "upload_{}_{}",
             ulid::Ulid::new(),
@@ -488,6 +714,68 @@ impl S3StorageBackend {
         data: &[u8],
     ) -> Result<String, S3Error> {
         let etag = format!("\"{}\"", sha256_hex(data));
+
+        if self.config.live_mode {
+            let full_key = {
+                let bucket = self.mock.read().await;
+                bucket
+                    .multipart_uploads
+                    .get(upload_id)
+                    .map(|(k, _)| k.clone())
+                    .unwrap_or_else(|| self.resolve_key("part"))
+            };
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let query = format!(
+                "partNumber={}&uploadId={}",
+                part_number,
+                urlencoding_encode(upload_id)
+            );
+            let (url, host_hdr) = self.build_url(&path, &query);
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(data);
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("PUT", &path, &query, &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("PUT", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash)
+                .with_body(data.to_vec());
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.is_success() {
+                let resp_etag = resp
+                    .get_header("etag")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| etag.clone());
+                let mut bucket = self.mock.write().await;
+                if let Some(entry) = bucket.multipart_uploads.get_mut(upload_id) {
+                    entry.1.insert(part_number, data.to_vec());
+                }
+                return Ok(resp_etag);
+            }
+            return Err(S3Error::Multipart(format!(
+                "failed to upload part {}, status {}",
+                part_number, resp.status
+            )));
+        }
+
         let mut bucket = self.mock.write().await;
         let entry = bucket.multipart_uploads.get_mut(upload_id).ok_or_else(|| {
             S3Error::Multipart(format!("unknown multipart upload id {}", upload_id))
@@ -503,6 +791,71 @@ impl S3StorageBackend {
         parts: &[(usize, String)],
         blake3_hash: Option<Hash>,
     ) -> Result<S3ObjectMeta, S3Error> {
+        if self.config.live_mode {
+            let full_key = {
+                let bucket = self.mock.read().await;
+                bucket
+                    .multipart_uploads
+                    .get(upload_id)
+                    .map(|(k, _)| k.clone())
+                    .unwrap_or_else(|| self.resolve_key("part"))
+            };
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let query = format!("uploadId={}", urlencoding_encode(upload_id));
+            let (url, host_hdr) = self.build_url(&path, &query);
+
+            let mut xml_body = String::from("<CompleteMultipartUpload>\n");
+            for (p_num, etag) in parts {
+                xml_body.push_str(&format!(
+                    "  <Part>\n    <PartNumber>{}</PartNumber>\n    <ETag>{}</ETag>\n  </Part>\n",
+                    p_num, etag
+                ));
+            }
+            xml_body.push_str("</CompleteMultipartUpload>");
+            let body_bytes = xml_body.into_bytes();
+
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(&body_bytes);
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) = self.signer().sign_request(
+                "POST",
+                &path,
+                &query,
+                &sign_headers,
+                &payload_hash,
+                &dt,
+            );
+
+            let req = HttpRequest::new("POST", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash)
+                .with_header("Content-Type", "application/xml")
+                .with_body(body_bytes);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if !resp.is_success() {
+                return Err(S3Error::Multipart(format!(
+                    "failed to complete multipart upload, status {}",
+                    resp.status
+                )));
+            }
+        }
+
         let mut bucket = self.mock.write().await;
         let (full_key, stored_parts) =
             bucket.multipart_uploads.remove(upload_id).ok_or_else(|| {
@@ -549,6 +902,48 @@ impl S3StorageBackend {
 
     /// Abort a multipart upload, discarding stored parts.
     pub async fn abort_multipart_upload(&self, upload_id: &str) -> Result<(), S3Error> {
+        if self.config.live_mode {
+            let full_key = {
+                let bucket = self.mock.read().await;
+                bucket
+                    .multipart_uploads
+                    .get(upload_id)
+                    .map(|(k, _)| k.clone())
+                    .unwrap_or_else(|| self.resolve_key("part"))
+            };
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let query = format!("uploadId={}", urlencoding_encode(upload_id));
+            let (url, host_hdr) = self.build_url(&path, &query);
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) = self.signer().sign_request(
+                "DELETE",
+                &path,
+                &query,
+                &sign_headers,
+                &payload_hash,
+                &dt,
+            );
+
+            let req = HttpRequest::new("DELETE", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let _ = self.http_client.send(&req).await;
+        }
+
         let mut bucket = self.mock.write().await;
         bucket.multipart_uploads.remove(upload_id);
         Ok(())
@@ -582,6 +977,51 @@ impl S3StorageBackend {
     /// Get object contents from S3.
     pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, S3Error> {
         let full_key = self.resolve_key(key);
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("GET", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("GET", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.status == 200 {
+                return Ok(resp.body);
+            } else if resp.status == 404 {
+                return Err(S3Error::NotFound {
+                    bucket: self.config.bucket.clone(),
+                    key: full_key,
+                });
+            } else {
+                return Err(S3Error::Protocol(format!(
+                    "S3 live GET failed with status {}",
+                    resp.status
+                )));
+            }
+        }
+
         {
             let bucket = self.mock.read().await;
             if let Some(obj) = bucket.objects.get(&full_key) {
@@ -607,6 +1047,55 @@ impl S3StorageBackend {
         start: u64,
         end_inclusive: u64,
     ) -> Result<Vec<u8>, S3Error> {
+        let full_key = self.resolve_key(key);
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+            let range_val = format!("bytes={}-{}", start, end_inclusive);
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+            sign_headers.insert("range".to_string(), range_val.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("GET", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("GET", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash)
+                .with_header("Range", range_val);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.status == 200 || resp.status == 206 {
+                return Ok(resp.body);
+            } else if resp.status == 404 {
+                return Err(S3Error::NotFound {
+                    bucket: self.config.bucket.clone(),
+                    key: full_key,
+                });
+            } else {
+                return Err(S3Error::Protocol(format!(
+                    "S3 live GET range failed with status {}",
+                    resp.status
+                )));
+            }
+        }
+
         let data = self.get_object(key).await?;
         let start_usize = start as usize;
         if start_usize >= data.len() {
@@ -620,6 +1109,62 @@ impl S3StorageBackend {
     /// Retrieve object metadata without downloading body (`HEAD Object`).
     pub async fn head_object(&self, key: &str) -> Result<Option<S3ObjectMeta>, S3Error> {
         let full_key = self.resolve_key(key);
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("HEAD", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("HEAD", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.status == 200 {
+                let size = resp
+                    .get_header("content-length")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let etag = resp.get_header("etag").unwrap_or("").to_string();
+                let b3 = resp
+                    .get_header("x-amz-meta-blake3")
+                    .and_then(Hash::from_hex);
+                let mode = resp
+                    .get_header("x-amz-meta-mode")
+                    .and_then(|m| u32::from_str_radix(m, 8).ok())
+                    .or(Some(0o100644));
+                return Ok(Some(S3ObjectMeta {
+                    key: full_key,
+                    size,
+                    etag,
+                    last_modified_sec: now_sec as i64,
+                    blake3_hash: b3,
+                    mode,
+                }));
+            } else if resp.status == 404 {
+                return Ok(None);
+            }
+        }
+
         {
             let bucket = self.mock.read().await;
             if let Some(obj) = bucket.objects.get(&full_key) {
@@ -662,6 +1207,34 @@ impl S3StorageBackend {
     /// Delete object from S3.
     pub async fn delete_object(&self, key: &str) -> Result<(), S3Error> {
         let full_key = self.resolve_key(key);
+        if self.config.live_mode {
+            let path = format!("/{}/{}", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("DELETE", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("DELETE", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let _ = self.http_client.send(&req).await;
+        }
+
         {
             let mut bucket = self.mock.write().await;
             bucket.objects.remove(&full_key);
@@ -678,6 +1251,51 @@ impl S3StorageBackend {
         delimiter: Option<&str>,
     ) -> Result<Vec<S3ObjectMeta>, S3Error> {
         let full_prefix = self.resolve_key(prefix);
+        if self.config.live_mode {
+            let mut query = format!("list-type=2&prefix={}", urlencoding_encode(&full_prefix));
+            if let Some(d) = delimiter {
+                query.push_str(&format!("&delimiter={}", urlencoding_encode(d)));
+            }
+            let path = format!("/{}", self.config.bucket);
+            let (url, host_hdr) = self.build_url(&path, &query);
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(b"");
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("GET", &path, &query, &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("GET", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash);
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+            if resp.status == 200 {
+                let xml = String::from_utf8_lossy(&resp.body);
+                let list = parse_list_objects_v2_xml(&xml);
+                return Ok(list);
+            } else {
+                return Err(S3Error::Protocol(format!(
+                    "S3 live list_objects failed with status {}",
+                    resp.status
+                )));
+            }
+        }
         let objects_dir = self.staging_root.join("objects");
         if objects_dir.is_dir() {
             if let Ok(entries) = crate::sync::scan_dir_entries(&objects_dir) {
@@ -1018,6 +1636,222 @@ impl StorageBackend for S3StorageBackend {
     fn root(&self) -> &Path {
         &self.staging_root
     }
+}
+
+/// Content-addressed chunk store backed by S3 / MinIO (`ARCHITECTURE.md` §2, §7, `ADR-064`).
+#[derive(Clone, Debug)]
+pub struct S3ChunkStore {
+    backend: S3StorageBackend,
+    chunk_prefix: String,
+}
+
+impl S3ChunkStore {
+    /// Construct a new S3-backed content-addressed chunk store.
+    pub fn new(backend: S3StorageBackend, chunk_prefix: impl Into<String>) -> Self {
+        Self {
+            backend,
+            chunk_prefix: chunk_prefix.into().trim_matches('/').to_string(),
+        }
+    }
+
+    /// Access the underlying backend.
+    pub fn backend(&self) -> &S3StorageBackend {
+        &self.backend
+    }
+
+    fn chunk_key(&self, h: &Hash) -> String {
+        if self.chunk_prefix.is_empty() {
+            format!("chunks/{}", h.to_hex())
+        } else {
+            format!("{}/chunks/{}", self.chunk_prefix, h.to_hex())
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChunkStore for S3ChunkStore {
+    async fn has(&self, h: &Hash) -> Result<bool, VelcruxError> {
+        let key = self.chunk_key(h);
+        match self.backend.head_object(&key).await {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(e) => Err(VelcruxError::Internal(e.to_string())),
+        }
+    }
+
+    async fn has_batch(&self, hashes: &[Hash]) -> Result<Vec<bool>, VelcruxError> {
+        let mut results = Vec::with_capacity(hashes.len());
+        for h in hashes {
+            results.push(self.has(h).await?);
+        }
+        Ok(results)
+    }
+
+    async fn put(&self, h: &Hash, data: &[u8]) -> Result<(), VelcruxError> {
+        let actual = Hash::of(data);
+        if actual != *h {
+            return Err(VelcruxError::Internal(format!(
+                "chunk hash mismatch: expected {}, got {}",
+                h, actual
+            )));
+        }
+        let key = self.chunk_key(h);
+        self.backend
+            .put_object(&key, data, Some(*h))
+            .await
+            .map_err(|e| VelcruxError::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get(&self, h: &Hash) -> Result<bytes::Bytes, VelcruxError> {
+        let key = self.chunk_key(h);
+        let data = self
+            .backend
+            .get_object(&key)
+            .await
+            .map_err(|e| VelcruxError::Internal(e.to_string()))?;
+        let actual = Hash::of(&data);
+        if actual != *h {
+            return Err(VelcruxError::Internal(format!(
+                "chunk corrupt in S3: expected {}, got {}",
+                h, actual
+            )));
+        }
+        Ok(bytes::Bytes::from(data))
+    }
+
+    async fn remove(&self, h: &Hash) -> Result<bool, VelcruxError> {
+        let key = self.chunk_key(h);
+        if !self.has(h).await? {
+            return Ok(false);
+        }
+        self.backend
+            .delete_object(&key)
+            .await
+            .map_err(|e| VelcruxError::Internal(e.to_string()))?;
+        Ok(true)
+    }
+
+    async fn total_chunks(&self) -> Result<usize, VelcruxError> {
+        let prefix = if self.chunk_prefix.is_empty() {
+            "chunks/".to_string()
+        } else {
+            format!("{}/chunks/", self.chunk_prefix)
+        };
+        let list = self
+            .backend
+            .list_objects(&prefix, None)
+            .await
+            .map_err(|e| VelcruxError::Internal(e.to_string()))?;
+        Ok(list.len())
+    }
+
+    async fn total_bytes(&self) -> Result<u64, VelcruxError> {
+        let prefix = if self.chunk_prefix.is_empty() {
+            "chunks/".to_string()
+        } else {
+            format!("{}/chunks/", self.chunk_prefix)
+        };
+        let list = self
+            .backend
+            .list_objects(&prefix, None)
+            .await
+            .map_err(|e| VelcruxError::Internal(e.to_string()))?;
+        Ok(list.iter().map(|o| o.size).sum())
+    }
+}
+
+fn current_iso8601_date(epoch_sec: u64) -> (String, String) {
+    let days = epoch_sec / 86400;
+    let rem_secs = epoch_sec % 86400;
+    let hour = rem_secs / 3600;
+    let minute = (rem_secs % 3600) / 60;
+    let second = rem_secs % 60;
+
+    let (year, month, day) = days_to_ymd(days);
+    let date = format!("{:04}{:02}{:02}", year, month, day);
+    let datetime = format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        year, month, day, hour, minute, second
+    );
+    (date, datetime)
+}
+
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u32, m as u32, d as u32)
+}
+
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open_tag = format!("<{}>", tag);
+    let close_tag = format!("</{}>", tag);
+    let start = xml.find(&open_tag)? + open_tag.len();
+    let end = xml[start..].find(&close_tag)? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+fn parse_list_objects_v2_xml(xml: &str) -> Vec<S3ObjectMeta> {
+    let mut objects = Vec::new();
+    let mut cursor = 0;
+    while let Some(pos) = xml[cursor..].find("<Contents>") {
+        let start = cursor + pos + "<Contents>".len();
+        if let Some(end_rel) = xml[start..].find("</Contents>") {
+            let end = start + end_rel;
+            let block = &xml[start..end];
+            let key = extract_xml_tag(block, "Key").unwrap_or_default();
+            let size = extract_xml_tag(block, "Size")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let etag = extract_xml_tag(block, "ETag").unwrap_or_default();
+            objects.push(S3ObjectMeta {
+                key,
+                size,
+                etag,
+                last_modified_sec: 0,
+                blake3_hash: None,
+                mode: Some(0o100644),
+            });
+            cursor = end + "</Contents>".len();
+        } else {
+            break;
+        }
+    }
+
+    let mut cp_cursor = 0;
+    while let Some(pos) = xml[cp_cursor..].find("<CommonPrefixes>") {
+        let start = cp_cursor + pos + "<CommonPrefixes>".len();
+        if let Some(end_rel) = xml[start..].find("</CommonPrefixes>") {
+            let end = start + end_rel;
+            let block = &xml[start..end];
+            if let Some(prefix) = extract_xml_tag(block, "Prefix") {
+                objects.push(S3ObjectMeta {
+                    key: prefix,
+                    size: 0,
+                    etag: String::new(),
+                    last_modified_sec: 0,
+                    blake3_hash: None,
+                    mode: Some(0o040755),
+                });
+            }
+            cp_cursor = end + "</CommonPrefixes>".len();
+        } else {
+            break;
+        }
+    }
+    objects
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
 #[cfg(test)]

@@ -180,6 +180,18 @@ An end-to-end demonstration script is provided to showcase certificate generatio
 ./scripts/demo.sh
 ```
 
+### Cloud Object Storage & Containerized Testing (ADR-064)
+
+Velcrux includes a containerized multi-cloud integration test matrix and pure safe-Rust HTTP/1.1 wire client for Amazon S3 (MinIO), Azure Blob Storage (Azurite), and Google Cloud Storage (Fake-GCS-Server):
+
+```bash
+# Run the turnkey cloud integration test matrix (auto-detects Docker/MinIO or in-process wire server)
+./scripts/run_cloud_integration_tests.sh
+
+# Or start containerized cloud targets via Docker Compose
+docker compose up -d minio azurite fake-gcs-server
+```
+
 ### Manual Operation
 
 1. **Start the Server Daemon**:

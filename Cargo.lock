@@ -1713,6 +1713,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "url",
  "x509-parser",
  "zstd",
 ]

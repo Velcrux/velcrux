@@ -27,6 +27,39 @@ services:
     environment:
       - RUST_LOG=info,velcrux_server=debug,velcrux_core=debug
 
+  # MinIO: S3-Compatible Object Storage Gateway Emulator (ADR-064 / Option CV)
+  minio:
+    image: minio/minio:RELEASE.2024-01-01T16-36-33Z
+    container_name: velcrux-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+  # Azurite: Azure Blob Storage Emulator (ADR-064 / Option CV)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.28.0
+    container_name: velcrux-azurite
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    command: azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --silent
+
+  # Fake-GCS-Server: Google Cloud Storage Emulator (ADR-064 / Option CV)
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server:1.47.7
+    container_name: velcrux-fake-gcs
+    restart: unless-stopped
+    ports:
+      - "4443:4443"
+    command: -scheme http -port 4443 -public-host 127.0.0.1:4443
+
 volumes:
   velcrux-data:
     name: velcrux-data
@@ -34,3 +67,6 @@ volumes:
     name: velcrux-state
   velcrux-config:
     name: velcrux-config
+  minio-data:
+    name: minio-data
+

@@ -34,8 +34,8 @@ use velcrux_core::protocol::frame::{
     DataFrameFlags, DataPreamble, DATA_FRAME_HEADER_LEN, DATA_PREAMBLE_LEN,
 };
 use velcrux_core::protocol::message::{
-    Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message,
-    TransferBegin, TransferCreate, TransferCreated, TransferOp, TransferPlan, Verify as VerifyMsg,
+    Checkpoint, Commit as CommitMsg, Committed as CommittedMsg, HelloAck, Message, TransferBegin,
+    TransferCreate, TransferCreated, TransferOp, TransferPlan, Verify as VerifyMsg,
     VerifyResult as VerifyResultMsg,
 };
 use velcrux_core::session::{encode_message, read_frame, write_frame, ClientSession};

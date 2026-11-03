@@ -37,6 +37,7 @@ toml.workspace       = true
 zstd.workspace       = true
 fs4.workspace        = true
 libc                 = "0.2"
+url.workspace        = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

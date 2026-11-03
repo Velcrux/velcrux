@@ -672,33 +672,21 @@ pub fn execute_package_target(target: PackageTarget, json: bool) -> Result<()> {
         ),
         PackageTarget::Docker { output } => (generate_dockerfile(), output, "docker"),
         PackageTarget::Helm { output } => (generate_helm_values(), output, "helm"),
-        PackageTarget::Homebrew { version, output } => (
-            generate_homebrew_formula(&version),
-            output,
-            "homebrew",
-        ),
+        PackageTarget::Homebrew { version, output } => {
+            (generate_homebrew_formula(&version), output, "homebrew")
+        }
         PackageTarget::Debian {
             version,
             arch,
             output,
-        } => (
-            generate_debian_control(&version, &arch),
-            output,
-            "debian",
-        ),
-        PackageTarget::Rpm { version, output } => {
-            (generate_rpm_spec(&version), output, "rpm")
+        } => (generate_debian_control(&version, &arch), output, "debian"),
+        PackageTarget::Rpm { version, output } => (generate_rpm_spec(&version), output, "rpm"),
+        PackageTarget::Scoop { version, output } => {
+            (generate_scoop_manifest(&version), output, "scoop")
         }
-        PackageTarget::Scoop { version, output } => (
-            generate_scoop_manifest(&version),
-            output,
-            "scoop",
-        ),
-        PackageTarget::Winget { version, output } => (
-            generate_winget_manifest(&version),
-            output,
-            "winget",
-        ),
+        PackageTarget::Winget { version, output } => {
+            (generate_winget_manifest(&version), output, "winget")
+        }
     };
 
     if let Some(dest) = output_path {

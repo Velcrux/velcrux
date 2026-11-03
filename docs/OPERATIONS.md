@@ -5138,6 +5138,38 @@ velcrux k8s reconcile --file transfer.yaml
 velcrux k8s reconcile --file transfer.yaml --simulate-failure "Stream timeout"
 ```
 
+---
+
+## 48. Real Cloud Object Storage (S3 / MinIO / GCS / Azure) Containerized Integration Harness (ADR-064)
+
+### 48.1. Overview
+
+Velcrux provides an end-to-end containerized and wire-level integration test harness for S3 (MinIO), Azure Blob (Azurite), and Google Cloud Storage (Fake-GCS-Server) as specified in `ADR-064`.
+
+Key Capabilities:
+- **Zero-Dependency Safe Rust HTTP/1.1 Client (`CloudHttpClient`)**: Pure safe Rust HTTP client (`#![forbid(unsafe_code)]`) executing streaming socket transfers over `tokio::net::TcpStream`.
+- **Ephemeral TCP Wire Mock Server (`WireCloudServer`)**: In-process TCP HTTP server binding to `127.0.0.1:0` with complete AWS SigV4, Azure BlockBlob, and GCS REST wire protocols.
+- **S3 Content-Addressed Storage (`S3ChunkStore`)**: Implementation of the `ChunkStore` trait directly on S3/MinIO buckets with content-addressed chunk indexing under `chunks/{hash}`.
+- **FastCDC Boundary Shift Deduplication**: Verifies that streaming 256 KiB files with 1-byte insertions at offset 0 achieve ≥ 95% chunk deduplication reuse against live object storage.
+- **Containerized Integration Matrix**: Full multi-cloud compose configuration in `docker-compose.yml`.
+
+### 48.2. Operational Commands & Test Execution
+
+```bash
+# 1. Run full containerized integration test matrix (auto-detects Docker / MinIO)
+./scripts/run_cloud_integration_tests.sh
+
+# 2. Start containerized cloud storage services manually
+docker compose up -d minio azurite fake-gcs-server
+
+# 3. Execute cloud storage harness against live MinIO container
+VELCRUX_S3_TEST_ENDPOINT="http://127.0.0.1:9000" cargo test -p velcrux-core --test storage_cloud_harness -- --nocapture
+
+# 4. Stop cloud storage containers
+docker compose stop minio azurite fake-gcs-server
+```
+
+
 
 
 

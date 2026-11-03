@@ -20,8 +20,7 @@ use tracing_subscriber::EnvFilter;
 use velcrux_core::protocol::capabilities::{Capabilities, Capability};
 use velcrux_core::session::{ClientSession, ServerConn, ServerStats};
 use velcrux_core::transport::quic::{
-    ClientBuilder, ClientIdentity, QuicConnection, ServerBuilder,
-    TransportConfigTunables,
+    ClientBuilder, ClientIdentity, QuicConnection, ServerBuilder, TransportConfigTunables,
 };
 use velcrux_core::transport::Transport;
 

@@ -213,8 +213,8 @@ else
 fi
 
 # --- Verification 15: Client and Core Automated Tests Suite ---
-echo -e "${YELLOW}--> Running client CLI integration tests...${NC}"
-if cargo test -p velcrux-client >/dev/null 2>&1; then
+echo -e "${YELLOW}--> Running client CLI and cloud storage integration tests...${NC}"
+if cargo test -p velcrux-client >/dev/null 2>&1 && cargo test -p velcrux-core --test storage_cloud_harness >/dev/null 2>&1; then
     record_result "15" "Pass automated tests (all unit and integration suites)" "PASS"
 else
     record_result "15" "Pass automated tests" "FAIL"

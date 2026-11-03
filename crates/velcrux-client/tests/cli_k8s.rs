@@ -143,14 +143,23 @@ spec:
 
     let bin = get_bin_path();
     let output = Command::new(&bin)
-        .args(["k8s", "validate", "--file", bad_manifest.to_str().unwrap(), "--json"])
+        .args([
+            "k8s",
+            "validate",
+            "--file",
+            bad_manifest.to_str().unwrap(),
+            "--json",
+        ])
         .output()
         .expect("failed to run velcrux k8s validate");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(parsed["valid"], false);
-    assert!(parsed["error"].as_str().unwrap().contains("must use velcrux://"));
+    assert!(parsed["error"]
+        .as_str()
+        .unwrap()
+        .contains("must use velcrux://"));
 }
 
 #[test]

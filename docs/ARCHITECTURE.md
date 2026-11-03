@@ -571,6 +571,7 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-061](adr/ADR-061-hardware-security-module-pkcs11-cloud-kms-bridge.md) | Hardware Security Module (HSM) PKCS#11 & Cloud KMS Key Orchestration Bridge | Accepted | Pure safe Rust enterprise root-of-trust orchestration, PKCS#11 software token emulation, multi-cloud KMS envelope encryption, AAD context binding, master key rotation |
 | [ADR-062](adr/ADR-062-automated-multi-platform-packaging-and-release-orchestration.md) | Automated Multi-Platform Packaging, Distribution & Release Orchestration | Accepted | Turnkey Homebrew, Debian, RPM, Arch, Scoop, Winget, Kubernetes Helm chart v2, and multi-arch OCI publishing |
 | [ADR-063](adr/ADR-063-kubernetes-operator-and-declarative-crds.md) | Kubernetes Operator & Declarative Custom Resource Definitions (CRDs) | Accepted | Pure safe Rust Operator controller, VelcruxCluster & VelcruxTransfer CRDs, self-healing reconciliation loop, and exponential backoff |
+| [ADR-064](adr/ADR-064-cloud-object-storage-containerized-integration-harness.md) | Real Cloud Object Storage (S3 / MinIO / GCS / Azure) Containerized Integration Harness | Accepted | Pure safe Rust asynchronous HTTP/1.1 client, ephemeral TCP wire mock server, MinIO / Azurite / Fake-GCS container matrix, S3ChunkStore, and FastCDC boundary-shift deduplication |
 
 
 
