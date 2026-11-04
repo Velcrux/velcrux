@@ -192,6 +192,18 @@ Velcrux includes a containerized multi-cloud integration test matrix and pure sa
 docker compose up -d minio azurite fake-gcs-server
 ```
 
+### Distributed Object Storage Sharding & Multi-Bucket Tiering (ADR-065)
+
+High-IOPS consistent-hash horizontal sharding across multi-bucket topologies and automated cold archive lifecycle tiering:
+
+```bash
+# Inspect S3 metadata and cold tier restore status
+velcrux s3 stat s3://my-bucket/chunks/aa/bb/c0ffee123456...
+
+# Request restoration of cold Glacier archive chunk
+velcrux s3 restore s3://my-bucket/chunks/aa/bb/c0ffee123456... --days 7 --tier Standard
+```
+
 ### Manual Operation
 
 1. **Start the Server Daemon**:

@@ -95,6 +95,8 @@ pub struct S3Config {
     pub max_retries: usize,
     /// Whether to execute live HTTP/1.1 requests to endpoint over TCP sockets.
     pub live_mode: bool,
+    /// Default cloud storage class (e.g. `STANDARD`, `GLACIER`, `DEEP_ARCHIVE`).
+    pub default_storage_class: Option<String>,
 }
 
 impl S3Config {
@@ -112,6 +114,7 @@ impl S3Config {
             part_size_bytes: 8 * 1024 * 1024,
             max_retries: 3,
             live_mode: false,
+            default_storage_class: None,
         }
     }
 
@@ -222,6 +225,12 @@ impl S3Config {
         self.part_size_bytes = size.max(5 * 1024 * 1024);
         self
     }
+
+    /// Set default cloud storage class (e.g. `STANDARD`, `STANDARD_IA`, `GLACIER`, `DEEP_ARCHIVE`).
+    pub fn with_storage_class(mut self, storage_class: impl Into<String>) -> Self {
+        self.default_storage_class = Some(storage_class.into());
+        self
+    }
 }
 
 /// Metadata describing an S3 object.
@@ -239,6 +248,12 @@ pub struct S3ObjectMeta {
     pub blake3_hash: Option<Hash>,
     /// POSIX file mode bits stored in `x-amz-meta-mode`, if present.
     pub mode: Option<u32>,
+    /// S3 storage class (e.g. `STANDARD`, `GLACIER`, `DEEP_ARCHIVE`).
+    #[serde(default)]
+    pub storage_class: Option<String>,
+    /// Active restore status (from `x-amz-restore`), if applicable.
+    #[serde(default)]
+    pub restore_status: Option<String>,
 }
 
 /// Outcome report of an S3 synchronization operation.
@@ -376,6 +391,8 @@ struct MockS3Object {
     last_modified_sec: i64,
     blake3_hash: Option<Hash>,
     mode: Option<u32>,
+    storage_class: Option<String>,
+    restore_status: Option<String>,
 }
 
 /// In-memory mock S3 service state.
@@ -551,11 +568,27 @@ impl S3StorageBackend {
         data: &[u8],
         blake3_hash: Option<Hash>,
     ) -> Result<S3ObjectMeta, S3Error> {
+        self.put_object_with_storage_class(key, data, blake3_hash, None)
+            .await
+    }
+
+    /// Put an object directly into S3 with optional storage class override.
+    pub async fn put_object_with_storage_class(
+        &self,
+        key: &str,
+        data: &[u8],
+        blake3_hash: Option<Hash>,
+        storage_class: Option<&str>,
+    ) -> Result<S3ObjectMeta, S3Error> {
         let full_key = self.resolve_key(key);
         let now_sec = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
+
+        let effective_sc = storage_class
+            .map(|s| s.to_string())
+            .or_else(|| self.config.default_storage_class.clone());
 
         let mut etag = format!("\"{}\"", sha256_hex(data));
 
@@ -573,6 +606,9 @@ impl S3StorageBackend {
                 sign_headers.insert("x-amz-meta-blake3".to_string(), h.to_hex());
             }
             sign_headers.insert("x-amz-meta-mode".to_string(), "100644".to_string());
+            if let Some(ref sc) = effective_sc {
+                sign_headers.insert("x-amz-storage-class".to_string(), sc.clone());
+            }
 
             let (auth, _) =
                 self.signer()
@@ -587,6 +623,9 @@ impl S3StorageBackend {
                 .with_body(data.to_vec());
             if let Some(h) = blake3_hash {
                 req = req.with_header("x-amz-meta-blake3", h.to_hex());
+            }
+            if let Some(ref sc) = effective_sc {
+                req = req.with_header("x-amz-storage-class", sc.clone());
             }
 
             let resp = self
@@ -615,6 +654,8 @@ impl S3StorageBackend {
             last_modified_sec: now_sec,
             blake3_hash,
             mode: Some(0o100644),
+            storage_class: effective_sc.clone(),
+            restore_status: None,
         };
 
         // Persist to disk
@@ -638,6 +679,8 @@ impl S3StorageBackend {
                 last_modified_sec: now_sec,
                 blake3_hash,
                 mode: Some(0o100644),
+                storage_class: effective_sc,
+                restore_status: None,
             },
         );
 
@@ -884,6 +927,8 @@ impl S3StorageBackend {
             last_modified_sec: now_sec,
             blake3_hash,
             mode: Some(0o100644),
+            storage_class: self.config.default_storage_class.clone(),
+            restore_status: None,
         };
 
         bucket.objects.insert(
@@ -894,6 +939,8 @@ impl S3StorageBackend {
                 last_modified_sec: now_sec,
                 blake3_hash,
                 mode: Some(0o100644),
+                storage_class: self.config.default_storage_class.clone(),
+                restore_status: None,
             },
         );
 
@@ -1014,6 +1061,11 @@ impl S3StorageBackend {
                     bucket: self.config.bucket.clone(),
                     key: full_key,
                 });
+            } else if resp.status == 403 {
+                return Err(S3Error::Protocol(format!(
+                    "InvalidObjectState (403): {}",
+                    String::from_utf8_lossy(&resp.body)
+                )));
             } else {
                 return Err(S3Error::Protocol(format!(
                     "S3 live GET failed with status {}",
@@ -1025,6 +1077,20 @@ impl S3StorageBackend {
         {
             let bucket = self.mock.read().await;
             if let Some(obj) = bucket.objects.get(&full_key) {
+                if let Some(ref sc) = obj.storage_class {
+                    if sc == "GLACIER" || sc == "DEEP_ARCHIVE" {
+                        let is_restored = match &obj.restore_status {
+                            Some(s) => s.contains("ongoing-request=\"false\""),
+                            None => false,
+                        };
+                        if !is_restored {
+                            return Err(S3Error::Protocol(format!(
+                                "InvalidObjectState: object '{}' is archived in {} and has not been restored",
+                                full_key, sc
+                            )));
+                        }
+                    }
+                }
                 return Ok(obj.data.clone());
             }
         }
@@ -1152,6 +1218,10 @@ impl S3StorageBackend {
                     .get_header("x-amz-meta-mode")
                     .and_then(|m| u32::from_str_radix(m, 8).ok())
                     .or(Some(0o100644));
+                let storage_class = resp
+                    .get_header("x-amz-storage-class")
+                    .map(|s| s.to_string());
+                let restore_status = resp.get_header("x-amz-restore").map(|s| s.to_string());
                 return Ok(Some(S3ObjectMeta {
                     key: full_key,
                     size,
@@ -1159,6 +1229,8 @@ impl S3StorageBackend {
                     last_modified_sec: now_sec as i64,
                     blake3_hash: b3,
                     mode,
+                    storage_class,
+                    restore_status,
                 }));
             } else if resp.status == 404 {
                 return Ok(None);
@@ -1175,6 +1247,8 @@ impl S3StorageBackend {
                     last_modified_sec: obj.last_modified_sec,
                     blake3_hash: obj.blake3_hash,
                     mode: obj.mode,
+                    storage_class: obj.storage_class.clone(),
+                    restore_status: obj.restore_status.clone(),
                 }));
             }
         }
@@ -1198,6 +1272,8 @@ impl S3StorageBackend {
                     last_modified_sec: 0,
                     blake3_hash: Some(hash),
                     mode: Some(0o100644),
+                    storage_class: None,
+                    restore_status: None,
                 }));
             }
         }
@@ -1242,6 +1318,76 @@ impl S3StorageBackend {
         let _ = std::fs::remove_file(self.object_file_path(&full_key));
         let _ = std::fs::remove_file(self.meta_file_path(&full_key));
         Ok(())
+    }
+
+    /// Request restoration of an archived object (Glacier / Deep Archive).
+    pub async fn restore_object(&self, key: &str, days: u32, tier: &str) -> Result<(), S3Error> {
+        let full_key = self.resolve_key(key);
+        let xml_body = format!(
+            "<RestoreRequest><Days>{}</Days><GlacierJobParameters><Tier>{}</Tier></GlacierJobParameters></RestoreRequest>",
+            days, tier
+        );
+
+        if self.config.live_mode {
+            let path = format!("/{}/{}?restore", self.config.bucket, full_key);
+            let (url, host_hdr) = self.build_url(&path, "");
+            let now_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let (_d, dt) = current_iso8601_date(now_sec);
+            let payload_hash = sha256_hex(xml_body.as_bytes());
+
+            let mut sign_headers = BTreeMap::new();
+            sign_headers.insert("host".to_string(), host_hdr.clone());
+            sign_headers.insert("x-amz-date".to_string(), dt.clone());
+            sign_headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+            let (auth, _) =
+                self.signer()
+                    .sign_request("POST", &path, "", &sign_headers, &payload_hash, &dt);
+
+            let req = HttpRequest::new("POST", &url)
+                .with_header("Host", host_hdr)
+                .with_header("Authorization", auth)
+                .with_header("x-amz-date", dt)
+                .with_header("x-amz-content-sha256", payload_hash)
+                .with_body(xml_body.into_bytes());
+
+            let resp = self
+                .http_client
+                .send(&req)
+                .await
+                .map_err(|e| S3Error::Network(e.to_string()))?;
+
+            if resp.status == 200 || resp.status == 202 {
+                return Ok(());
+            } else if resp.status == 404 {
+                return Err(S3Error::NotFound {
+                    bucket: self.config.bucket.clone(),
+                    key: full_key,
+                });
+            } else {
+                return Err(S3Error::Protocol(format!(
+                    "S3 restore failed with status {}: {}",
+                    resp.status,
+                    String::from_utf8_lossy(&resp.body)
+                )));
+            }
+        }
+
+        let mut bucket = self.mock.write().await;
+        if let Some(obj) = bucket.objects.get_mut(&full_key) {
+            obj.restore_status = Some(format!(
+                "ongoing-request=\"false\", expiry-date=\"Wed, 01 Dec 2026 00:00:00 GMT\""
+            ));
+            Ok(())
+        } else {
+            Err(S3Error::NotFound {
+                bucket: self.config.bucket.clone(),
+                key: full_key,
+            })
+        }
     }
 
     /// List objects under a prefix.
@@ -1318,6 +1464,10 @@ impl S3StorageBackend {
                             .and_then(|m| m.blake3_hash)
                             .or_else(|| Some(Hash::of(&data)));
                         let last_mod = head_meta.as_ref().map(|m| m.last_modified_sec).unwrap_or(0);
+                        let (sc, rs) = match head_meta.as_ref() {
+                            Some(m) => (m.storage_class.clone(), m.restore_status.clone()),
+                            None => (None, None),
+                        };
                         let mut bucket = self.mock.write().await;
                         bucket.objects.entry(k).or_insert(MockS3Object {
                             data,
@@ -1325,6 +1475,8 @@ impl S3StorageBackend {
                             last_modified_sec: last_mod,
                             blake3_hash,
                             mode: Some(0o100644),
+                            storage_class: sc,
+                            restore_status: rs,
                         });
                     }
                 }
@@ -1350,6 +1502,8 @@ impl S3StorageBackend {
                                 last_modified_sec: 0,
                                 blake3_hash: None,
                                 mode: Some(0o040755),
+                                storage_class: None,
+                                restore_status: None,
                             });
                         }
                         continue;
@@ -1362,6 +1516,8 @@ impl S3StorageBackend {
                     last_modified_sec: obj.last_modified_sec,
                     blake3_hash: obj.blake3_hash,
                     mode: obj.mode,
+                    storage_class: obj.storage_class.clone(),
+                    restore_status: obj.restore_status.clone(),
                 });
             }
         }
@@ -1812,6 +1968,7 @@ fn parse_list_objects_v2_xml(xml: &str) -> Vec<S3ObjectMeta> {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
             let etag = extract_xml_tag(block, "ETag").unwrap_or_default();
+            let storage_class = extract_xml_tag(block, "StorageClass");
             objects.push(S3ObjectMeta {
                 key,
                 size,
@@ -1819,6 +1976,8 @@ fn parse_list_objects_v2_xml(xml: &str) -> Vec<S3ObjectMeta> {
                 last_modified_sec: 0,
                 blake3_hash: None,
                 mode: Some(0o100644),
+                storage_class,
+                restore_status: None,
             });
             cursor = end + "</Contents>".len();
         } else {
@@ -1840,6 +1999,8 @@ fn parse_list_objects_v2_xml(xml: &str) -> Vec<S3ObjectMeta> {
                     last_modified_sec: 0,
                     blake3_hash: None,
                     mode: Some(0o040755),
+                    storage_class: None,
+                    restore_status: None,
                 });
             }
             cp_cursor = end + "</CommonPrefixes>".len();

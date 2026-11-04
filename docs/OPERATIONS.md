@@ -5169,6 +5169,33 @@ VELCRUX_S3_TEST_ENDPOINT="http://127.0.0.1:9000" cargo test -p velcrux-core --te
 docker compose stop minio azurite fake-gcs-server
 ```
 
+## 49. Distributed Object Storage Sharding & Multi-Bucket Tiering (ADR-065)
+
+### 49.1. Overview
+
+Velcrux provides horizontal object storage sharding and multi-bucket lifecycle tiering as specified in `ADR-065`.
+
+Key Capabilities:
+- **Consistent Hash Sharding (`ShardRouter`)**: Virtual-node (vnode) ring routing across $N$ bucket shards, achieving balanced distribution (Shannon entropy $\ge 1.90$ bits across 4 shards).
+- **Prefix Fanout Scaling (`PrefixPartitionStrategy`)**: `HexTwoLevel` path formatting (`chunks/aa/bb/<hash>`) yielding 65,536 distinct S3 prefix partitions, bypassing AWS 3,500 PUT req/s per-prefix limits.
+- **Glacier Cold Archive Restoration (`GlacierRestoreCoordinator`)**: Orchestrates `POST ?restore` request lifecycles, tracks `x-amz-restore` header state transitions (`ArchivedNotRestored` $\to$ `Restoring` $\to$ `Restored`), and coordinates post-restore read-through streaming.
+- **Sharded Lifecycle Engine (`ShardedLifecycleEngine`)**: Age- and size-based evaluation rules producing structured `ShardedLifecycleReport` metrics.
+- **Distributed Chunk Store (`ShardedChunkStore`)**: Unified `ChunkStore` implementation supporting batch existence checks (`has_batch`), concurrent multi-shard writes, and whole-file reassembly with BLAKE3 verification.
+
+### 49.2. Operational Commands
+
+```bash
+# 1. Inspect object metadata, storage class, and restore state
+velcrux s3 stat s3://my-bucket/chunks/aa/bb/c0ffee123456...
+
+# 2. Initiate Glacier restoration for an archived object
+velcrux s3 restore s3://my-bucket/chunks/aa/bb/c0ffee123456... --days 7 --tier Standard
+
+# 3. Execute sharded storage test suite
+cargo test --test storage_sharding_tests -- --nocapture
+```
+
+
 
 
 

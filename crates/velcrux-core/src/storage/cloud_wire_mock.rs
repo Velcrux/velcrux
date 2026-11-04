@@ -30,6 +30,8 @@ struct StoredObject {
     data: Vec<u8>,
     etag: String,
     metadata: BTreeMap<String, String>,
+    storage_class: Option<String>,
+    restore_status: Option<String>,
 }
 
 /// In-flight multipart upload session.
@@ -128,6 +130,17 @@ impl WireCloudServer {
 
     /// Pre-seed an object in the mock server.
     pub async fn seed_object(&self, bucket: &str, key: &str, data: &[u8]) {
+        self.seed_object_with_tier(bucket, key, data, None).await;
+    }
+
+    /// Pre-seed an object in the mock server with an explicit storage class.
+    pub async fn seed_object_with_tier(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        storage_class: Option<&str>,
+    ) {
         let mut st = self.state.write().await;
         let b = st.buckets.entry(bucket.to_string()).or_default();
         let etag = format!("\"{}\"", Hash::of(data).to_hex());
@@ -137,6 +150,8 @@ impl WireCloudServer {
                 data: data.to_vec(),
                 etag,
                 metadata: BTreeMap::new(),
+                storage_class: storage_class.map(|s| s.to_string()),
+                restore_status: None,
             },
         );
     }
@@ -280,6 +295,8 @@ async fn dispatch_request(
                     data: body.to_vec(),
                     etag: etag.clone(),
                     metadata: BTreeMap::new(),
+                    storage_class: None,
+                    restore_status: None,
                 },
             );
 
@@ -397,6 +414,8 @@ async fn dispatch_request(
                         data: body.to_vec(),
                         etag: etag.clone(),
                         metadata: meta,
+                        storage_class: None,
+                        restore_status: None,
                     },
                 );
 
@@ -501,6 +520,8 @@ async fn dispatch_request(
                         xml.push_str(&format!("    <Key>{}</Key>\n", k));
                         xml.push_str(&format!("    <Size>{}</Size>\n", obj.data.len()));
                         xml.push_str(&format!("    <ETag>{}</ETag>\n", obj.etag));
+                        let sc = obj.storage_class.as_deref().unwrap_or("STANDARD");
+                        xml.push_str(&format!("    <StorageClass>{}</StorageClass>\n", sc));
                         xml.push_str("  </Contents>\n");
                     }
                 }
@@ -582,6 +603,8 @@ async fn dispatch_request(
                         data: concatenated,
                         etag: etag.clone(),
                         metadata: BTreeMap::new(),
+                        storage_class: Some("STANDARD".to_string()),
+                        restore_status: None,
                     },
                 );
 
@@ -608,6 +631,25 @@ async fn dispatch_request(
             return (204, resp_headers, Vec::new());
         }
 
+        // D2. S3 Restore Object: POST /bucket/key?restore
+        if method == "POST" && query.contains("restore") {
+            let mut st = state.write().await;
+            if let Some(b) = st.buckets.get_mut(bucket) {
+                if let Some(obj) = b.get_mut(key) {
+                    obj.restore_status = Some(
+                        "ongoing-request=\"false\", expiry-date=\"Wed, 01 Dec 2026 00:00:00 GMT\""
+                            .to_string(),
+                    );
+                    return (202, resp_headers, Vec::new());
+                }
+            }
+            return (
+                404,
+                resp_headers,
+                b"<Error><Code>NoSuchKey</Code></Error>".to_vec(),
+            );
+        }
+
         // E. PUT Object: PUT /bucket/key
         if method == "PUT" {
             let mut meta = BTreeMap::new();
@@ -616,6 +658,7 @@ async fn dispatch_request(
                     meta.insert(k.clone(), v.clone());
                 }
             }
+            let storage_class = headers.get("x-amz-storage-class").cloned();
             let etag = format!("\"{}\"", Hash::of(body).to_hex());
             let mut st = state.write().await;
             let b = st.buckets.entry(bucket.to_string()).or_default();
@@ -625,6 +668,8 @@ async fn dispatch_request(
                     data: body.to_vec(),
                     etag: etag.clone(),
                     metadata: meta,
+                    storage_class,
+                    restore_status: None,
                 },
             );
 
@@ -637,7 +682,30 @@ async fn dispatch_request(
             let st = state.read().await;
             if let Some(b) = st.buckets.get(bucket) {
                 if let Some(obj) = b.get(key) {
+                    // Check if object is cold archive and unrestored
+                    if let Some(ref sc) = obj.storage_class {
+                        if sc == "GLACIER" || sc == "DEEP_ARCHIVE" {
+                            let is_restored = match &obj.restore_status {
+                                Some(s) => s.contains("ongoing-request=\"false\""),
+                                None => false,
+                            };
+                            if !is_restored {
+                                return (
+                                    403,
+                                    resp_headers,
+                                    b"<Error><Code>InvalidObjectState</Code><Message>Object is in Glacier and must be restored before GET</Message></Error>".to_vec(),
+                                );
+                            }
+                        }
+                    }
+
                     resp_headers.insert("ETag".to_string(), obj.etag.clone());
+                    if let Some(ref sc) = obj.storage_class {
+                        resp_headers.insert("x-amz-storage-class".to_string(), sc.clone());
+                    }
+                    if let Some(ref rs) = obj.restore_status {
+                        resp_headers.insert("x-amz-restore".to_string(), rs.clone());
+                    }
                     for (k, v) in &obj.metadata {
                         resp_headers.insert(k.clone(), v.clone());
                     }
@@ -672,6 +740,12 @@ async fn dispatch_request(
                 if let Some(obj) = b.get(key) {
                     resp_headers.insert("ETag".to_string(), obj.etag.clone());
                     resp_headers.insert("Content-Length".to_string(), obj.data.len().to_string());
+                    if let Some(ref sc) = obj.storage_class {
+                        resp_headers.insert("x-amz-storage-class".to_string(), sc.clone());
+                    }
+                    if let Some(ref rs) = obj.restore_status {
+                        resp_headers.insert("x-amz-restore".to_string(), rs.clone());
+                    }
                     for (k, v) in &obj.metadata {
                         resp_headers.insert(k.clone(), v.clone());
                     }

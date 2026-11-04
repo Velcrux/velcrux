@@ -63,7 +63,11 @@ if [ -z "${VELCRUX_S3_TEST_ENDPOINT:-}" ]; then
     echo -e "${YELLOW}--> External MinIO not running; using hermetic in-process TCP wire server (127.0.0.1:0).${NC}"
 fi
 
-echo -e "\n${YELLOW}--> Running Storage Cloud Harness Test Suite...${NC}"
+echo -e "\n${YELLOW}--> Running Storage Cloud Harness Test Suite (ADR-064)...${NC}"
 cargo test -p velcrux-core --test storage_cloud_harness -- --nocapture
 
-echo -e "\n${GREEN}${BOLD}✓ All Cloud Storage Containerized Integration Tests Passed Successfully!${NC}\n"
+echo -e "\n${YELLOW}--> Running Distributed Storage Sharding & Multi-Bucket Tiering Test Suite (ADR-065)...${NC}"
+cargo test -p velcrux-core --test storage_sharding_tests -- --nocapture
+
+echo -e "\n${GREEN}${BOLD}✓ All Cloud Storage Containerized & Sharded Integration Tests Passed Successfully!${NC}\n"
+

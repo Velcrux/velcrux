@@ -36,6 +36,7 @@ pub mod gcs;
 pub mod memory;
 pub mod s3;
 pub mod scrub;
+pub mod sharding;
 pub mod snapshot;
 pub mod sparse;
 pub mod tiering;
@@ -89,6 +90,11 @@ pub use s3::{
 pub use scrub::{
     BackgroundScrubDaemon, ChunkIntegrityStatus, DataScrubber, ScrubFinding, ScrubMode,
     ScrubOptions, ScrubReport,
+};
+pub use sharding::{
+    BucketShard, GlacierRestoreCoordinator, GlacierTier, ObjectRestoreState,
+    PrefixPartitionStrategy, S3StorageClass, ShardDistributionStats, ShardRouter,
+    ShardedChunkStore, ShardedLifecycleEngine, ShardedLifecycleReport, ShardedLifecycleRule,
 };
 pub use snapshot::{
     SnapshotDiff, SnapshotEntry, SnapshotFileMeta, SnapshotManager, SnapshotRestoreReport,

@@ -3045,6 +3045,23 @@ enum S3SubCmd {
         #[arg(long)]
         region: Option<String>,
     },
+    /// Request Glacier restoration of an archived S3 object (Option CW).
+    Restore {
+        /// S3 URL to restore (e.g. s3://bucket/key).
+        s3_url: String,
+        /// Number of days to keep the restored copy available (default: 7).
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+        /// Retrieval tier: "Expedited", "Standard", or "Bulk" (default: Standard).
+        #[arg(long, default_value = "Standard")]
+        tier: String,
+        /// S3 endpoint override.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// S3 region override.
+        #[arg(long)]
+        region: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -14233,6 +14250,12 @@ async fn run_s3(cli: &Cli, sub: &S3SubCmd) -> anyhow::Result<()> {
                         .map(|h| h.to_hex())
                         .unwrap_or_else(|| "none".to_string())
                 );
+                if let Some(ref sc) = meta.storage_class {
+                    println!("  Storage Class: {}", sc);
+                }
+                if let Some(ref rs) = meta.restore_status {
+                    println!("  Restore Status: {}", rs);
+                }
                 println!("  Last Modified: {} (unix sec)", meta.last_modified_sec);
             }
         }
@@ -14434,6 +14457,47 @@ async fn run_s3(cli: &Cli, sub: &S3SubCmd) -> anyhow::Result<()> {
                     "s3 sync requires one local path and one s3:// URL (got '{}' and '{}')",
                     source,
                     destination
+                );
+            }
+        }
+        S3SubCmd::Restore {
+            s3_url,
+            days,
+            tier,
+            endpoint,
+            region,
+        } => {
+            let (bucket, key) = velcrux_core::storage::S3Config::parse_s3_url(s3_url)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let mut cfg = velcrux_core::storage::S3Config::from_env(&bucket)
+                .unwrap_or_else(|_| velcrux_core::storage::S3Config::new(&bucket));
+            if let Some(ep) = endpoint {
+                cfg.endpoint = ep.clone();
+            }
+            if let Some(reg) = region {
+                cfg.region = reg.clone();
+            }
+            let backend = velcrux_core::storage::S3StorageBackend::new(cfg);
+            backend
+                .restore_object(&key, *days, tier)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "RestoreInitiated",
+                        "bucket": bucket,
+                        "key": key,
+                        "days": days,
+                        "tier": tier,
+                    })
+                );
+            } else {
+                println!(
+                    "Initiated restore for s3://{}/{} (days={}, tier={})",
+                    bucket, key, days, tier
                 );
             }
         }
