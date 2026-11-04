@@ -824,6 +824,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: XdpSubCmd,
     },
+    /// Hardware-accelerated RDMA (RoCEv2 / InfiniBand) zero-copy direct memory pacing (Option CY).
+    Rdma {
+        #[command(subcommand)]
+        sub: RdmaSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2211,6 +2216,57 @@ enum XdpSubCmd {
         /// Number of sample packets to steer (default: 1000).
         #[arg(long, default_value_t = 1000)]
         packets: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum RdmaSubCmd {
+    /// Inspect RDMA Host Channel Adapter (HCA) device capabilities and link state.
+    Status {
+        /// Target HCA device name (default: mlx5_0).
+        #[arg(long, default_value = "mlx5_0")]
+        device: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run zero-copy RDMA direct memory write benchmark with optional DCQCN congestion injection.
+    Bench {
+        /// Number of memory chunks to transfer (default: 64).
+        #[arg(long, default_value_t = 64)]
+        chunks: usize,
+        /// Chunk buffer size in bytes (default: 4096).
+        #[arg(long, default_value_t = 4096)]
+        chunk_size: usize,
+        /// Inject simulated CNP packet to evaluate DCQCN multiplicative rate decrease.
+        #[arg(long)]
+        inject_cnp: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dissect and validate RoCEv2 wire packet framing (BTH, RETH, AETH, ImmDt, ICRC).
+    Trace {
+        /// Hex-encoded RoCEv2 packet frame bytes (generates sample frame if omitted).
+        packet_hex: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or simulate DCQCN congestion pacing and PFC pause frame telemetry.
+    Pacing {
+        /// Number of CNP congestion notifications to simulate (default: 3).
+        #[arg(long, default_value_t = 3)]
+        cnp_count: u64,
+        /// Number of 802.1Qbb PFC pause events to record (default: 2).
+        #[arg(long, default_value_t = 2)]
+        pfc_pauses: u64,
+        /// Megabytes of data paced through recovery stages (default: 20).
+        #[arg(long, default_value_t = 20)]
+        bytes_mb: u64,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4326,6 +4382,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Xdp { sub } => {
             run_xdp(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Rdma { sub } => {
+            run_rdma(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -8228,6 +8288,249 @@ async fn run_xdp(cli: &Cli, sub: &XdpSubCmd) -> anyhow::Result<()> {
                         q.queue_id, q.rx_packets, q.rx_bytes, q.ring_drops
                     );
                 }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_rdma(cli: &Cli, sub: &RdmaSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::rdma::{
+        calculate_icrc, Bth, BthOpcode, DcqcnConfig, DcqcnPacer, ImmDt, RdmaTransferEngine, Reth,
+        RocePacket,
+    };
+
+    let is_json = cli.json;
+
+    match sub {
+        RdmaSubCmd::Status { device, json } => {
+            let engine = RdmaTransferEngine::new();
+            let mut attrs = engine.device_attributes().clone();
+            if device != "mlx5_0" {
+                attrs.device_name = device.clone();
+            }
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&attrs)?);
+            } else {
+                println!("=== Hardware-Accelerated RDMA (RoCEv2 / InfiniBand) HCA Status ===");
+                println!("  Device Name:            {}", attrs.device_name);
+                println!(
+                    "  Vendor ID:              0x{:04x} (Mellanox Technologies)",
+                    attrs.vendor_id
+                );
+                println!("  Link Layer:             {}", attrs.link_layer);
+                println!("  Active Speed:           {}", attrs.active_speed);
+                println!("  Port State:             {}", attrs.port_state);
+                println!("  Active MTU:             {} bytes", attrs.active_mtu);
+                println!("  Max Queue Pairs:        {}", attrs.max_qp);
+                println!("  Max Completion Queues:  {}", attrs.max_cq);
+                println!("  Max Memory Regions:     {}", attrs.max_mr);
+                println!(
+                    "  Max MR Size:            {} GB (1 TiB)",
+                    attrs.max_mr_size / (1024 * 1024 * 1024)
+                );
+                println!("  Max Scatter/Gather:     {} elements", attrs.max_sge);
+            }
+        }
+        RdmaSubCmd::Bench {
+            chunks,
+            chunk_size,
+            inject_cnp,
+            json,
+        } => {
+            let engine = RdmaTransferEngine::new();
+            let report = engine
+                .run_benchmark(*chunks, *chunk_size, *inject_cnp)
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== RDMA Hardware Bypass Zero-Copy Transfer Benchmark ===");
+                println!("  Device:                 {}", report.device);
+                println!("  Queue Pair Type:        {}", report.qp_type);
+                println!("  Chunks Transferred:     {}", report.num_chunks);
+                println!(
+                    "  Chunk Size:             {} bytes",
+                    report.chunk_size_bytes
+                );
+                println!("  Total Transferred:      {} bytes", report.total_bytes);
+                println!("  Elapsed Time:           {:.3} ms", report.duration_millis);
+                println!(
+                    "  Throughput (Mpps):      {:.3} Mpps",
+                    report.throughput_mpps
+                );
+                println!(
+                    "  Throughput (Gbps):      {:.3} Gbps",
+                    report.throughput_gbps
+                );
+                println!(
+                    "  Zero-Copy Verified:     {}",
+                    if report.zero_copy_verified {
+                        "YES (bit-for-bit matched remote memory)"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!("  DCQCN Congestion Marks: {}", report.dcqcn.cnp_count);
+                println!(
+                    "  DCQCN Active Rate:      {:.2} Gbps",
+                    report.dcqcn.current_rate_gbps
+                );
+            }
+        }
+        RdmaSubCmd::Trace { packet_hex, json } => {
+            let packet = match packet_hex {
+                Some(hex_str) => {
+                    let clean_hex = hex_str
+                        .trim()
+                        .trim_start_matches("0x")
+                        .replace([' ', ':'], "");
+                    let raw: Vec<u8> = (0..clean_hex.len())
+                        .step_by(2)
+                        .filter_map(|i| {
+                            if i + 2 <= clean_hex.len() {
+                                u8::from_str_radix(&clean_hex[i..i + 2], 16).ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if raw.len() * 2 != clean_hex.len() {
+                        anyhow::bail!("Invalid hex packet bytes");
+                    }
+                    RocePacket::parse(&raw)
+                        .ok_or_else(|| anyhow::anyhow!("Failed to parse RoCEv2 packet frame"))?
+                }
+                None => {
+                    // Generate sample RoCEv2 Write with Immediate frame
+                    let bth = Bth {
+                        opcode: BthOpcode::RcRdmaWriteOnlyWithImm,
+                        solicited: true,
+                        mig_req: false,
+                        pad_count: 0,
+                        tver: 0,
+                        pkey: 0xFFFF,
+                        dest_qp: 0x123456,
+                        ack_req: true,
+                        psn: 0x654321,
+                    };
+                    let reth = Reth {
+                        va: 0x7FFF_1234_5678,
+                        rkey: 0xAABBCCDD,
+                        dma_len: 2048,
+                    };
+                    let imm = ImmDt { data: 0xCAFEBABE };
+                    let sample_payload = vec![0xAA; 32];
+                    let pkt = RocePacket {
+                        bth,
+                        reth: Some(reth),
+                        aeth: None,
+                        imm: Some(imm),
+                        ieth: None,
+                        payload: sample_payload,
+                        icrc: 0,
+                    };
+                    let wire = pkt.serialize();
+                    RocePacket::parse(&wire)
+                        .ok_or_else(|| anyhow::anyhow!("Failed to parse generated sample frame"))?
+                }
+            };
+
+            let wire_bytes = packet.serialize();
+            let calc_icrc = calculate_icrc(&wire_bytes[..wire_bytes.len() - 4]);
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "opcode": format!("{:?}", packet.bth.opcode),
+                        "dest_qp": packet.bth.dest_qp,
+                        "psn": packet.bth.psn,
+                        "solicited": packet.bth.solicited,
+                        "ack_req": packet.bth.ack_req,
+                        "reth": packet.reth.as_ref().map(|r| {
+                            serde_json::json!({
+                                "va": format!("0x{:016x}", r.va),
+                                "rkey": format!("0x{:08x}", r.rkey),
+                                "dma_len": r.dma_len,
+                            })
+                        }),
+                        "imm_data": packet.imm.map(|i| format!("0x{:08x}", i.data)),
+                        "payload_bytes": packet.payload.len(),
+                        "icrc": format!("0x{:08x}", packet.icrc),
+                        "icrc_valid": packet.icrc == calc_icrc,
+                    })
+                );
+            } else {
+                println!("=== RoCEv2 Wire-Speed Packet Frame Inspection ===");
+                println!("  Transport Opcode:       {:?}", packet.bth.opcode);
+                println!("  Destination QP:         0x{:06x}", packet.bth.dest_qp);
+                println!("  Packet Sequence Num:    0x{:06x}", packet.bth.psn);
+                println!("  Partition Key:          0x{:04x}", packet.bth.pkey);
+                println!("  Solicited Event:        {}", packet.bth.solicited);
+                println!("  Acknowledge Request:    {}", packet.bth.ack_req);
+                if let Some(ref r) = packet.reth {
+                    println!("  Remote Virtual Addr:    0x{:016x}", r.va);
+                    println!("  Remote Key (rkey):      0x{:08x}", r.rkey);
+                    println!("  DMA Transfer Length:    {} bytes", r.dma_len);
+                }
+                if let Some(ref im) = packet.imm {
+                    println!("  Immediate Data:         0x{:08x}", im.data);
+                }
+                println!("  Payload Length:         {} bytes", packet.payload.len());
+                println!(
+                    "  Invariant CRC (ICRC):   0x{:08x} ({})",
+                    packet.icrc,
+                    if packet.icrc == calc_icrc {
+                        "VERIFIED"
+                    } else {
+                        "MISMATCH"
+                    }
+                );
+            }
+        }
+        RdmaSubCmd::Pacing {
+            cnp_count,
+            pfc_pauses,
+            bytes_mb,
+            json,
+        } => {
+            let pacer = DcqcnPacer::new(DcqcnConfig::default());
+
+            for _ in 0..*cnp_count {
+                pacer.on_cnp();
+            }
+            for _ in 0..*pfc_pauses {
+                pacer.on_pfc_pause();
+            }
+
+            pacer.on_bytes_transmitted(*bytes_mb * 1024 * 1024);
+            let report = pacer.report();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== DCQCN Congestion Control & Flow Pacing Telemetry ===");
+                println!("  Line Rate Capacity:     100.00 Gbps");
+                println!(
+                    "  Current Rate:           {:.2} Gbps",
+                    report.current_rate_gbps
+                );
+                println!(
+                    "  Target Rate:            {:.2} Gbps",
+                    report.target_rate_gbps
+                );
+                println!("  Congestion Alpha:       {:.4}", report.alpha);
+                println!("  Recovery Stage:         {:?}", report.stage);
+                println!("  CNP Notifications:      {}", report.cnp_count);
+                println!("  PFC Pause Events:       {}", report.pfc_pause_count);
+                println!(
+                    "  Total Data Paced:       {:.2} MB",
+                    report.total_bytes_paced as f64 / (1024.0 * 1024.0)
+                );
             }
         }
     }

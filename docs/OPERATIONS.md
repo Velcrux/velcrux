@@ -5234,6 +5234,50 @@ cargo test -p velcrux-core --test transport_xdp_tests -- --nocapture
 cargo test -p velcrux-client --test cli_xdp_kernel_bypass -- --nocapture
 ```
 
+## 51. Hardware-Accelerated RDMA (RoCEv2 / InfiniBand) Direct Memory Pacing (ADR-067)
+
+### 51.1. Overview
+
+Velcrux provides zero-copy remote direct memory access (RDMA) over RoCEv2 and InfiniBand as specified in `ADR-067`.
+
+Key Capabilities:
+- **Zero-Copy Remote Direct Memory Access**: Directly writes bulk chunks into remote host memory via `RdmaWriteWithImm`, bypassing CPU socket reads and memory copies.
+- **RoCEv2 Transport Wire Framing (`RocePacket`)**: Encapsulates InfiniBand Base Transport Headers (`Bth`), Extended Headers (`Reth`, `Aeth`, `ImmDt`), and Invariant CRC (`calculate_icrc`) over UDP port 4791.
+- **Verbs Architecture & Queue Pairs (`QueuePair`, `CompletionQueue`)**: Implements Reliable Connected (`RC`) Work Queue Pairs with state lifecycle management (`Reset` $\to$ `Init` $\to$ `RTR` $\to$ `RTS`).
+- **Memory Protection & Key Token Validation (`MemoryRegion`, `ProtectionDomain`)**: Scopes registered memory to protection domains with cryptographically distinct local keys (`lkey`) and remote access keys (`rkey`).
+- **DCQCN Flow Pacing & Congestion Control (`DcqcnPacer`)**: Multiplicative decrease upon Congestion Notification Packets (`CNP`), multi-stage recovery (Fast Recovery, Additive Increase, Hyper-Increase), and 802.1Qbb Priority Flow Control (`PFC`) pause accounting.
+- **100% Pure Safe Rust**: `#![forbid(unsafe_code)]` with zero external C dependencies.
+
+### 51.2. Operational Commands
+
+```bash
+# 1. Inspect HCA device attributes, link layer, MTU, and limits
+velcrux rdma status --device mlx5_0
+
+# 2. Inspect HCA attributes formatted as JSON
+velcrux rdma status --json
+
+# 3. Run zero-copy pipelined RDMA Write benchmark with CNP congestion injection
+velcrux rdma bench --chunks 64 --chunk-size 4096 --inject-cnp
+
+# 4. Run zero-copy RDMA benchmark with JSON telemetry output
+velcrux rdma bench --chunks 128 --chunk-size 8192 --json
+
+# 5. Dissect and validate RoCEv2 wire packet framing and ICRC checksum
+velcrux rdma trace
+
+# 6. Dissect RoCEv2 packet framing formatted as JSON
+velcrux rdma trace --json
+
+# 7. Inspect DCQCN flow pacing and PFC pause frame telemetry
+velcrux rdma pacing --cnp-count 4 --pfc-pauses 2 --bytes-mb 20
+
+# 8. Execute RDMA core and client test suites
+cargo test -p velcrux-core --test transport_rdma_tests -- --nocapture
+cargo test -p velcrux-client --test cli_rdma_verbs -- --nocapture
+```
+
+
 
 
 

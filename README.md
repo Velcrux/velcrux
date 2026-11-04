@@ -324,6 +324,24 @@ velcrux xdp steering --queues 4 --policy 4tuple --packets 500
 velcrux xdp status --interface eth0 --mode native
 ```
 
+### Hardware-Accelerated RDMA (RoCEv2 / InfiniBand) Direct Memory Pacing
+
+Achieve line-rate zero-copy memory transfers and CPU bypass over 100 Gbps datacenter fabrics via pure safe-Rust RoCEv2/InfiniBand verbs and DCQCN flow pacing:
+
+```bash
+# Query Host Channel Adapter (HCA) device capabilities and link state
+velcrux rdma status --device mlx5_0
+
+# Run zero-copy pipelined RDMA Write with Immediate benchmark
+velcrux rdma bench --chunks 64 --chunk-size 4096 --inject-cnp
+
+# Trace and dissect RoCEv2 wire frame (BTH, RETH, ImmDt, ICRC)
+velcrux rdma trace
+
+# Inspect DCQCN congestion pacing and PFC pause frame telemetry
+velcrux rdma pacing --cnp-count 3 --pfc-pauses 2 --bytes-mb 20
+```
+
 ### Transfer State and Resumption
 
 ```bash

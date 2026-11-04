@@ -574,6 +574,7 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-064](adr/ADR-064-cloud-object-storage-containerized-integration-harness.md) | Real Cloud Object Storage (S3 / MinIO / GCS / Azure) Containerized Integration Harness | Accepted | Pure safe Rust asynchronous HTTP/1.1 client, ephemeral TCP wire mock server, MinIO / Azurite / Fake-GCS container matrix, S3ChunkStore, and FastCDC boundary-shift deduplication |
 | [ADR-065](adr/ADR-065-distributed-object-storage-sharding-and-multi-bucket-tiering.md) | Distributed Object Storage Sharding & Multi-Bucket Tiering | Accepted | Consistent hashing ShardRouter, HexTwoLevel prefix fanout (65,536 partitions), Glacier cold restore coordinator, ShardedLifecycleEngine, and ShardedChunkStore |
 | [ADR-066](adr/ADR-066-ebpf-xdp-kernel-bypass-acceleration.md) | eBPF / XDP Kernel Bypass Acceleration & AF_XDP Multi-Queue Flow Steering | Accepted | Pure safe Rust canonical 64-bit eBPF instruction engine, verifier, disassembler, dual-stack packet dissection, AF_XDP lock-free ring pairs, and QUIC DCID connection-affinity flow steering |
+| [ADR-067](adr/ADR-067-rocev2-infiniband-rdma-direct-memory-pacing.md) | RoCEv2 & InfiniBand RDMA Direct Memory Pacing | Accepted | Pure safe Rust zero-copy verbs architecture, Queue Pairs, Protection Domains, Memory Region registration, RoCEv2 UDP 4791 wire framing, and DCQCN hardware flow pacing |
 
 
 

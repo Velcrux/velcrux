@@ -188,6 +188,37 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_xdp_kernel_bypass`: 7/7 passing CLI tests verifying status, inspect, rings, filter evaluation, benchmark, dump-bpf, and steering commands in both human-readable and JSON formats.
   - 100% compliance with `#![forbid(unsafe_code)]` and zero external C dependencies.
 
+---
+
+## 12. Hardware-Accelerated RDMA (RoCEv2 / InfiniBand) Direct Memory Pacing (ADR-067 / Option CY)
+
+- **Pure Safe-Rust Zero-Copy Verbs Architecture (`QueuePair`, `CompletionQueue`)**:
+  - Implements InfiniBand verbs architecture with Work Queue Pairs (`QpType::ReliableConnected`), Work Requests (`SendWr`, `RecvWr`), Scatter/Gather Elements (`Sge`), and Work Completions (`WorkCompletion`).
+  - Supports `execute_rdma_write` with immediate data payload (`WrOpcode::RdmaWriteWithImm`), writing chunks directly into remote host memory without remote CPU mediation, and posting completion to the remote Receive CQ.
+  - Supports `execute_rdma_read` reading remote registered memory directly into local memory buffers.
+  - Strict QP state machine lifecycle management (`Reset` -> `Init` -> `ReadyToReceive` -> `ReadyToSend`).
+- **Memory Registration & Cryptographic Key Validation (`MemoryRegion`, `ProtectionDomain`)**:
+  - Scopes registered host memory to Protection Domains (`ProtectionDomain`) preventing cross-domain memory leakage.
+  - Generates and verifies distinct local keys (`lkey`) for Scatter/Gather access and remote keys (`rkey`) for remote DMA access.
+  - Enforces bounds validation, key authentication, and access permissions (`LOCAL_WRITE`, `REMOTE_WRITE`, `REMOTE_READ`).
+- **RoCEv2 Wire Protocol Framing & ICRC Validation (`RocePacket`)**:
+  - Encapsulates InfiniBand Base Transport Headers (`Bth`), RDMA Extended Transport Headers (`Reth`), ACK Headers (`Aeth`), and Immediate Data (`ImmDt`) over standard UDP port 4791.
+  - Implements 32-bit Invariant CRC (`calculate_icrc`) over packet invariant fields per InfiniBand Specification Vol 1, Section 7.8.
+- **Hardware-Assisted DCQCN Congestion Control & PFC Flow Pacing (`DcqcnPacer`)**:
+  - Multiplicative rate decrease upon Congestion Notification Packet (`CNP`) reception: $R_c = R_c \times (1 - \alpha/2)$ and $\alpha = (1 - g)\alpha + g$.
+  - Multi-stage recovery advancing through Fast Recovery, Additive Increase (AI), and Hyper-Increase (HI) stages.
+  - Tracks 802.1Qbb Priority Flow Control (PFC) pause frames and pause event counters.
+- **Operator CLI Tooling**:
+  - `velcrux rdma status [--device <NAME>] [--json]`: Inspects HCA device attributes, speed, MTU, and resource limits.
+  - `velcrux rdma bench [--chunks <N>] [--chunk-size <BYTES>] [--inject-cnp] [--json]`: Executes zero-copy RDMA direct memory benchmark.
+  - `velcrux rdma trace [<HEX>] [--json]`: Dissects and validates RoCEv2 wire packet framing and ICRC.
+  - `velcrux rdma pacing [--cnp-count <N>] [--pfc-pauses <N>] [--bytes-mb <N>] [--json]`: Inspects DCQCN rate limiter and PFC pause telemetry.
+- **Verification Matrix**:
+  - `transport_rdma_tests`: 7/7 passing unit tests covering wire framing, ICRC, MR registration, QP lifecycle, direct write with immediate, direct read, and DCQCN pacing.
+  - `cli_rdma_verbs`: 4/4 passing CLI integration tests verifying status, bench, trace, and pacing commands.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

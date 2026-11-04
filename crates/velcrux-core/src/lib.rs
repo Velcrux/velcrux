@@ -37,6 +37,7 @@ pub mod netem;
 pub mod protocol;
 pub mod provenance;
 pub mod proxy;
+pub mod rdma;
 pub mod router;
 pub mod scheduler;
 pub mod session;
@@ -136,6 +137,13 @@ pub use provenance::{
     ProvenanceInclusionProof, ProvenanceNode, ProvenanceVerificationReport, TimestampToken,
     WitnessCosignature, PROVENANCE_NODE_DOMAIN_TAG, PROVENANCE_ROOT_DOMAIN_TAG,
     PROVENANCE_TIMESTAMP_DOMAIN_TAG, PROVENANCE_WITNESS_DOMAIN_TAG,
+};
+pub use rdma::{
+    calculate_icrc, AccessFlags, Aeth, Bth, BthOpcode, CompletionQueue, DcqcnConfig, DcqcnPacer,
+    DcqcnReport, DcqcnStage, HcaDeviceAttributes, Ieth, ImmDt, MemoryRegion, ProtectionDomain,
+    QpInitAttr, QpState, QpType, QueuePair, RdmaBenchmarkReport, RdmaTransferEngine, RecvWr, Reth,
+    RocePacket, SendFlags, SendWr, Sge, WcOpcode, WcStatus, WorkCompletion, WrOpcode,
+    IB_DEFAULT_PKEY, ROCEV2_UDP_PORT,
 };
 pub use session::{LimitsProvider, ServerConn, ServerState, ServerStats};
 pub use state::{
