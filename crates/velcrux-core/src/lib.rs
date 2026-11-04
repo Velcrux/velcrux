@@ -34,6 +34,7 @@ pub mod error;
 pub mod k8s;
 pub mod kms;
 pub mod manifest;
+pub mod mpc;
 pub mod netem;
 pub mod protocol;
 pub mod provenance;
@@ -130,6 +131,15 @@ pub use kms::{
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,
+};
+pub use mpc::{
+    aggregate_signature_shares, compute_lagrange_coefficient, reconstruct_secret,
+    verify_signature_share, CommitmentPackage as MpcCommitmentPackage, FeldmanCommitmentPackage,
+    FieldElement as MpcFieldElement, MpcClusterConfig, MpcClusterCoordinator,
+    MpcManifestAttestation, MpcRootToken, MpcSessionAuditRecord, NonceCommitment,
+    Point as MpcPoint, Polynomial as MpcPolynomial, Scalar as MpcScalar, SchnorrDlogProof,
+    SecretShare as MpcSecretShare, SignatureShare as MpcSignatureShare, SigningNonces,
+    ThresholdSignature, ThresholdSigner,
 };
 pub use protocol::{
     compress_with_dict, compute_shannon_entropy, decompress_with_dict_bounded, estimate_entropy,

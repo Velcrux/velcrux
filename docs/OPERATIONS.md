@@ -5320,6 +5320,54 @@ cargo test -p velcrux-core --test crdt_geo_replication_tests -- --nocapture
 cargo test -p velcrux-client --test cli_geo_crdt -- --nocapture
 ```
 
+## 53. Zero-Knowledge Multi-Party Computation (MPC) Distributed Threshold Key Signing (ADR-069)
+
+### 53.1. Overview
+
+Velcrux provides zero-knowledge multi-party computation (MPC) distributed threshold key signing as specified in `ADR-069`.
+
+Key Capabilities:
+- **$t$-of-$n$ FROST Distributed Threshold Signing**: Any $t$ of $n$ signers collaboratively produce a valid signature without any single node reconstructing or learning the master secret key.
+- **RFC 8032 Ed25519 Standard Compatibility**: Produces standard compact 64-byte Ed25519 signatures verifiable against a standard 32-byte master public key by any standard Ed25519 validator (e.g. `ring`, libsodium, OpenSSL).
+- **Feldman Verifiable Secret Sharing (VSS)**: Coefficients committed to the curve ($C_k = a_k \cdot B$) precluding dealer equivocation.
+- **Non-Interactive Zero-Knowledge Proofs (NIZK DLEQ)**: Signers prove knowledge of their private shares preventing rogue-key injection attacks during Distributed Key Generation (DKG).
+- **Binding Factors & Blame Attribution**: Ephemeral binding factors ($\rho_i$) thwart concurrency and Dlog forgery attacks; individual share verification detects and pinpoints malicious or faulty participants instantly.
+- **Cluster Root Security Operations**: Native threshold signing for root bearer authorization tokens, storage manifest attestations, and membership certificates.
+- **100% Pure Safe Rust**: `#![forbid(unsafe_code)]` with zero external C dependencies.
+
+### 53.2. Operational Commands
+
+```bash
+# 1. Initialize a 3-of-5 threshold group with Feldman VSS commitments and DKG ZKP proofs
+velcrux mpc init --threshold 3 --signers 5
+
+# 2. Output initialized threshold group in structured JSON format
+velcrux mpc init --threshold 3 --signers 5 --json
+
+# 3. Execute a distributed threshold signing round across quorum {1, 2, 4}
+velcrux mpc sign --message "Cluster Root Rebalance Ticket" --threshold 3 --quorum 1,2,4
+
+# 4. Sign payload in JSON format (returning 64-byte signature and master public key)
+velcrux mpc sign --message "Manifest-Epoch-101" --threshold 2 --quorum 1,3 --json
+
+# 5. Cryptographically verify a threshold signature against the master group key
+velcrux mpc verify --message "Cluster Root Rebalance Ticket" --signature <SIG_HEX> --pubkey <PUBKEY_HEX>
+
+# 6. Verify signature in JSON format
+velcrux mpc verify --message "Manifest-Epoch-101" --signature <SIG_HEX> --pubkey <PUBKEY_HEX> --json
+
+# 7. Inspect cluster MPC audit trail, session latencies, and ZKP discrete log proofs
+velcrux mpc audit
+
+# 8. Inspect cluster audit trail in JSON format
+velcrux mpc audit --json
+
+# 9. Execute MPC core and client test suites
+cargo test -p velcrux-core --test mpc_threshold_tests -- --nocapture
+cargo test -p velcrux-client --test cli_mpc -- --nocapture
+```
+
+
 
 
 

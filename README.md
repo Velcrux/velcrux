@@ -360,6 +360,24 @@ velcrux crdt sync --region-a us-east --region-b eu-west
 velcrux crdt bench --regions 3 --files 10 --simulate-partition
 ```
 
+### Zero-Knowledge MPC Distributed Threshold Signing
+
+Eliminate single points of key compromise for root tokens, manifest attestations, and cluster certificates via $t$-of-$n$ FROST threshold Ed25519 signatures with Feldman VSS and ZKP discrete log knowledge verification:
+
+```bash
+# Initialize a 3-of-5 threshold group with Feldman VSS commitments and DKG ZKP proofs
+velcrux mpc init --threshold 3 --signers 5
+
+# Execute a distributed threshold signing round across quorum {1, 2, 4}
+velcrux mpc sign --message "Cluster Root Rebalance Ticket" --threshold 3 --quorum 1,2,4
+
+# Cryptographically verify the 64-byte threshold signature against master group key
+velcrux mpc verify --message "Cluster Root Rebalance Ticket" --signature <SIG_HEX> --pubkey <PUBKEY_HEX>
+
+# Inspect cluster MPC audit trail, session latencies, and ZKP discrete log proofs
+velcrux mpc audit
+```
+
 ### Transfer State and Resumption
 
 ```bash

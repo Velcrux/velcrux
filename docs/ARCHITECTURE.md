@@ -576,6 +576,7 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-066](adr/ADR-066-ebpf-xdp-kernel-bypass-acceleration.md) | eBPF / XDP Kernel Bypass Acceleration & AF_XDP Multi-Queue Flow Steering | Accepted | Pure safe Rust canonical 64-bit eBPF instruction engine, verifier, disassembler, dual-stack packet dissection, AF_XDP lock-free ring pairs, and QUIC DCID connection-affinity flow steering |
 | [ADR-067](adr/ADR-067-rocev2-infiniband-rdma-direct-memory-pacing.md) | RoCEv2 & InfiniBand RDMA Direct Memory Pacing | Accepted | Pure safe Rust zero-copy verbs architecture, Queue Pairs, Protection Domains, Memory Region registration, RoCEv2 UDP 4791 wire framing, and DCQCN hardware flow pacing |
 | [ADR-068](adr/ADR-068-distributed-geo-replication-crdts.md) | Distributed Global Multi-Cluster Geo-Replication & Conflict-Free Replicated Data Types (CRDTs) | Accepted | Pure safe Rust active-active multi-region replication, Vector Clocks, Hybrid Logical Clocks, LWW-Register, OR-Set, cycle-safe directory tree CRDT, and delta anti-entropy gossip |
+| [ADR-069](adr/ADR-069-mpc-distributed-threshold-signing.md) | Zero-Knowledge Multi-Party Computation (MPC) Distributed Threshold Key Signing | Accepted | Pure safe Rust FROST threshold Ed25519 signing, Shamir secret sharing, Feldman VSS commitments, Schnorr NIZK Dlog proofs, deterministic blame attribution, and cluster root tokens |
 
 
 

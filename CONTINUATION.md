@@ -249,6 +249,37 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_geo_crdt`: 4/4 passing CLI integration tests verifying status, tree, sync, and bench commands.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+---
+
+## 14. Zero-Knowledge Multi-Party Computation (MPC) Distributed Threshold Key Signing (ADR-069 / Option DA)
+
+- **Pure Safe-Rust Finite Field & Elliptic Curve Mathematics**:
+  - `Scalar`: Modulo $\ell = 2^{252} + 27742317777372353535851937790883648493$ scalar arithmetic with constant-time modular inversion via Fermat's Little Theorem ($a^{\ell - 2} \pmod \ell$), scalar negation, and zeroization.
+  - `FieldElement`: Base field $\mathbb{F}_{2^{255}-19}$ with fast 2-step reduction leveraging $2^{255} \equiv 19 \pmod p$ and square root extraction for $p \equiv 5 \pmod 8$.
+  - `Point`: Twisted Edwards Curve25519 extended projective coordinates $(X : Y : Z : T)$ with complete addition formulas (zero exceptional points), scalar multiplication, and RFC 8032 point compression/decompression to 32 bytes.
+- **Verifiable Secret Sharing & Zero-Knowledge Proofs (`Polynomial`, `FeldmanCommitmentPackage`, `SchnorrDlogProof`)**:
+  - Shamir Secret Sharing with polynomial evaluation and Lagrange basis coefficient calculation ($\lambda_i = \prod_{j \neq i} \frac{j}{j - i} \pmod \ell$).
+  - Feldman Verifiable Secret Sharing (VSS): Public commitments $C_k = a_k \cdot B$ ensuring signers can cryptographically verify their shares ($s_i \cdot B = \sum i^k C_k$) preventing dealer equivocation.
+  - Schnorr Non-Interactive Zero-Knowledge Proofs (NIZK DLEQ): Proves knowledge of private share without revealing it, preventing rogue-key injection attacks during Distributed Key Generation (DKG).
+- **FROST Distributed Threshold Signing Protocol (`ThresholdSigner`, `ThresholdSignature`)**:
+  - Two-round threshold protocol: Round 1 nonces $(d_i, e_i)$ with commitments $(D_i, E_i)$; Round 2 binding factors $\rho_i$ and partial signature shares $z_i$.
+  - Deterministic Blame Attribution: Every partial share is verified against $(D_i, E_i, Y_i, \rho_i, \lambda_i, c)$, immediately identifying and isolating malicious or faulty participants.
+  - Wire Compatibility: Generates standard 64-byte Ed25519 signatures verifiable against master 32-byte public key by any RFC 8032 verifier (e.g. `ring::signature::ED25519`).
+- **Cluster Integration & Audit Logging (`MpcClusterCoordinator`)**:
+  - Native threshold signing for root bearer authorization tokens (`MpcRootToken`) with TTL expiration.
+  - Epoch storage manifest cryptographic attestations (`MpcManifestAttestation`).
+  - Full audit history recording session IDs, latencies, participating quorums, and blame events.
+- **Operator CLI Tooling**:
+  - `velcrux mpc init [--threshold <T>] [--signers <N>] [--json]`: Initializes threshold group with Feldman commitments and DKG ZKP proofs.
+  - `velcrux mpc sign [--message <MSG>] [--threshold <T>] [--quorum <IDS>] [--json]`: Executes distributed signing round across a quorum of signers.
+  - `velcrux mpc verify [--message <MSG>] [--signature <HEX>] [--pubkey <HEX>] [--json]`: Verifies 64-byte threshold signature against master group key.
+  - `velcrux mpc audit [--json]`: Inspects cluster configuration, session history, and verified ZKP proofs.
+- **Verification Matrix**:
+  - `mpc_threshold_tests`: 10/10 passing unit tests covering scalar math, curve complete addition, Shamir secret reconstruction across arbitrary quorums, Feldman corruption detection, Schnorr ZKPs, FROST signing, blame attribution, root tokens, manifest attestations, and cross-verification against `ring`'s Ed25519 validator.
+  - `cli_mpc`: 4/4 passing CLI integration tests verifying `init`, `sign`, `verify`, and `audit` commands in human-readable and structured JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 
