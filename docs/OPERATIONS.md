@@ -5277,6 +5277,50 @@ cargo test -p velcrux-core --test transport_rdma_tests -- --nocapture
 cargo test -p velcrux-client --test cli_rdma_verbs -- --nocapture
 ```
 
+## 52. Distributed Global Multi-Cluster Geo-Replication & Conflict-Free Replicated Data Types (ADR-068)
+
+### 52.1. Overview
+
+Velcrux provides active-active multi-region geo-replication and conflict-free replicated data types as specified in `ADR-068`.
+
+Key Capabilities:
+- **Active-Active Multi-Master Operations**: Sub-millisecond local reads and writes across any regional cluster, without cross-continental consensus roundtrips.
+- **Causality & Clock Skew Tracking (`VectorClock`, `Hlc`)**: Vector clocks track causal precedence (`happens_before`, `dominates`, `concurrent_with`), while Hybrid Logical Clocks bound clock drift and enforce deterministic tie-breaking.
+- **Cycle-Safe Replicated Directory Tree (`ReplicatedFsTree`)**: Hierarchical tree supporting concurrent file creation, modification, deletion, and directory moves with circular dependency detection.
+- **Delta-State Anti-Entropy Gossip (`AntiEntropyEngine`)**: Exchanges only mutated entries past a peer's known vector clock watermark, drastically minimizing WAN bandwidth.
+- **Partition Tolerance & Convergence (`GeoMesh`)**: Replicas accept writes independently during trans-oceanic network partitions and converge automatically to identical state digests upon partition healing.
+- **100% Pure Safe Rust**: `#![forbid(unsafe_code)]` with zero external C dependencies.
+
+### 52.2. Operational Commands
+
+```bash
+# 1. Inspect multi-region cluster topology, RTT latencies, partition states, and state digests
+velcrux crdt status
+
+# 2. Inspect cluster status formatted as JSON
+velcrux crdt status --json
+
+# 3. Inspect replicated CRDT directory tree and vector clocks for a specific region
+velcrux crdt tree --region us-east --prefix /datasets
+
+# 4. Inspect replicated tree in JSON format
+velcrux crdt tree --region eu-west --json
+
+# 5. Trigger an anti-entropy gossip synchronization sweep between two regions
+velcrux crdt sync --region-a us-east --region-b eu-west
+
+# 6. Trigger gossip sync formatted as JSON
+velcrux crdt sync --region-a us-east --region-b ap-se --json
+
+# 7. Execute multi-region concurrent mutation benchmark under simulated partition & healing
+velcrux crdt bench --regions 3 --files 10 --simulate-partition
+
+# 8. Execute CRDT core and client test suites
+cargo test -p velcrux-core --test crdt_geo_replication_tests -- --nocapture
+cargo test -p velcrux-client --test cli_geo_crdt -- --nocapture
+```
+
+
 
 
 

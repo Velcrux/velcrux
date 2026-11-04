@@ -342,6 +342,24 @@ velcrux rdma trace
 velcrux rdma pacing --cnp-count 3 --pfc-pauses 2 --bytes-mb 20
 ```
 
+### Distributed Global Multi-Cluster Geo-Replication (CRDT)
+
+Achieve active-active multi-region synchronization with sub-millisecond local write latencies and strong eventual consistency across partitioned WAN fabrics via Conflict-Free Replicated Data Types:
+
+```bash
+# Inspect multi-region cluster topology, RTT latencies, and convergence status
+velcrux crdt status
+
+# Inspect replicated CRDT filesystem hierarchy and vector clock states
+velcrux crdt tree --region us-east --prefix /datasets
+
+# Trigger an anti-entropy gossip synchronization pass between regions
+velcrux crdt sync --region-a us-east --region-b eu-west
+
+# Run multi-region concurrent mutation benchmark under simulated partition & healing
+velcrux crdt bench --regions 3 --files 10 --simulate-partition
+```
+
 ### Transfer State and Resumption
 
 ```bash

@@ -26,6 +26,7 @@ pub mod bdp_rebalance;
 pub mod chaos;
 pub mod chunking;
 pub mod consensus;
+pub mod crdt;
 pub mod crypto;
 pub mod did;
 pub mod ec;
@@ -91,6 +92,11 @@ pub use consensus::{
     run_raft_benchmark, AppendEntriesRequest, AppendEntriesResponse, ClusterLease,
     ClusterMetadataStateMachine, RaftBenchmarkReport, RaftClusterStatus, RaftCommand,
     RaftCoordinator, RaftLogEntry, RaftRole, RaftStats, RequestVoteRequest, RequestVoteResponse,
+};
+pub use crdt::{
+    AntiEntropyEngine, AntiEntropyReport, CausalOrder, CrdtDelta, DigestSummary, FsMergeReport,
+    FsNode, FsNodeKind, GeoBenchmarkReport, GeoMesh, Hlc, LwwRegister, MvRegister, OrSet,
+    RegionInfo, ReplicatedFsTree, VectorClock as CrdtVectorClock,
 };
 pub use crypto::{
     build_chunk_aad, derive_key_from_passphrase, derive_transfer_key, ChunkDecryptor,

@@ -218,6 +218,38 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_rdma_verbs`: 4/4 passing CLI integration tests verifying status, bench, trace, and pacing commands.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+---
+
+## 13. Distributed Global Multi-Cluster Geo-Replication & Conflict-Free Replicated Data Types (ADR-068 / Option CZ)
+
+- **Pure Safe-Rust Causality & Logical Clocks (`VectorClock`, `Hlc`)**:
+  - `VectorClock`: Tracks logical timestamps per region, evaluating causal dominance, happens-before relationships, and concurrency.
+  - Hybrid Logical Clock (`Hlc`): Binds physical wall-clock drift to logical monotonic counters, ensuring deterministic total ordering and tie-breaking across multi-continent clusters.
+- **Join-Semilattice Primitive CRDT Structures (`LwwRegister`, `OrSet`, `MvRegister`)**:
+  - `LwwRegister<T>`: Deterministic last-write-wins register using HLC timestamp comparisons.
+  - `OrSet<T>`: Observed-Removed (Add-Wins) Set tracking unique birth tags and tombstones, preventing ghost resurrections.
+  - `MvRegister<T>`: Multi-Value register retaining concurrent conflicting values under vector clock concurrency.
+- **Cycle-Safe Replicated Directory Tree CRDT (`ReplicatedFsTree`)**:
+  - Active-active hierarchical tree managing directories and files with canonical path normalization, BLAKE3 content digests, and chunk counts.
+  - Reversible move and rename operations with cycle detection, rejecting attempts to move parent directories into their own subtrees.
+  - Deterministic `state_digest()` computing a cryptographic BLAKE3 hash across all active tree nodes to mathematically prove convergence.
+- **Delta-State Anti-Entropy Gossip Synchronization (`AntiEntropyEngine`)**:
+  - Computes and exchanges state deltas scoped to a peer's observed vector clock watermark, drastically minimizing cross-region WAN bandwidth consumption.
+  - Full bidirectional reconciliation engine producing detailed `AntiEntropyReport` telemetry.
+- **Multi-Region Mesh Topology & Partition Recovery (`GeoMesh`)**:
+  - Models intercontinental datacenter clusters, RTT latencies, and network partitions.
+  - Verifies that partitioned regions accept independent writes without stalls, and automatically heal to 100% convergence once network links recover.
+- **Operator CLI Tooling**:
+  - `velcrux crdt status [--json]`: Inspects multi-region cluster topology, RTT latencies, partition states, and state digests.
+  - `velcrux crdt tree [--region <REGION>] [--prefix <PREFIX>] [--json]`: Browses replicated CRDT filesystem hierarchy and vector clock states.
+  - `velcrux crdt sync [--region-a <REGION>] [--region-b <REGION>] [--json]`: Executes anti-entropy gossip synchronization between regions.
+  - `velcrux crdt bench [--regions <N>] [--files <N>] [--simulate-partition] [--json]`: Executes multi-region benchmark under simulated partition & healing.
+- **Verification Matrix**:
+  - `crdt_geo_replication_tests`: 7/7 passing unit tests covering vector clocks, HLC, primitive CRDTs, directory tree mutations, cycle safety, concurrent multi-region merging, anti-entropy delta gossip, and partition healing.
+  - `cli_geo_crdt`: 4/4 passing CLI integration tests verifying status, tree, sync, and bench commands.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

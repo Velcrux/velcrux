@@ -829,6 +829,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: RdmaSubCmd,
     },
+    /// Distributed global multi-cluster geo-replication & CRDT conflict-free synchronization (Option CZ).
+    Crdt {
+        #[command(subcommand)]
+        sub: CrdtSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2267,6 +2272,55 @@ enum RdmaSubCmd {
         /// Megabytes of data paced through recovery stages (default: 20).
         #[arg(long, default_value_t = 20)]
         bytes_mb: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CrdtSubCmd {
+    /// Inspect multi-region cluster topology, RTT latencies, partition states, and state digests.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect replicated CRDT filesystem hierarchy and vector clock states for a region.
+    Tree {
+        /// Target regional cluster identifier (default: us-east).
+        #[arg(long, default_value = "us-east")]
+        region: String,
+        /// Directory prefix to list (default: "/").
+        #[arg(long, default_value = "/")]
+        prefix: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Trigger an anti-entropy gossip synchronization sweep between two regional clusters.
+    Sync {
+        /// Source region identifier (default: us-east).
+        #[arg(long, default_value = "us-east")]
+        region_a: String,
+        /// Destination region identifier (default: eu-west).
+        #[arg(long, default_value = "eu-west")]
+        region_b: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run concurrent multi-region mutation and network partition healing benchmark.
+    Bench {
+        /// Number of regional clusters to simulate (default: 3).
+        #[arg(long, default_value_t = 3)]
+        regions: usize,
+        /// Files to concurrently mutate per region (default: 10).
+        #[arg(long, default_value_t = 10)]
+        files: usize,
+        /// Simulate trans-oceanic network partition and healing.
+        #[arg(long)]
+        simulate_partition: bool,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4386,6 +4440,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Rdma { sub } => {
             run_rdma(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Crdt { sub } => {
+            run_crdt(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -8530,6 +8588,224 @@ async fn run_rdma(cli: &Cli, sub: &RdmaSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Total Data Paced:       {:.2} MB",
                     report.total_bytes_paced as f64 / (1024.0 * 1024.0)
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_crdt(cli: &Cli, sub: &CrdtSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::crdt::{AntiEntropyEngine, GeoMesh, ReplicatedFsTree};
+
+    let is_json = cli.json;
+
+    match sub {
+        CrdtSubCmd::Status { json } => {
+            let mut mesh = GeoMesh::new();
+            mesh.add_region("us-east", "US East (N. Virginia)", "10.0.1.1:7443", 25);
+            mesh.add_region("eu-west", "EU West (Frankfurt)", "10.0.2.1:7443", 95);
+            mesh.add_region("ap-se", "AP Southeast (Singapore)", "10.0.3.1:7443", 180);
+
+            // Seed common baseline
+            let _ = mesh.create_file(
+                "us-east",
+                "/datasets/model.bin",
+                50_000_000,
+                Some("blake3-sample-hash".to_string()),
+                25,
+            );
+            mesh.sync_all();
+
+            let summaries = mesh.summaries();
+            let converged = mesh.verify_convergence();
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "topology": mesh.regions.values().collect::<Vec<_>>(),
+                        "summaries": summaries,
+                        "converged": converged,
+                    })
+                );
+            } else {
+                println!("=== Distributed Global Multi-Cluster Geo-Replication Status ===");
+                println!("  Registered Clusters:    {}", mesh.regions.len());
+                println!("  Active Topology:        Active-Active Multi-Master Mesh");
+                println!(
+                    "  State Convergence:      {}",
+                    if converged {
+                        "SYNCHRONIZED (All non-partitioned regions identical)"
+                    } else {
+                        "DIVERGENT (Replication pending)"
+                    }
+                );
+                println!("--- Regional Topology ---");
+                println!(
+                    "{:<12} {:<26} {:<16} {:<10} {:<12}",
+                    "REGION", "NAME", "ENDPOINT", "RTT (MS)", "PARTITIONED"
+                );
+                println!(
+                    "{:-<12} {:-<26} {:-<16} {:-<10} {:-<12}",
+                    "", "", "", "", ""
+                );
+                for r in mesh.regions.values() {
+                    println!(
+                        "{:<12} {:<26} {:<16} {:<10} {:<12}",
+                        r.region_id,
+                        r.name,
+                        r.endpoint,
+                        r.rtt_ms,
+                        if r.is_partitioned { "YES" } else { "NO" }
+                    );
+                }
+            }
+        }
+        CrdtSubCmd::Tree {
+            region,
+            prefix,
+            json,
+        } => {
+            let mut tree = ReplicatedFsTree::new(region);
+            tree.create_dir("/datasets/vision");
+            tree.create_file(
+                "/datasets/vision/weights.bin",
+                104_857_600,
+                Some("blake3-crdt-sample-digest".to_string()),
+                50,
+            );
+            tree.create_file(
+                "/datasets/vision/config.json",
+                2048,
+                Some("blake3-config-hash".to_string()),
+                1,
+            );
+
+            let nodes = tree.list(prefix);
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "region_id": tree.region_id,
+                        "prefix": prefix,
+                        "state_digest": tree.state_digest(),
+                        "vector_clock": tree.vclock,
+                        "nodes": nodes,
+                    })
+                );
+            } else {
+                println!("=== Replicated CRDT Filesystem Hierarchy ({}) ===", region);
+                println!("  Active Region:          {}", tree.region_id);
+                println!("  Prefix Scoped:          {}", prefix);
+                println!("  State Digest:           {}", tree.state_digest());
+                println!("  Vector Clock:           {:?}", tree.vclock.entries);
+                println!("--- Replicated Filesystem Nodes ---");
+                println!(
+                    "{:<6} {:<32} {:<12} {:<8} {:<24}",
+                    "TYPE", "PATH", "SIZE (B)", "CHUNKS", "BLAKE3 HASH"
+                );
+                println!("{:-<6} {:-<32} {:-<12} {:-<8} {:-<24}", "", "", "", "", "");
+                for n in nodes {
+                    println!(
+                        "{:<6} {:<32} {:<12} {:<8} {:<24}",
+                        format!("{:?}", n.kind),
+                        n.path,
+                        n.size_bytes,
+                        n.chunk_count,
+                        n.blake3_hash.as_deref().unwrap_or("-")
+                    );
+                }
+            }
+        }
+        CrdtSubCmd::Sync {
+            region_a,
+            region_b,
+            json,
+        } => {
+            let mut tree_a = ReplicatedFsTree::new(region_a);
+            let mut tree_b = ReplicatedFsTree::new(region_b);
+
+            tree_a.create_file(
+                "/shared/dataset_a.parquet",
+                10_000,
+                Some("hash-a".to_string()),
+                5,
+            );
+            tree_b.create_file(
+                "/shared/dataset_b.parquet",
+                20_000,
+                Some("hash-b".to_string()),
+                10,
+            );
+
+            let report = AntiEntropyEngine::exchange(&mut tree_a, &mut tree_b);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Anti-Entropy Gossip Synchronization Exchange ===");
+                println!("  Region A:               {}", report.region_a);
+                println!("  Region B:               {}", report.region_b);
+                println!("  Delta A -> B Nodes:     {}", report.delta_a_to_b_nodes);
+                println!("  Delta B -> A Nodes:     {}", report.delta_b_to_a_nodes);
+                println!(
+                    "  Divergent Before:       {}",
+                    if report.state_divergent_before {
+                        "YES"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!(
+                    "  Converged After:        {}",
+                    if report.state_converged_after {
+                        "YES (100% Identical Digest)"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!("  Final State Digest:     {}", report.final_state_digest);
+            }
+        }
+        CrdtSubCmd::Bench {
+            regions,
+            files,
+            simulate_partition,
+            json,
+        } => {
+            let report = GeoMesh::run_benchmark(*regions, *files, *simulate_partition);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Distributed Geo-Replication & CRDT Convergence Benchmark ===");
+                println!("  Regions Evaluated:      {}", report.num_regions);
+                println!("  Concurrent Mutations:   {}", report.total_mutations);
+                println!(
+                    "  Partition Simulated:    {}",
+                    if report.partition_simulated {
+                        "YES (Trans-oceanic partition & heal)"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!("  Gossip Sync Cycles:     {}", report.sync_cycles);
+                println!("  Elapsed Duration:       {:.3} ms", report.duration_millis);
+                println!(
+                    "  Fully Converged:        {}",
+                    if report.fully_converged {
+                        "YES (Exact State Digest Match)"
+                    } else {
+                        "NO"
+                    }
+                );
+                println!("  Final State Digest:     {}", report.final_digest);
+                println!(
+                    "  Conflicts Resolved:     {}",
+                    report.total_conflicts_resolved
                 );
             }
         }
