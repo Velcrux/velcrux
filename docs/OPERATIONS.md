@@ -5195,6 +5195,46 @@ velcrux s3 restore s3://my-bucket/chunks/aa/bb/c0ffee123456... --days 7 --tier S
 cargo test --test storage_sharding_tests -- --nocapture
 ```
 
+## 50. eBPF / XDP Kernel Bypass Acceleration & AF_XDP Multi-Queue Flow Steering (ADR-066)
+
+### 50.1. Overview
+
+Velcrux provides native zero-copy eBPF/XDP kernel bypass acceleration and AF_XDP multi-queue flow steering as specified in `ADR-066`.
+
+Key Capabilities:
+- **Verified 64-Bit eBPF Virtual Machine (`EbpfVm`, `EbpfVerifier`)**: Executes canonical 64-bit eBPF instructions with strict static analysis (DAG reachability, bounds checking, jump validity, and read-only `R10` stack enforcement).
+- **Wire-Speed Dual-Stack Frame Parser (`dissect_packet`)**: Parses Ethernet II, 802.1Q/QinQ VLAN tags, IPv4, IPv6 with extension header traversal, UDP, and RFC 9000 QUIC Long and Short headers with variable-length DCIDs at line rate.
+- **Lock-Free AF_XDP Multi-Queue Ring Pairs (`XskRing`, `XskQueuePair`)**: High-throughput circular ring pairs (`Fill`, `RX`, `TX`, `Completion`) managing UMEM descriptor frames with atomic batch production and consumption.
+- **Connection-Affinity Flow Steering (`XdpSocketRouter`, `XskMap`)**: Directs incoming QUIC UDP packets to designated CPU worker queues using Destination Connection ID hash steering (`SteeringPolicy::CidHash`), symmetric 4-tuple RSS, or round-robin balancing, eliminating cross-core lock contention and CPU cache invalidations.
+- **100% Pure Safe Rust**: `#![forbid(unsafe_code)]` with zero external C/LLVM dependencies.
+
+### 50.2. Operational Commands
+
+```bash
+# 1. Dump verified eBPF filter bytecode and human-readable disassembly
+velcrux xdp dump-bpf --port 7443
+
+# 2. Dump eBPF bytecode in structured JSON format
+velcrux xdp dump-bpf --port 7443 --json
+
+# 3. Simulate multi-queue AF_XDP flow steering with QUIC Connection ID hash affinity
+velcrux xdp steering --queues 8 --policy cid --packets 1000
+
+# 4. Simulate multi-queue flow steering with symmetric 4-tuple hashing in JSON format
+velcrux xdp steering --queues 4 --policy 4tuple --packets 500 --json
+
+# 5. Check eBPF/XDP network interface status and UMEM ring allocations
+velcrux xdp status --interface eth0 --mode native
+
+# 6. Execute wire-speed L2-L4 packet dissection benchmark
+velcrux xdp benchmark --packets 10000 --batch-size 32
+
+# 7. Execute transport XDP and CLI test suites
+cargo test -p velcrux-core --test transport_xdp_tests -- --nocapture
+cargo test -p velcrux-client --test cli_xdp_kernel_bypass -- --nocapture
+```
+
+
 
 
 

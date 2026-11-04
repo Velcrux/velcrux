@@ -288,8 +288,12 @@ pub use wan::{
     WanLinkType, WanPathState, WanSlice,
 };
 pub use xdp::{
-    parse_packet_headers, run_xdp_benchmark, PacketHeaderSummary, UmemConfig, UmemPool, XdpAction,
-    XdpBenchmarkReport, XdpDescriptor, XdpDriverMode, XdpEngine, XdpFilterRule, XdpStatus,
+    disassemble_quic_filter_bpf, dissect_packet, generate_quic_filter_bpf, parse_packet_headers,
+    run_xdp_benchmark, DissectedPacket, EbpfInsn, EbpfProgram, EbpfVerifier, EbpfVm,
+    PacketHeaderSummary, QuicFilterAssembler, QuicHeaderForm, SteeringPolicy, SteeringReport,
+    UmemConfig, UmemPool, VerifierReport, XdpAction, XdpBenchmarkReport, XdpDescriptor,
+    XdpDriverMode, XdpEngine, XdpFilterRule, XdpSocketRouter, XdpStatus, XskMap, XskQueuePair,
+    XskQueueStats, XskRing,
 };
 pub use zkquota::{
     PedersenGenerators, Scalar256, TenantQuotaRecord, ZkBitProof, ZkClusterAuditReport,

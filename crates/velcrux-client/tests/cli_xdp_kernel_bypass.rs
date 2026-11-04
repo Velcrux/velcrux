@@ -244,3 +244,97 @@ fn test_cli_xdp_benchmark_text_and_json() {
     assert!(val["throughput_gbps"].as_f64().unwrap() > 0.0);
     assert!(val["packets_redirected"].as_u64().unwrap() >= 192);
 }
+
+#[test]
+fn test_cli_xdp_dump_bpf_text_and_json() {
+    // 1. Text output: bytecode disassembly
+    let output = Command::new(velcrux_bin())
+        .arg("xdp")
+        .arg("dump-bpf")
+        .arg("--port")
+        .arg("7443")
+        .output()
+        .expect("execute xdp dump-bpf");
+
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("=== eBPF/XDP Kernel Bypass Bytecode Disassembly ==="));
+    assert!(stdout.contains("Instruction Count:"));
+    assert!(stdout.contains("Kernel Verifier:    PASS"));
+    assert!(stdout.contains("r2 = *(u32 *)(r1 + 0)"));
+    assert!(stdout.contains("exit"));
+
+    // 2. Machine-readable JSON output
+    let json_out = Command::new(velcrux_bin())
+        .arg("xdp")
+        .arg("dump-bpf")
+        .arg("--port")
+        .arg("443")
+        .arg("--json")
+        .output()
+        .expect("execute xdp dump-bpf json");
+
+    assert!(json_out.status.success());
+    let val: serde_json::Value =
+        serde_json::from_slice(&json_out.stdout).expect("parse xdp dump-bpf json");
+    assert!(val["instruction_count"].as_u64().unwrap() >= 10);
+    assert_eq!(val["verified"].as_bool().unwrap(), true);
+    assert!(val["disassembly"].as_str().unwrap().contains("exit"));
+    assert!(val["instructions"].is_array());
+}
+
+#[test]
+fn test_cli_xdp_steering_text_and_json() {
+    // 1. Text output: AF_XDP multi-queue flow steering simulation
+    let output = Command::new(velcrux_bin())
+        .arg("xdp")
+        .arg("steering")
+        .arg("--queues")
+        .arg("8")
+        .arg("--policy")
+        .arg("cid")
+        .arg("--packets")
+        .arg("128")
+        .output()
+        .expect("execute xdp steering");
+
+    assert!(
+        output.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("=== AF_XDP Multi-Queue Flow Steering Status ==="));
+    assert!(stdout.contains("Steering Policy:    CidHash"));
+    assert!(stdout.contains("Active Queues:      8"));
+    assert!(stdout.contains("Total Steered:      128 packets"));
+    assert!(stdout.contains("Per-Queue Distribution"));
+
+    // 2. JSON output
+    let json_out = Command::new(velcrux_bin())
+        .arg("xdp")
+        .arg("steering")
+        .arg("--queues")
+        .arg("4")
+        .arg("--policy")
+        .arg("4tuple")
+        .arg("--packets")
+        .arg("64")
+        .arg("--json")
+        .output()
+        .expect("execute xdp steering json");
+
+    assert!(json_out.status.success());
+    let val: serde_json::Value =
+        serde_json::from_slice(&json_out.stdout).expect("parse xdp steering json");
+    assert_eq!(val["num_queues"].as_u64().unwrap(), 4);
+    assert_eq!(val["total_steered"].as_u64().unwrap(), 64);
+    assert_eq!(val["policy"].as_str().unwrap(), "Symmetric4Tuple");
+    assert_eq!(val["queues"].as_array().unwrap().len(), 4);
+}

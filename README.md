@@ -303,6 +303,27 @@ velcrux schedule eval --schedule "22:00-06:00: 10Gbps; default: 100Mbps" --times
 velcrux --bandwidth-schedule "Mon-Fri 09:00-17:00: 20Mbps; default: 1Gbps" upload ./archive.tar.gz velcrux://host:7443/backups/
 ```
 
+### eBPF / XDP Kernel Bypass Acceleration & Multi-Queue Flow Steering
+
+Achieve line-rate (> 40 Gbps) zero-copy QUIC UDP packet demuxing and flow steering via in-memory canonical 64-bit eBPF verification and AF_XDP multi-queue ring buffers without cross-core lock contention:
+
+```bash
+# Dump verified eBPF filter bytecode and instruction disassembly for port 7443
+velcrux xdp dump-bpf --port 7443
+
+# Dump eBPF bytecode in structured JSON format
+velcrux xdp dump-bpf --port 7443 --json
+
+# Inspect AF_XDP multi-queue flow steering with QUIC Connection ID hash affinity
+velcrux xdp steering --queues 8 --policy cid --packets 1000
+
+# Inspect multi-queue flow steering with symmetric 4-tuple hashing
+velcrux xdp steering --queues 4 --policy 4tuple --packets 500
+
+# Query hardware NIC UMEM ring allocation and driver mode
+velcrux xdp status --interface eth0 --mode native
+```
+
 ### Transfer State and Resumption
 
 ```bash

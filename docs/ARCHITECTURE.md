@@ -573,6 +573,7 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-063](adr/ADR-063-kubernetes-operator-and-declarative-crds.md) | Kubernetes Operator & Declarative Custom Resource Definitions (CRDs) | Accepted | Pure safe Rust Operator controller, VelcruxCluster & VelcruxTransfer CRDs, self-healing reconciliation loop, and exponential backoff |
 | [ADR-064](adr/ADR-064-cloud-object-storage-containerized-integration-harness.md) | Real Cloud Object Storage (S3 / MinIO / GCS / Azure) Containerized Integration Harness | Accepted | Pure safe Rust asynchronous HTTP/1.1 client, ephemeral TCP wire mock server, MinIO / Azurite / Fake-GCS container matrix, S3ChunkStore, and FastCDC boundary-shift deduplication |
 | [ADR-065](adr/ADR-065-distributed-object-storage-sharding-and-multi-bucket-tiering.md) | Distributed Object Storage Sharding & Multi-Bucket Tiering | Accepted | Consistent hashing ShardRouter, HexTwoLevel prefix fanout (65,536 partitions), Glacier cold restore coordinator, ShardedLifecycleEngine, and ShardedChunkStore |
+| [ADR-066](adr/ADR-066-ebpf-xdp-kernel-bypass-acceleration.md) | eBPF / XDP Kernel Bypass Acceleration & AF_XDP Multi-Queue Flow Steering | Accepted | Pure safe Rust canonical 64-bit eBPF instruction engine, verifier, disassembler, dual-stack packet dissection, AF_XDP lock-free ring pairs, and QUIC DCID connection-affinity flow steering |
 
 
 

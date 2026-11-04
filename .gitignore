@@ -39,5 +39,6 @@ fuzz/corpus/
 !docs/ARCHITECTURE.md
 !docs/PERFORMANCE.md
 !docs/adr/*.md
+!CONTINUATION.md
 
 

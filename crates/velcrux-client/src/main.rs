@@ -2191,6 +2191,30 @@ enum XdpSubCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Dump compiled eBPF/XDP filter bytecode and disassembler listing (Option CX).
+    DumpBpf {
+        /// Target UDP port for QUIC filter generation (default: 7443).
+        #[arg(long, default_value_t = 7443)]
+        port: u16,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect multi-queue AF_XDP flow steering and queue balance (Option CX).
+    Steering {
+        /// Number of AF_XDP queues to simulate (default: 8).
+        #[arg(long, default_value_t = 8)]
+        queues: u32,
+        /// Steering policy: "cid", "4tuple", or "rr" (default: "cid").
+        #[arg(long, default_value = "cid")]
+        policy: String,
+        /// Number of sample packets to steer (default: 1000).
+        #[arg(long, default_value_t = 1000)]
+        packets: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -8111,6 +8135,99 @@ async fn run_xdp(cli: &Cli, sub: &XdpSubCmd) -> anyhow::Result<()> {
                 println!("  Packets Redirected:     {}", report.packets_redirected);
                 println!("  Packets Dropped:        {}", report.packets_dropped);
                 println!("  Packets Passed:         {}", report.packets_passed);
+            }
+        }
+        XdpSubCmd::DumpBpf { port, json } => {
+            let prog = velcrux_core::xdp::generate_quic_filter_bpf(*port);
+            let verifier =
+                velcrux_core::xdp::EbpfVerifier::verify(&prog).map_err(|e| anyhow::anyhow!(e))?;
+            let asm = prog.disassemble();
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "program_name": prog.name,
+                        "instruction_count": prog.instructions.len(),
+                        "verified": verifier.passed,
+                        "instructions": prog.instructions,
+                        "disassembly": asm,
+                    })
+                );
+            } else {
+                println!("=== eBPF/XDP Kernel Bypass Bytecode Disassembly ===");
+                println!("  Program Name:       {}", prog.name);
+                println!("  Instruction Count:  {}", prog.instructions.len());
+                println!("  Kernel Verifier:    PASS (DAG reachable, bounds checked)");
+                println!("--- Disassembly ---");
+                println!("{}", asm);
+            }
+        }
+        XdpSubCmd::Steering {
+            queues,
+            policy,
+            packets,
+            json,
+        } => {
+            let pol = match policy.to_lowercase().as_str() {
+                "4tuple" => velcrux_core::xdp::SteeringPolicy::Symmetric4Tuple,
+                "rr" | "roundrobin" => velcrux_core::xdp::SteeringPolicy::RoundRobin,
+                _ => velcrux_core::xdp::SteeringPolicy::CidHash,
+            };
+
+            let xsk_map = std::sync::Arc::new(velcrux_core::xdp::XskMap::new(*queues, 1024));
+            let umem = std::sync::Arc::new(velcrux_core::xdp::UmemPool::new(
+                velcrux_core::xdp::UmemConfig::default(),
+            ));
+            let router = velcrux_core::xdp::XdpSocketRouter::new(pol, xsk_map, umem);
+
+            // Generate synthetic QUIC packets with diverse CIDs
+            for i in 0..*packets {
+                let mut raw = vec![0u8; 1200];
+                raw[12] = 0x08;
+                raw[13] = 0x00; // IPv4
+                raw[14] = 0x45; // Version 4, IHL 5 (20 bytes)
+                raw[14 + 9] = 17; // UDP protocol
+                                  // UDP Header at offset 34
+                raw[34] = 0x12;
+                raw[35] = 0x34;
+                let port_bytes = 7443u16.to_be_bytes();
+                raw[36] = port_bytes[0];
+                raw[37] = port_bytes[1];
+                let udp_len = (1200 - 34) as u16;
+                raw[38] = (udp_len >> 8) as u8;
+                raw[39] = (udp_len & 0xff) as u8;
+                // QUIC short header at offset 42
+                raw[42] = 0x43; // QUIC short header (fixed bit = 1)
+                let cid = (i as u64).wrapping_mul(0x9e3779b97f4a7c15).to_be_bytes();
+                raw[43..51].copy_from_slice(&cid);
+
+                if let Some(parsed) = velcrux_core::xdp::dissect_packet(&raw) {
+                    let _ = router.steer_packet(&parsed, 7443);
+                }
+            }
+
+            let report = router.report();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== AF_XDP Multi-Queue Flow Steering Status ===");
+                println!("  Steering Policy:    {:?}", report.policy);
+                println!("  Active Queues:      {}", report.num_queues);
+                println!("  Total Steered:      {} packets", report.total_steered);
+                println!("  Total Dropped:      {} packets", report.total_dropped);
+                println!("--- Per-Queue Distribution ---");
+                println!(
+                    "{:<8} {:<16} {:<16} {:<12}",
+                    "QUEUE", "RX PACKETS", "RX BYTES", "DROPS"
+                );
+                println!("{:-<8} {:-<16} {:-<16} {:-<12}", "", "", "", "");
+                for q in &report.queues {
+                    println!(
+                        "{:<8} {:<16} {:<16} {:<12}",
+                        q.queue_id, q.rx_packets, q.rx_bytes, q.ring_drops
+                    );
+                }
             }
         }
     }

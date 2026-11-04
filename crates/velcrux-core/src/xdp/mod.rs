@@ -1,10 +1,27 @@
-//! Hardware-Accelerated FPGA/eBPF Kernel XDP Packet Bypassing (`ADR-045`).
+//! Hardware-Accelerated FPGA/eBPF Kernel XDP Packet Bypassing (`ADR-045`, `ADR-066`).
 //!
 //! Provides ultra-low-latency, zero-copy packet bypassing leveraging eBPF/XDP
 //! (eXpress Data Path), AF_XDP socket descriptor rings, UMEM frame buffers,
-//! wire-speed QUIC connection ID filtering, and SmartNIC/FPGA hardware offloads.
+//! wire-speed QUIC connection ID filtering, multi-queue socket steering (`XskMap`),
+//! and SmartNIC/FPGA hardware offloads.
 
 #![forbid(unsafe_code)]
+
+pub mod bpf;
+pub mod parser;
+pub mod ring;
+pub mod steering;
+
+pub use bpf::{
+    disassemble_insn, EbpfInsn, EbpfProgram, EbpfVerifier, EbpfVm, QuicFilterAssembler,
+    VerifierReport, XdpMd,
+};
+pub use parser::{
+    dissect_packet, DissectedPacket, QuicHeaderForm, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    ETHERTYPE_VLAN_8021Q, ETHERTYPE_VLAN_QINQ, IP_PROTO_UDP,
+};
+pub use ring::{XskQueuePair, XskQueueStats, XskRing};
+pub use steering::{SteeringPolicy, SteeringReport, XdpSocketRouter, XskMap};
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -527,6 +544,17 @@ pub struct XdpBenchmarkReport {
     pub packets_dropped: u64,
     pub packets_passed: u64,
     pub elapsed_ms: f64,
+}
+
+/// Generates a verified canonical eBPF filter program for QUIC UDP demuxing.
+pub fn generate_quic_filter_bpf(target_port: u16) -> EbpfProgram {
+    QuicFilterAssembler::build(target_port)
+}
+
+/// Disassembles the canonical eBPF filter program into human-readable BPF assembly text.
+pub fn disassemble_quic_filter_bpf(target_port: u16) -> String {
+    let prog = generate_quic_filter_bpf(target_port);
+    prog.disassemble()
 }
 
 /// Executes an in-memory XDP packet bypass benchmark evaluating wire-rate parsing and filter throughput.
