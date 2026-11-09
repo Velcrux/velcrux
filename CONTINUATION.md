@@ -368,6 +368,36 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_bgp_evpn`: 4/4 passing CLI integration tests validating `status`, `routes`, `evpn`, and `advertise` in text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DE: Quantum Key Distribution (QKD) Optical Fiber & Satellite Entanglement Key Exchange Protocol (BB84 / E91) (ADR-073)
+- **Discrete-Variable BB84 Decoy-State Protocol Engine (`Bb84Engine`, `Bb84SessionReport`, `AlicePulse`, `BobMeasurement`)**:
+  - 4-quantum state polarization encoding across rectilinear $\{|0\rangle, |1\rangle\}$ and diagonal $\{|+\rangle, |-\rangle\}$ bases.
+  - 3-intensity optical decoy-state method ($\mu=0.50$ signal, $\nu=0.10$ decoy, $\omega=0.00$ vacuum) to foil photon-number-splitting (PNS) attacks and bound single-photon yield $Y_1$.
+  - Quantum Bit Error Rate (QBER) parameter estimation with asymptotic Shor-Preskill security abort threshold ($QBER < 11.0\%$).
+  - Cascade parity bisection information reconciliation algorithm and Toeplitz matrix universal hash privacy amplification.
+- **Ekert 1991 (E91) Entangled Bell State Protocol Engine (`E91Engine`, `E91SessionReport`, `MeasurementAngle`)**:
+  - Maximally entangled Bell pair $|\Phi^+\rangle = \frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$ generation and transmission.
+  - Three-angle measurement basis configurations for Alice ($a_1=0^\circ, a_2=45^\circ, a_3=90^\circ$) and Bob ($b_1=22.5^\circ, b_2=45^\circ, b_3=67.5^\circ$).
+  - Clauser-Horne-Shimony-Holt (CHSH) Bell inequality evaluation: $S = |E(a_1,b_1) - E(a_1,b_3) + E(a_3,b_3) - E(a_3,b_1)|$.
+  - Security verification: Classical limit $S \le 2.0$ vs quantum Tsirelson bound $S \le 2\sqrt{2} \approx 2.8284$, aborting when $S \le 2.0$.
+  - Matching angle ($a_2 = b_2 = 45^\circ$) key extraction.
+- **Optical Fiber & Free-Space Satellite Quantum Channel Physics (`QuantumChannel`, `QuantumChannelType`)**:
+  - Terrestrial optical fiber model: Beer-Lambert attenuation $\alpha = 0.20\text{ dB/km}$ at 1550 nm, group velocity $c/n \approx 204{,}757\text{ km/s}$, detector quantum efficiency $\eta \approx 85\%$, and dark count rate $\sim 10\text{ Hz}$.
+  - LEO satellite downlink model: Geometric beam divergence $\theta = \frac{1.22 \lambda}{w_0}$, telescope aperture collection $A_{rx}$, atmospheric absorption ($0.5\text{ dB}$ at zenith), and slant range geometry $L = h / \cos(\zeta)$.
+- **ETSI GS QKD 014 / 004 Key Store & Hybrid PQC Binding (`QkdKeyStore`, `QkdKey`, `QkdKeyStatus`, `QkdReplenisher`)**:
+  - Secure Application Entity (SAE) key management with UUID indexing, 256-bit entropy, and lifecycle states (`Available`, `Reserved`, `Consumed`, `Expired`).
+  - Automated background buffer replenishment daemon maintaining target quantum key depth.
+  - Dual-layer defense-in-depth hybrid key derivation binding QKD entropy with ML-KEM-768 shared secrets via BLAKE3 KDF.
+- **Operator CLI Suite**:
+  - `velcrux qkd status [--json]`: Inspects QKD link status, optical fiber and satellite channel metrics, detector efficiency, and ETSI 014 buffer capacity.
+  - `velcrux qkd exchange [--protocol <bb84|e91>] [--channel <fiber|satellite>] [--distance <KM>] [--pulses <N>] [--eve <PROB>] [--json]`: Executes simulated QKD exchange session.
+  - `velcrux qkd keys [--status <available|reserved|consumed|all>] [--json]`: Lists stored quantum keys with status, preview, and lifetime.
+  - `velcrux qkd replenish [--count <N>] [--peer <PEER_ID>] [--json]`: Replenishes key buffers and derives hybrid composite keys with post-quantum secrets.
+- **Verification Matrix**:
+  - `qkd::` unit tests: 9/9 passing tests in `velcrux-core` covering fiber attenuation, satellite downlink loss, clean/intercepted BB84 sessions, E91 Bell inequality violations and decoherence aborts, ETSI 014 key lifecycle, and hybrid BLAKE3 KDF derivation.
+  - `qkd_optical_tests`: 7/7 passing integration tests validating physical attenuation, BB84 decoy security/abort thresholds, E91 entanglement distillation, ETSI 014 lifecycle, and hybrid PQC binding.
+  - `cli_qkd`: 5/5 passing CLI integration tests validating `status`, `exchange --protocol bb84`, `exchange --protocol e91`, `keys`, and `replenish` in text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

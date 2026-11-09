@@ -41,6 +41,7 @@ pub mod nvme;
 pub mod protocol;
 pub mod provenance;
 pub mod proxy;
+pub mod qkd;
 pub mod rdma;
 pub mod router;
 pub mod scheduler;
@@ -181,6 +182,15 @@ pub use provenance::{
     ProvenanceInclusionProof, ProvenanceNode, ProvenanceVerificationReport, TimestampToken,
     WitnessCosignature, PROVENANCE_NODE_DOMAIN_TAG, PROVENANCE_ROOT_DOMAIN_TAG,
     PROVENANCE_TIMESTAMP_DOMAIN_TAG, PROVENANCE_WITNESS_DOMAIN_TAG,
+};
+pub use qkd::{
+    AlicePulse, Bb84Engine, Bb84SessionReport, BobMeasurement, DecoyIntensity, E91Engine,
+    E91SessionReport, MeasurementAngle, QkdKey, QkdKeyInfo, QkdKeyStatus, QkdKeyStore,
+    QkdProtocolType, QkdReplenisher, QuantumChannel, QuantumChannelType, QubitBasis,
+    BB84_QBER_ABORT_THRESHOLD, CHSH_CLASSICAL_LIMIT, CHSH_TSIRELSON_BOUND,
+    DEFAULT_DARK_COUNT_PROBABILITY, DEFAULT_DETECTOR_EFFICIENCY, INTENSITY_DECOY_NU,
+    INTENSITY_SIGNAL_MU, INTENSITY_VACUUM_OMEGA, SMF28_ATTENUATION_DB_PER_KM,
+    SPEED_OF_LIGHT_IN_FIBER_KM_S,
 };
 pub use rdma::{
     calculate_icrc, AccessFlags, Aeth, Bth, BthOpcode, CompletionQueue, DcqcnConfig, DcqcnPacer,

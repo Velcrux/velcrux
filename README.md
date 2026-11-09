@@ -435,6 +435,27 @@ velcrux bgp evpn
 velcrux bgp advertise --prefix 198.51.100.1/32 --as-prepends 2 --med 50
 ```
 
+### Quantum Key Distribution (QKD) Optical & Satellite Protocol
+
+Information-theoretically secure symmetric key exchange across terrestrial optical fiber and LEO satellite downlinks using BB84 decoy states and E91 Bell pair entanglement with continuous CHSH inequality verification and ETSI GS QKD 014 buffer management:
+
+```bash
+# Inspect QKD link status, quantum channels, detector metrics, and ETSI 014 buffer health
+velcrux qkd status
+
+# Execute BB84 decoy-state quantum key exchange over terrestrial fiber (10,000 pulses)
+velcrux qkd exchange --protocol bb84 --channel fiber --distance 15.0 --pulses 10000
+
+# Execute Ekert 1991 (E91) Bell state entanglement exchange with CHSH inequality verification
+velcrux qkd exchange --protocol e91 --channel fiber --pulses 10000
+
+# List stored quantum keys in the ETSI GS QKD 014 buffer
+velcrux qkd keys
+
+# Trigger automated key buffer replenishment and hybrid QKD-PQC key derivation
+velcrux qkd replenish --count 4 --peer sae-peer-frankfurt-01
+```
+
 ### Transfer State and Resumption
 
 ```bash

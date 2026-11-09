@@ -5486,6 +5486,49 @@ cargo test -p velcrux-core --test bgp_evpn_fabric_tests -- --nocapture
 cargo test -p velcrux-client --test cli_bgp_evpn -- --nocapture
 ```
 
+## 57. Quantum Key Distribution (QKD) Optical & Satellite Protocol (ADR-073)
+
+The Quantum Key Distribution (QKD) engine provides information-theoretically secure symmetric key exchange across terrestrial optical fiber networks and Low Earth Orbit (LEO) satellite-to-ground downlinks. The architecture supports both discrete-variable BB84 with 3-intensity decoy states and Ekert 1991 (E91) entangled photon Bell pairs with continuous CHSH Bell inequality verification. Established quantum keys are stored in an ETSI GS QKD 014 buffer and bound with post-quantum ML-KEM-768 shared secrets via BLAKE3 KDF for defense-in-depth protection.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect QKD link status, quantum channels, detector metrics, and ETSI 014 buffer health
+velcrux qkd status
+
+# 2. Inspect QKD status in machine-readable JSON format
+velcrux qkd status --json
+
+# 3. Execute BB84 decoy-state quantum key exchange over terrestrial fiber (10,000 pulses)
+velcrux qkd exchange --protocol bb84 --channel fiber --distance 15.0 --pulses 10000
+
+# 4. Execute BB84 exchange in JSON format
+velcrux qkd exchange --protocol bb84 --pulses 10000 --json
+
+# 5. Execute Ekert 1991 (E91) Bell state entanglement exchange with CHSH inequality verification
+velcrux qkd exchange --protocol e91 --channel fiber --pulses 10000
+
+# 6. Execute E91 exchange in JSON format
+velcrux qkd exchange --protocol e91 --pulses 10000 --json
+
+# 7. List stored quantum keys in the ETSI GS QKD 014 buffer
+velcrux qkd keys
+
+# 8. List stored quantum keys filtered by status in JSON format
+velcrux qkd keys --status available --json
+
+# 9. Trigger automated key buffer replenishment and hybrid QKD-PQC key derivation
+velcrux qkd replenish --count 4 --peer sae-peer-frankfurt-01
+
+# 10. Replenish keys in JSON format
+velcrux qkd replenish --count 2 --json
+
+# 11. Execute QKD unit and integration test suites
+cargo test -p velcrux-core --lib qkd:: -- --nocapture
+cargo test -p velcrux-core --test qkd_optical_tests -- --nocapture
+cargo test -p velcrux-client --test cli_qkd -- --nocapture
+```
+
 
 
 
