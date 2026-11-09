@@ -379,3 +379,12 @@ pub use zkquota::{
     ZkMembershipProof, ZkQuotaAuditBundle, ZkQuotaBenchmarkReport, ZkQuotaEngine,
     ZkQuotaEngineStatus, ZkRangeProof, ZkTenantAuditSummary,
 };
+pub use wasm::{
+    execute_binary_to_json_transcode, execute_checksum_stamping, execute_json_to_binary_transcode,
+    execute_pii_redaction, execute_stream_masking, FastPathClassifier, FastPathDecision,
+    FastPathRule, FilterKind, GasMeter, HostFunction, PipelineStage, SandboxPolicy, TenantSandbox,
+    TenantSandboxManager, TransformPipeline, TransformResult, WasiCapabilities, WasiContext,
+    WasiStreamBuffer, WasmExport, WasmExportDesc, WasmFuncBody, WasmFuncType, WasmImport,
+    WasmInstance, WasmMemLimits, WasmMemory, WasmModule, WasmOp, WasmValType, WasmValue,
+    DEFAULT_GAS_LIMIT, DEFAULT_MAX_PAGES, WASM_MAGIC, WASM_PAGE_SIZE, WASM_VERSION,
+};

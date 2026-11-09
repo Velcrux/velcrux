@@ -104,3 +104,4 @@ To solve these challenges, Velcrux requires a **Confidential Multi-Tenant eBPF S
 
 ### Negative
 - Compute-intensive transformation stages introduce CPU overhead proportional to payload volume; mitigated by eBPF fastpath filtering and gas budget caps.
+
