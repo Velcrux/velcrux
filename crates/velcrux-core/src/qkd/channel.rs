@@ -146,3 +146,4 @@ mod tests {
         assert!(sat.total_detection_probability() > 0.0);
     }
 }
+

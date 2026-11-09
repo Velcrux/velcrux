@@ -101,3 +101,4 @@ To address these imperatives, Velcrux requires an integrated **Quantum Key Distr
 
 ### Negative
 - Quantum channel key rate scales inversely with physical fiber distance due to exponential optical attenuation ($0.2\text{ dB/km}$).
+
