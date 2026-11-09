@@ -430,6 +430,37 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_wasm`: 5/5 passing CLI integration tests validating `status`, `inspect`, `pipeline`, and `execute` in text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DG: Hardware PTP (IEEE 1588v2) Nanosecond High-Precision Clock Synchronization & Bounded Transfer Ordering Mesh (ADR-075)
+- **IEEE 1588v2 Wire Protocol Engine (`PtpCommonHeader`, `PtpTimestamp`, `CorrectionField`, `PtpMessageType`)**:
+  - Full wire framing and decoding of the standard 34-byte IEEE 1588v2 common header (`PtpCommonHeader`).
+  - High-precision nanosecond timestamps (`PtpTimestamp`): 48-bit seconds (6 bytes) + 32-bit nanoseconds (4 bytes).
+  - Scaled sub-nanosecond correction fields (`CorrectionField`): 64-bit signed integer representing nanoseconds multiplied by $2^{16}$ (allowing $1/65536\text{ ns} \approx 15.25\text{ fs}$ resolution for transparent clock transit time accumulation).
+  - Strongly typed PTP messages: `Sync`, `DelayReq`, `FollowUp`, `DelayResp`, and `Announce`.
+- **Best Master Clock Algorithm (BMCA) (`BmcaEngine`, `ClockDataset`, `ForeignMasterRecord`)**:
+  - Strict compliance with IEEE 1588-2008 §9.3 dataset comparison (`priority1`, `clockClass`, `clockAccuracy`, `offsetScaledLogVariance`, `priority2`, `clockIdentity`, `stepsRemoved`).
+  - Port state transitions (`Initializing`, `Faulty`, `Disabled`, `Listening`, `PreMaster`, `Master`, `Passive`, `Slave`).
+  - Autonomous grandmaster failover and promotion of candidate clocks upon foreign master announcement timeout.
+- **Closed-Loop Proportional-Integral (PI) Clock Servo (`ClockServo`, `PtpExchangeSample`, `ServoLockStatus`)**:
+  - Symmetric 4-timestamp exchange delay calculation: $\mu = \frac{(t_2 - t_1) + (t_4 - t_3) - c}{2}$.
+  - Clock offset computation: $\theta = (t_2 - t_1) - \mu - c_{sync}$.
+  - PI frequency and phase steering ($k_p = 0.7$, $k_i = 0.3$) computing frequency drift in parts-per-billion (ppb).
+  - Dynamic lock detection transitioning to `LockedPhase` when $|\theta| \le 50\text{ ns}$ over consecutive cycles, with RMS jitter tracking.
+- **Bounded-Skew Causal Transfer Ordering Mesh (`BoundedOrderMesh`, `BoundedTimestamp`, `OrderedTransferCommit`)**:
+  - Timestamp representation as bounded uncertainty intervals: $[t - \epsilon, t + \epsilon]$.
+  - Uncertainty bound computation: $\epsilon = |\theta| + \mu_{jitter} + \text{drift} \cdot \Delta t$.
+  - Causal order verification: if $t_B - \epsilon_B > t_A + \epsilon_A$, transfer $A$ is guaranteed to precede transfer $B$ ($A \prec B$).
+  - TrueTime commit-wait coordination: enforcing a $2\epsilon$ wait window at the commit node before broadcasting release guarantees external consistency across geo-distributed nodes without cross-region roundtrips.
+- **Operator CLI Suite**:
+  - `velcrux ptp status [--json]`: Inspects local PTP clock status, grandmaster identity, port state, offset, and servo lock state.
+  - `velcrux ptp peers [--json]`: Inspects Best Master Clock Algorithm (BMCA) candidate grandmasters and foreign master datasets.
+  - `velcrux ptp sync [--domain <N>] [--iterations <N>] [--json]`: Executes an active PTP 4-timestamp exchange synchronization round with upstream master.
+  - `velcrux ptp ordering [--transfer-id <ID>] [--jitter <NANOS>] [--json]`: Allocates an ordered transfer commit timestamp and computes TrueTime bounded uncertainty wait window.
+- **Verification Matrix**:
+  - `ptp::` unit tests: 11/11 passing tests in `velcrux-core` covering timestamp arithmetic, EUI-64 MAC conversion, sub-nanosecond correction fields, PI clock servo, dataset comparison, BMCA port transitions, and TrueTime bounded uncertainty ordering.
+  - `ptp_clock_sync_tests`: 5/5 passing integration tests validating clock servo offset/delay calculation, correction field accumulation, BMCA grandmaster election & failover, wire header framing, and TrueTime causal commit ordering.
+  - `cli_ptp`: 4/4 passing CLI integration tests validating `status`, `peers`, `sync`, and `ordering` in text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

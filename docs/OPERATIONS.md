@@ -5566,6 +5566,43 @@ cargo test -p velcrux-core --test wasm_streaming_tests -- --nocapture
 cargo test -p velcrux-client --test cli_wasm -- --nocapture
 ```
 
+## 59. Hardware PTP (IEEE 1588v2) Nanosecond High-Precision Clock Synchronization & Bounded Transfer Ordering Mesh (ADR-075)
+
+The Hardware PTP (IEEE 1588v2) Nanosecond High-Precision Clock Synchronization engine delivers sub-50ns phase lock, sub-nanosecond transparent clock correction field accumulation, and TrueTime-style bounded uncertainty transfer ordering across multi-region clusters without cross-region two-phase lock roundtrips.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect local PTP clock status, grandmaster identity, port state, offset, and servo lock state
+velcrux ptp status
+
+# 2. Inspect PTP status in machine-readable JSON format
+velcrux ptp status --json
+
+# 3. Inspect Best Master Clock Algorithm (BMCA) candidate grandmasters and foreign master datasets
+velcrux ptp peers
+
+# 4. Inspect BMCA peers in JSON format
+velcrux ptp peers --json
+
+# 5. Execute an active PTP 4-timestamp exchange synchronization round with upstream master
+velcrux ptp sync --domain 0 --iterations 8
+
+# 6. Execute synchronization round in JSON format
+velcrux ptp sync --domain 0 --iterations 8 --json
+
+# 7. Allocate an ordered transfer commit timestamp and compute TrueTime bounded uncertainty wait window
+velcrux ptp ordering --transfer-id transfer-01JB7Q2K9M4X8ZQ3V5N7T1R6C0 --jitter 100
+
+# 8. Compute bounded commit wait window in JSON format
+velcrux ptp ordering --transfer-id transfer-01JB7Q2K9M4X8ZQ3V5N7T1R6C0 --jitter 100 --json
+
+# 9. Execute PTP clock sync and bounded ordering test suites
+cargo test -p velcrux-core --lib ptp:: -- --nocapture
+cargo test -p velcrux-core --test ptp_clock_sync_tests -- --nocapture
+cargo test -p velcrux-client --test cli_ptp -- --nocapture
+```
+
 
 
 

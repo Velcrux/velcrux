@@ -41,6 +41,7 @@ pub mod nvme;
 pub mod protocol;
 pub mod provenance;
 pub mod proxy;
+pub mod ptp;
 pub mod qkd;
 pub mod rdma;
 pub mod router;
@@ -313,6 +314,14 @@ pub use proxy::{
     run_l7_benchmark, FlowTier, L7Action, L7BenchmarkReport, L7ProxyEngine, L7ProxyStatus,
     L7RequestInfo, L7Rule, L7StreamType, L7TokenBucket, PressureSensor,
 };
+pub use ptp::{
+    compare_datasets, BmcaEngine, BoundedOrderMesh, BoundedTimestamp, ClockDataset, ClockIdentity,
+    ClockQuality, ClockServo, CorrectionField, ForeignMasterRecord, OrderedTransferCommit,
+    PortIdentity, PtpAnnounce, PtpClockRole, PtpDelayRespPayload, PtpExchangeSample, PtpHeader,
+    PtpMessage, PtpMessageType, PtpPortState, PtpTimestamp, PtpTimestampPayload, ServoLockStatus,
+    DEFAULT_PTP_DOMAIN, DEFAULT_SERVO_KI, DEFAULT_SERVO_KP, PHASE_LOCK_THRESHOLD_NANOS,
+    PTP_COMMON_HEADER_LEN, PTP_EVENT_PORT, PTP_FLAG_TWO_STEP, PTP_GENERAL_PORT, PTP_VERSION_2,
+};
 pub use traffic::{
     format_prometheus_metrics as format_traffic_prometheus_metrics, AnomalyClassification,
     AnomalyDetectionResult, AnomalyIncident, AnomalyType, CompositeAnomalyDetector, CusumDetector,
@@ -378,13 +387,4 @@ pub use zkquota::{
     PedersenGenerators, Scalar256, TenantQuotaRecord, ZkBitProof, ZkClusterAuditReport,
     ZkMembershipProof, ZkQuotaAuditBundle, ZkQuotaBenchmarkReport, ZkQuotaEngine,
     ZkQuotaEngineStatus, ZkRangeProof, ZkTenantAuditSummary,
-};
-pub use wasm::{
-    execute_binary_to_json_transcode, execute_checksum_stamping, execute_json_to_binary_transcode,
-    execute_pii_redaction, execute_stream_masking, FastPathClassifier, FastPathDecision,
-    FastPathRule, FilterKind, GasMeter, HostFunction, PipelineStage, SandboxPolicy, TenantSandbox,
-    TenantSandboxManager, TransformPipeline, TransformResult, WasiCapabilities, WasiContext,
-    WasiStreamBuffer, WasmExport, WasmExportDesc, WasmFuncBody, WasmFuncType, WasmImport,
-    WasmInstance, WasmMemLimits, WasmMemory, WasmModule, WasmOp, WasmValType, WasmValue,
-    DEFAULT_GAS_LIMIT, DEFAULT_MAX_PAGES, WASM_MAGIC, WASM_PAGE_SIZE, WASM_VERSION,
 };

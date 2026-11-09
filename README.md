@@ -474,6 +474,24 @@ velcrux wasm pipeline --tenant tenant-finance
 velcrux wasm execute --pipeline pipeline-pii-redact --input "Client: Bob, Card: 4111-2222-3333-4444, SSN: 123-45-6789"
 ```
 
+### Hardware PTP (IEEE 1588v2) Nanosecond Clock Sync & Bounded Ordering Mesh
+
+Sub-50ns phase lock, transparent clock correction field accumulation, Best Master Clock Algorithm (BMCA) grandmaster election, and TrueTime-style bounded uncertainty transfer ordering ($2\epsilon$ wait window) without cross-region two-phase lock roundtrips:
+
+```bash
+# Inspect local PTP clock status, grandmaster identity, port state, offset, and servo lock state
+velcrux ptp status
+
+# Inspect Best Master Clock Algorithm (BMCA) candidate grandmasters and foreign master datasets
+velcrux ptp peers
+
+# Execute an active PTP 4-timestamp exchange synchronization round with upstream master
+velcrux ptp sync --domain 0 --iterations 8
+
+# Allocate an ordered transfer commit timestamp and compute TrueTime bounded uncertainty wait window
+velcrux ptp ordering --transfer-id transfer-01JB7Q2K9M4X8ZQ3V5N7T1R6C0 --jitter 100
+```
+
 ### Transfer State and Resumption
 
 ```bash

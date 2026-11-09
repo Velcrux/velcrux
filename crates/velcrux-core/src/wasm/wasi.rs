@@ -152,7 +152,7 @@ impl WasiContext {
             )));
         }
         gas.consume(2)?;
-        Ok(1731155000_000_000_000) // nanoseconds epoch timestamp
+        Ok(1_731_155_000_000_000_000) // nanoseconds epoch timestamp
     }
 }
 
