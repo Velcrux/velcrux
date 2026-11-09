@@ -23,6 +23,7 @@
 pub mod audit;
 pub mod auth;
 pub mod bdp_rebalance;
+pub mod bgp;
 pub mod chaos;
 pub mod chunking;
 pub mod consensus;
@@ -80,6 +81,19 @@ pub use bdp_rebalance::{
     SubflowFeedback, SubflowRebalanceState, SubflowType, DEFAULT_ANTI_FLAPPING_HYSTERESIS_MS,
     DEFAULT_LOSS_DEFLECT_PPM, DEFAULT_LOSS_PENALTY_GAMMA, DEFAULT_LOSS_THROTTLE_PPM,
     DEFAULT_REBALANCE_INTERVAL_MS, MAX_SUBFLOW_BDP_CEILING_BYTES, MIN_SUBFLOW_BDP_FLOOR_BYTES,
+};
+pub use bgp::{
+    AnycastAction, AnycastOrchestrator, AnycastVip, AsPathSegment, AsPathSegmentType, BgpEvent,
+    BgpFsmState, BgpMessage, BgpOrigin, BgpPathAttributes, BgpPeer, BgpPrefix, BgpRibEntry,
+    BgpRibManager, EthernetSegmentId, EvpnRoute, FdbEntry, MacAddress, PopHealthStatus,
+    RouteDistinguisher, RouteTarget, VrfTable, VtepEngine, VxlanDatagram, VxlanHeader, AFI_L2VPN,
+    ATTR_AGGREGATOR, ATTR_AS_PATH, ATTR_COMMUNITIES, ATTR_EXTENDED_COMMUNITIES, ATTR_LOCAL_PREF,
+    ATTR_MP_REACH_NLRI, ATTR_MP_UNREACH_NLRI, ATTR_MULTI_EXIT_DISC, ATTR_NEXT_HOP, ATTR_ORIGIN,
+    BGP_HEADER_LEN, BGP_HEADER_MARKER, BGP_MSG_KEEPALIVE, BGP_MSG_NOTIFICATION, BGP_MSG_OPEN,
+    BGP_MSG_ROUTE_REFRESH, BGP_MSG_UPDATE, BGP_TCP_PORT, COMMUNITY_BLACKHOLE,
+    COMMUNITY_NO_ADVERTISE, COMMUNITY_NO_EXPORT, EVPN_TYPE_ETHERNET_AD, EVPN_TYPE_ETHERNET_SEGMENT,
+    EVPN_TYPE_INCLUSIVE_MULTICAST, EVPN_TYPE_IP_PREFIX, EVPN_TYPE_MAC_IP_ADV, ORIGIN_EGP,
+    ORIGIN_IGP, ORIGIN_INCOMPLETE, SAFI_EVPN, VXLAN_FLAGS_VALID_VNI, VXLAN_UDP_PORT,
 };
 pub use chaos::{
     run_chaos_benchmark, ChaosBenchmarkReport, ChaosConfig, ChaosEngine, ChaosOutcome, ChaosPrng,

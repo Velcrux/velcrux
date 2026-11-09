@@ -417,6 +417,24 @@ velcrux nvme bench --iterations 50 --block-size 4096
 velcrux nvme connect --subsystem "nqn.2026-11.io.velcrux:subsys.nvme01" --host-nqn "nqn.2026-11.io.velcrux:host.node01"
 ```
 
+### Autonomous Global Anycast BGP Peering & EVPN-VXLAN Fabric
+
+Carrier-grade BGP-4/MP-BGP routing, multi-tenant EVPN-VXLAN network virtualization (up to 16.7M VNIs), and autonomous health-driven Anycast traffic engineering with AS-path prepending and sub-second failover:
+
+```bash
+# Inspect BGP-4 peering sessions, FSM states, negotiated hold timers, and session uptime
+velcrux bgp status
+
+# Inspect BGP Routing Information Base (Loc-RIB), candidate paths, and best path selection
+velcrux bgp routes
+
+# Inspect EVPN multi-tenant overlay status, Route Distinguishers, Route Targets, and VXLAN VTEP FDB
+velcrux bgp evpn
+
+# Dynamically inject or update Anycast route advertisement with traffic engineering attributes
+velcrux bgp advertise --prefix 198.51.100.1/32 --as-prepends 2 --med 50
+```
+
 ### Transfer State and Resumption
 
 ```bash

@@ -155,7 +155,9 @@ impl NvmeSubsystem {
         let command_id = sqe.command_id;
 
         // Check ANA status for I/O commands
-        if (sqe.opcode == NVME_OP_READ || sqe.opcode == NVME_OP_WRITE || sqe.opcode == NVME_OP_FLUSH)
+        if (sqe.opcode == NVME_OP_READ
+            || sqe.opcode == NVME_OP_WRITE
+            || sqe.opcode == NVME_OP_FLUSH)
             && (controller.ana_state == AnaState::Inaccessible
                 || controller.ana_state == AnaState::PersistentLoss)
         {

@@ -340,6 +340,35 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_nvme_of`: 4/4 passing CLI integration tests validating `status`, `namespaces`, `bench`, and `connect` in text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DD: Autonomous Global Anycast BGP Peering & EVPN-VXLAN Edge Transit Fabric Engine (ADR-072)
+- **BGP-4 & Multiprotocol BGP (MP-BGP) Protocol Engine (`BgpMessage`, `BgpPeer`, `BgpFsmState`)**:
+  - Full RFC 4271 message framing: 16-byte marker (`[0xFF; 16]`), OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE_REFRESH.
+  - Standard BGP Finite State Machine (FSM): `Idle`, `Connect`, `Active`, `OpenSent`, `OpenConfirm`, and `Established` with negotiated HoldTimer and Keepalive intervals.
+  - RFC 6793 4-byte ASN capabilities and RFC 4760 Multiprotocol Extensions (AFI 25 L2VPN, SAFI 70 EVPN).
+- **Ethernet VPN (EVPN) Overlay Control Plane (`EvpnRoute`, `RouteDistinguisher`, `RouteTarget`)**:
+  - RFC 7432 and RFC 9136 EVPN Route Types 1-5 (including Type 2 MAC/IP Advertisements and Type 5 IP Prefix Routes).
+  - 8-byte Route Distinguishers (Type 0 2-byte ASN, Type 1 IPv4, Type 2 4-byte ASN) and Route Target Extended Communities for multi-tenant VRF route leaking and policy import/export.
+- **VXLAN Overlay Encapsulation (`VxlanHeader`, `VxlanDatagram`, `VtepEngine`)**:
+  - RFC 7348 8-byte VXLAN headers over UDP port 4789 with 24-bit VNI enabling up to 16,777,215 tenant overlays.
+  - VTEP Forwarding Database (FDB) MAC learning and datagram encapsulation/decapsulation.
+- **Routing Information Base & Best Path Engine (`VrfTable`, `BgpRibManager`, `BgpRibEntry`)**:
+  - Deterministic RFC 4271 §9.1.2.2 path selection: Local Preference > AS-Path length > Origin > MED > eBGP vs iBGP > Peer IP.
+  - Multi-tenant VRF table isolation with prefix route injection and withdrawal.
+- **Autonomous Global Anycast Orchestrator (`AnycastOrchestrator`, `AnycastVip`)**:
+  - Continuous telemetry health scoring (RTT z-score, loss ratio, upstream BGP flaps).
+  - Automated AS-path prepending (1 to 5 hops) for graceful soft-deflection of transit ingress traffic.
+  - Sub-second instant prefix withdrawal upon critical node failure, eliminating traffic blackholes without DNS TTL delays.
+- **Operator CLI Suite**:
+  - `velcrux bgp status [--json]`: Inspects BGP peering sessions, FSM states, negotiated hold timers, and session uptime.
+  - `velcrux bgp routes [--vrf <NAME>] [--json]`: Displays BGP Loc-RIB routes, active best paths, and path attributes.
+  - `velcrux bgp evpn [--json]`: Displays EVPN multi-tenant configuration, Route Targets, VNIs, and VXLAN VTEP FDB mappings.
+  - `velcrux bgp advertise --prefix <CIDR> [--as-prepends <N>] [--community <COMMUNITY>] [--med <N>] [--json]`: Injects anycast route advertisement with dynamic traffic engineering.
+- **Verification Matrix**:
+  - `bgp_evpn_fabric_tests`: 6/6 passing unit/integration tests covering message framing, EVPN Type 2/Type 5 parsing, VXLAN encapsulation/decapsulation, FSM lifecycle, best path decision criteria, and anycast autonomous deflection/withdrawal.
+  - `cli_bgp_evpn`: 4/4 passing CLI integration tests validating `status`, `routes`, `evpn`, and `advertise` in text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

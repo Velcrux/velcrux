@@ -5450,6 +5450,43 @@ cargo test -p velcrux-core --test nvme_fabric_tests -- --nocapture
 cargo test -p velcrux-client --test cli_nvme_of -- --nocapture
 ```
 
+## 56. Autonomous Global Anycast BGP Peering & EVPN-VXLAN Edge Transit Fabric (ADR-072)
+
+The Autonomous Global Anycast BGP peering and EVPN-VXLAN edge transit fabric engine provides carrier-grade routing control, multi-tenant overlay network segmentation (up to 16.7M VNIs), and automated traffic engineering across distributed edge Points of Presence (POPs). Using real-time latency and packet loss telemetry, the orchestrator dynamically adjusts AS-path prepends and community tags to steer transit ingress traffic, executing sub-second route withdrawals upon critical node degradation.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect BGP-4 peering sessions, FSM states, negotiated hold timers, and session uptime
+velcrux bgp status
+
+# 2. Inspect BGP peering status in machine-readable JSON format
+velcrux bgp status --json
+
+# 3. Inspect BGP Routing Information Base (Loc-RIB), candidate paths, and best path selection
+velcrux bgp routes
+
+# 4. Inspect Loc-RIB routes in a specific VRF in JSON format
+velcrux bgp routes --vrf default --json
+
+# 5. Inspect EVPN multi-tenant overlay status, Route Distinguishers, Route Targets, and VXLAN VTEP FDB
+velcrux bgp evpn
+
+# 6. Inspect EVPN overlay status in JSON format
+velcrux bgp evpn --json
+
+# 7. Dynamically inject or update Anycast route advertisement with traffic engineering attributes
+velcrux bgp advertise --prefix 198.51.100.1/32 --as-prepends 2 --med 50
+
+# 8. Advertise Anycast route with no-export community in JSON format
+velcrux bgp advertise --prefix 203.0.113.1/32 --as-prepends 0 --community no-export --json
+
+# 9. Execute BGP and EVPN-VXLAN fabric integration test suites
+cargo test -p velcrux-core --test bgp_evpn_fabric_tests -- --nocapture
+cargo test -p velcrux-client --test cli_bgp_evpn -- --nocapture
+```
+
+
 
 
 
