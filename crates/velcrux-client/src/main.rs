@@ -844,6 +844,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: TrafficSubCmd,
     },
+    /// SmartNIC / DPU Offloaded Direct-to-NVMe Storage Fabric (NVMe-oF over RDMA) (Option DC).
+    Nvme {
+        #[command(subcommand)]
+        sub: NvmeSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2429,6 +2434,49 @@ enum TrafficSubCmd {
     },
     /// Export Prometheus metrics exposition text.
     Prometheus,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum NvmeSubCmd {
+    /// Inspect SmartNIC DPU offload engine, hardware profile, and NVMe-oF subsystem status.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List provisioned NVMe Logical Block Addressing (LBA) storage namespaces.
+    Namespaces {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run direct-to-NVMe P2P DMA line-rate throughput and IOPS benchmark.
+    Bench {
+        /// Number of I/O iterations to dispatch.
+        #[arg(long, default_value_t = 50)]
+        iterations: u32,
+        /// Block size in bytes (e.g. 512 or 4096).
+        #[arg(long, default_value_t = 4096)]
+        block_size: u32,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Establish an NVMe-oF Fabric Connect session to a target storage subsystem.
+    Connect {
+        /// Subsystem NQN.
+        #[arg(long, default_value = "nqn.2026-11.io.velcrux:subsys.nvme01")]
+        subsystem: String,
+        /// Host NQN.
+        #[arg(long, default_value = "nqn.2026-11.io.velcrux:host.node01")]
+        host_nqn: String,
+        /// Controller ID requested.
+        #[arg(long, default_value_t = 1)]
+        controller_id: u16,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -4556,6 +4604,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Traffic { sub } => {
             run_traffic(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Nvme { sub } => {
+            run_nvme(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -9309,6 +9361,300 @@ async fn run_traffic(cli: &Cli, sub: &TrafficSubCmd) -> anyhow::Result<()> {
             let engine = TrafficEngine::new(1_000_000_000.0);
             let prom = engine.prometheus_metrics().await;
             print!("{}", prom);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_nvme(cli: &Cli, sub: &NvmeSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::nvme::{
+        AnaState, DpuHardwareProfile, DpuOffloadEngine, NvmeFabricConnectData, NvmeNamespace,
+        NvmeSglDescriptor, NvmeSubmissionQueueEntry, NvmeSubsystem,
+    };
+
+    let is_json = cli.json;
+
+    match sub {
+        NvmeSubCmd::Status { json } => {
+            let mut subsys = NvmeSubsystem::new(
+                "nqn.2026-11.io.velcrux:subsys.nvme01",
+                "Velcrux Hyperscale SmartNIC NVMe-oF Controller",
+                "VX-DPU-2026110901",
+            );
+            let ns1 = NvmeNamespace::new(1, 1024 * 1024 * 1024, 4096)?;
+            let ns2 = NvmeNamespace::new(2, 512 * 1024 * 1024, 512)?;
+            subsys.add_namespace(ns1)?;
+            subsys.add_namespace(ns2)?;
+            subsys.register_controller(1, AnaState::Optimized);
+            subsys.register_controller(2, AnaState::NonOptimized);
+
+            let profile = DpuHardwareProfile::default();
+            let mut engine = DpuOffloadEngine::new(profile.clone());
+
+            // Simulate some active transfers
+            let _ = engine.run_benchmark(&mut subsys, 1, 1, 10, 4096);
+
+            #[derive(Serialize)]
+            struct StatusOut {
+                subsystem_nqn: String,
+                model_number: String,
+                serial_number: String,
+                dpu_device: String,
+                pcie_gen: u8,
+                pcie_lanes: u8,
+                max_dma_channels: u32,
+                line_rate_gbps: u32,
+                total_namespaces: usize,
+                total_controllers: usize,
+                total_dma_transfers: u64,
+                total_bytes_transferred: u64,
+                host_cpu_cycles_saved: u64,
+                throughput_mb_s: f64,
+                iops: f64,
+                p2p_dma_efficiency_pct: f64,
+            }
+
+            let out = StatusOut {
+                subsystem_nqn: subsys.subsystem_nqn.clone(),
+                model_number: subsys.model_number.clone(),
+                serial_number: subsys.serial_number.clone(),
+                dpu_device: profile.device_name.clone(),
+                pcie_gen: profile.pcie_generation,
+                pcie_lanes: profile.pcie_lanes,
+                max_dma_channels: profile.max_dma_channels,
+                line_rate_gbps: profile.line_rate_gbps,
+                total_namespaces: subsys.namespaces.len(),
+                total_controllers: subsys.controllers.len(),
+                total_dma_transfers: engine.total_dma_transfers,
+                total_bytes_transferred: engine.total_bytes_transferred,
+                host_cpu_cycles_saved: engine.total_host_cpu_cycles_saved,
+                throughput_mb_s: engine.current_throughput_mb_s(),
+                iops: engine.current_iops(),
+                p2p_dma_efficiency_pct: engine.p2p_dma_efficiency_pct,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== SmartNIC / DPU NVMe-oF Storage Fabric Status ===");
+                println!("  Subsystem NQN:          {}", out.subsystem_nqn);
+                println!(
+                    "  Model / Serial:         {} / {}",
+                    out.model_number, out.serial_number
+                );
+                println!("  DPU Device:             {}", out.dpu_device);
+                println!(
+                    "  PCIe Interconnect:      Gen{} x{} ({} Gbps Fabric)",
+                    out.pcie_gen, out.pcie_lanes, out.line_rate_gbps
+                );
+                println!("  Max DMA Channels:       {}", out.max_dma_channels);
+                println!("  Active Controllers:     {}", out.total_controllers);
+                println!("  Hosted Namespaces:      {}", out.total_namespaces);
+                println!("  Direct DMA Transfers:   {}", out.total_dma_transfers);
+                println!(
+                    "  Direct Bytes Moved:     {} bytes ({:.2} MB)",
+                    out.total_bytes_transferred,
+                    out.total_bytes_transferred as f64 / 1_048_576.0
+                );
+                println!(
+                    "  Host CPU Cycles Saved:  {} cycles",
+                    out.host_cpu_cycles_saved
+                );
+                println!(
+                    "  Throughput / IOPS:      {:.2} MB/s | {:.0} IOPS",
+                    out.throughput_mb_s, out.iops
+                );
+                println!(
+                    "  P2P DMA Efficiency:     {:.2}%",
+                    out.p2p_dma_efficiency_pct
+                );
+            }
+        }
+        NvmeSubCmd::Namespaces { json } => {
+            let mut subsys = NvmeSubsystem::new(
+                "nqn.2026-11.io.velcrux:subsys.nvme01",
+                "Velcrux Hyperscale SmartNIC NVMe-oF Controller",
+                "VX-DPU-2026110901",
+            );
+            let mut ns1 = NvmeNamespace::new(1, 1024 * 1024 * 1024, 4096)?;
+            let ns2 = NvmeNamespace::new(2, 512 * 1024 * 1024, 512)?;
+            let sample_data = vec![0xAA; 4096];
+            let _ = ns1.write_blocks(0, 0, &sample_data);
+            subsys.add_namespace(ns1)?;
+            subsys.add_namespace(ns2)?;
+
+            #[derive(Serialize)]
+            struct NsInfo {
+                nsid: u32,
+                capacity_bytes: u64,
+                capacity_mb: f64,
+                block_size: u32,
+                total_blocks: u64,
+                allocated_blocks: usize,
+                read_ops: u64,
+                write_ops: u64,
+                flush_ops: u64,
+                trim_ops: u64,
+                checksum: String,
+            }
+
+            let mut list = Vec::new();
+            for (&nsid, ns) in &subsys.namespaces {
+                list.push(NsInfo {
+                    nsid,
+                    capacity_bytes: ns.capacity_bytes,
+                    capacity_mb: (ns.capacity_bytes as f64) / 1_048_576.0,
+                    block_size: ns.block_size,
+                    total_blocks: ns.total_blocks(),
+                    allocated_blocks: ns.allocated_blocks_count(),
+                    read_ops: ns.read_ops,
+                    write_ops: ns.write_ops,
+                    flush_ops: ns.flush_ops,
+                    trim_ops: ns.trim_ops,
+                    checksum: format!("0x{:08X}", ns.calculate_checksum()),
+                });
+            }
+            list.sort_by_key(|n| n.nsid);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else {
+                println!("=== NVMe Logical Block Addressing (LBA) Namespaces ===");
+                for ns in &list {
+                    println!("  [Namespace #{}]", ns.nsid);
+                    println!(
+                        "    Capacity:       {:.2} MB ({} blocks)",
+                        ns.capacity_mb, ns.total_blocks
+                    );
+                    println!("    LBA Block Size: {} bytes", ns.block_size);
+                    println!("    Allocated LBAs: {}", ns.allocated_blocks);
+                    println!(
+                        "    I/O Counters:   {} reads, {} writes, {} flushes, {} trims",
+                        ns.read_ops, ns.write_ops, ns.flush_ops, ns.trim_ops
+                    );
+                    println!("    CRC32 Checksum: {}", ns.checksum);
+                }
+            }
+        }
+        NvmeSubCmd::Bench {
+            iterations,
+            block_size,
+            json,
+        } => {
+            let mut subsys = NvmeSubsystem::new(
+                "nqn.2026-11.io.velcrux:subsys.bench",
+                "Velcrux-DPU-Bench",
+                "SN-BENCH-01",
+            );
+            let ns = NvmeNamespace::new(1, 1024 * 1024 * 1024, *block_size)?;
+            subsys.add_namespace(ns)?;
+            subsys.register_controller(1, AnaState::Optimized);
+
+            let mut engine = DpuOffloadEngine::new(DpuHardwareProfile::default());
+            let report = engine.run_benchmark(&mut subsys, 1, 1, *iterations, *block_size)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== SmartNIC Direct-to-NVMe DMA Benchmark Report ===");
+                println!("  Iterations:               {}", report.iterations);
+                println!(
+                    "  Sector Size:              {} bytes",
+                    report.block_size_bytes
+                );
+                println!(
+                    "  Total Transferred:        {} bytes ({:.2} MB)",
+                    report.total_bytes,
+                    report.total_bytes as f64 / 1_048_576.0
+                );
+                println!("  Elapsed Duration:         {} ms", report.elapsed_millis);
+                println!(
+                    "  DMA Line-Rate Throughput: {:.2} MB/s",
+                    report.throughput_mb_s
+                );
+                println!("  Direct IOPS:              {:.0} IOPS", report.iops);
+                println!(
+                    "  Avg I/O Latency:          {:.2} µs",
+                    report.avg_latency_us
+                );
+                println!(
+                    "  Host CPU Cycles Saved:    {} cycles",
+                    report.host_cpu_cycles_saved
+                );
+                println!(
+                    "  P2P DMA Efficiency:       {:.2}%",
+                    report.p2p_dma_efficiency_pct
+                );
+            }
+        }
+        NvmeSubCmd::Connect {
+            subsystem,
+            host_nqn,
+            controller_id,
+            json,
+        } => {
+            let mut subsys = NvmeSubsystem::new(
+                subsystem.as_str(),
+                "Velcrux-Target-Controller",
+                "SN-CONN-01",
+            );
+            subsys.register_controller(*controller_id, AnaState::Optimized);
+
+            let sgl = NvmeSglDescriptor::keyed_data_block(0x4000_0000, 1024, 0xABCDEF);
+            let connect_sqe = NvmeSubmissionQueueEntry::fabric_connect_command(1, sgl);
+            let connect_data = NvmeFabricConnectData {
+                host_id: [0x42; 16],
+                controller_id: *controller_id,
+                subsystem_nqn: subsystem.clone(),
+                host_nqn: host_nqn.clone(),
+            };
+
+            let (cqe, _) = subsys.dispatch_sqe(
+                *controller_id,
+                &connect_sqe,
+                Some(&connect_data.to_bytes()),
+            )?;
+
+            #[derive(Serialize)]
+            struct ConnectOut {
+                subsystem_nqn: String,
+                host_nqn: String,
+                controller_id: u16,
+                connected: bool,
+                status_code: u16,
+                phase_tag: u8,
+            }
+
+            let out = ConnectOut {
+                subsystem_nqn: subsystem.clone(),
+                host_nqn: host_nqn.clone(),
+                controller_id: *controller_id,
+                connected: cqe.is_success(),
+                status_code: cqe.status_code(),
+                phase_tag: (cqe.status & 1) as u8,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("=== NVMe-oF Fabric Connect Session ===");
+                println!("  Subsystem NQN:  {}", out.subsystem_nqn);
+                println!("  Host NQN:       {}", out.host_nqn);
+                println!("  Controller ID:  {}", out.controller_id);
+                println!(
+                    "  Status:         {}",
+                    if out.connected {
+                        "CONNECTED (SUCCESS)"
+                    } else {
+                        "REJECTED"
+                    }
+                );
+                println!(
+                    "  CQE Status:     0x{:04X} (Phase Tag {})",
+                    out.status_code, out.phase_tag
+                );
+            }
         }
     }
 

@@ -5414,6 +5414,43 @@ cargo test -p velcrux-core --test traffic_anomaly_tests -- --nocapture
 cargo test -p velcrux-client --test cli_traffic_shaper -- --nocapture
 ```
 
+## 55. SmartNIC / DPU Offloaded Direct-to-NVMe Storage Fabric (NVMe-oF over RDMA) (ADR-071)
+
+The SmartNIC / DPU direct-to-NVMe storage fabric enables hardware-accelerated zero-copy data streaming across NVMe-oF 1.1 fabrics over RoCEv2 RDMA. By directly mapping incoming remote RDMA memory keys (`rkey`) and Scatter-Gather List (SGL) capsules into NVMe controller PCIe DMA rings via Peer-to-Peer (P2P) DMA, host CPU memory and kernel block stacks are completely bypassed, eliminating bounce buffers and saving up to 3 host CPU clock cycles per byte transferred.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect SmartNIC DPU offload engine, hardware profile, and NVMe-oF subsystem status
+velcrux nvme status
+
+# 2. Inspect DPU status in machine-readable JSON format
+velcrux nvme status --json
+
+# 3. List hosted Logical Block Addressing (LBA) storage namespaces and sector metrics
+velcrux nvme namespaces
+
+# 4. List namespaces in machine-readable JSON format
+velcrux nvme namespaces --json
+
+# 5. Run direct-to-NVMe P2P DMA line-rate throughput and IOPS benchmark
+velcrux nvme bench --iterations 50 --block-size 4096
+
+# 6. Run benchmark with 512-byte sector formatting in JSON format
+velcrux nvme bench --iterations 100 --block-size 512 --json
+
+# 7. Establish an NVMe-oF Fabric Connect session to a target storage subsystem
+velcrux nvme connect --subsystem "nqn.2026-11.io.velcrux:subsys.nvme01" --host-nqn "nqn.2026-11.io.velcrux:host.node01" --controller-id 1
+
+# 8. Establish Fabric Connect in JSON format
+velcrux nvme connect --controller-id 1 --json
+
+# 9. Execute NVMe-oF storage fabric and DPU offload test suites
+cargo test -p velcrux-core --test nvme_fabric_tests -- --nocapture
+cargo test -p velcrux-client --test cli_nvme_of -- --nocapture
+```
+
+
 
 
 

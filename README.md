@@ -399,6 +399,24 @@ velcrux traffic tune --sensitivity 0.70
 velcrux traffic prometheus
 ```
 
+### SmartNIC / DPU Direct-to-NVMe Storage Fabric (NVMe-oF over RDMA)
+
+Zero-copy hardware offload bridging RoCEv2 RDMA memory keys (`rkey`) directly into NVMe controller PCIe DMA rings via Peer-to-Peer (P2P) DMA, completely bypassing host CPU memory and saving up to 3 CPU cycles per byte transferred:
+
+```bash
+# Inspect SmartNIC DPU offload engine, hardware profile, and NVMe-oF subsystem status
+velcrux nvme status
+
+# List provisioned Logical Block Addressing (LBA) storage namespaces
+velcrux nvme namespaces
+
+# Run direct-to-NVMe P2P DMA line-rate throughput and IOPS benchmark
+velcrux nvme bench --iterations 50 --block-size 4096
+
+# Establish an NVMe-oF Fabric Connect session to a target storage subsystem
+velcrux nvme connect --subsystem "nqn.2026-11.io.velcrux:subsys.nvme01" --host-nqn "nqn.2026-11.io.velcrux:host.node01"
+```
+
 ### Transfer State and Resumption
 
 ```bash

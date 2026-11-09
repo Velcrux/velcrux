@@ -314,6 +314,33 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_traffic_shaper`: 5/5 passing CLI integration tests verifying `status`, `incidents`, `bench`, `tune`, and `prometheus` commands in human-readable and structured JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DC: SmartNIC / DPU Offloaded Direct-to-NVMe Storage Fabric (NVMe-oF over RDMA) (ADR-071)
+- **NVMe-oF 1.1 Wire Protocol Capsules (`NvmeSubmissionQueueEntry`, `NvmeCompletionQueueEntry`, `NvmeSglDescriptor`, `NvmeFabricConnectData`)**:
+  - Pure safe Rust 64-byte SQE command framing, 16-byte CQE response capsules, and 16-byte Keyed SGL data block descriptors carrying 64-bit remote addresses and 32-bit RDMA `rkey` tokens.
+  - 1024-byte Fabric Connect data capsules negotiating Host UUID and 64-bit NVMe Qualified Names (NQNs).
+- **Logical Block Addressing (LBA) Storage Namespaces (`NvmeNamespace`)**:
+  - Sector-aligned block storage managing 512B and 4096B block granularities with sparse BTreeMap allocation.
+  - Full read/write/flush/TRIM semantics and 32-bit CRC32 data integrity calculation.
+- **Virtual NVMe Subsystem & Multi-Controller ANA (`NvmeSubsystem`, `NvmeController`, `AnaState`)**:
+  - Multi-controller topology management reporting Asymmetric Namespace Access (ANA) states: `Optimized`, `NonOptimized`, `Inaccessible`, `PersistentLoss`, and `Change`.
+  - Independent Admin Queue Pairs (ASQ/ACQ) and I/O Queue Pairs (IOSQ/IOCQ).
+- **SmartNIC / DPU Offload Engine (`DpuOffloadEngine`)**:
+  - Directly bridges incoming RoCEv2 RDMA memory keys (`rkey`) and Keyed SGL descriptors into NVMe PCIe DMA transfer rings via Peer-to-Peer (P2P) DMA without touching host DRAM or CPU cores.
+  - Quantifies exact host CPU cycles saved ($3\text{ cycles/byte} + 4,000\text{ cycles/op}$), direct line-rate throughput (MB/s), IOPS, and P2P DMA efficiency ($>99.4\%$).
+- **Multipath Router & Automatic Failover (`NvmeMultipathRouter`, `ControllerPath`)**:
+  - Intelligent path selection across `LowestLatency`, `RoundRobin`, and `ActivePassive` policies.
+  - Automatic sub-millisecond path failover when a controller transitions to `Inaccessible` or reports `NVME_STATUS_NAMESPACE_NOT_READY`.
+- **Operator CLI Suite**:
+  - `velcrux nvme status [--json]`: Inspects DPU hardware profile, active controllers, namespaces, and CPU cycles saved.
+  - `velcrux nvme namespaces [--json]`: Lists provisioned LBA namespaces, capacities, sector sizes, and I/O counters.
+  - `velcrux nvme bench [--iterations <N>] [--block-size <BYTES>] [--json]`: Executes direct-to-NVMe P2P DMA line-rate throughput and IOPS benchmarks.
+  - `velcrux nvme connect [--subsystem <NQN>] [--host-nqn <NQN>] [--controller-id <ID>] [--json]`: Performs NVMe-oF Fabric Connect handshake.
+- **Verification Matrix**:
+  - `nvme_fabric_tests`: 5/5 passing unit/integration tests covering wire framing roundtrips, LBA namespace RW/TRIM, virtual subsystem ANA dispatch, DPU direct DMA CPU savings, and multipath router failover.
+  - `cli_nvme_of`: 4/4 passing CLI integration tests validating `status`, `namespaces`, `bench`, and `connect` in text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

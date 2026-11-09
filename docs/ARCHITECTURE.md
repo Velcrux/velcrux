@@ -578,6 +578,7 @@ Key architectural decisions are recorded in `docs/adr/` in conformance with `REQ
 | [ADR-068](adr/ADR-068-distributed-geo-replication-crdts.md) | Distributed Global Multi-Cluster Geo-Replication & Conflict-Free Replicated Data Types (CRDTs) | Accepted | Pure safe Rust active-active multi-region replication, Vector Clocks, Hybrid Logical Clocks, LWW-Register, OR-Set, cycle-safe directory tree CRDT, and delta anti-entropy gossip |
 | [ADR-069](adr/ADR-069-mpc-distributed-threshold-signing.md) | Zero-Knowledge Multi-Party Computation (MPC) Distributed Threshold Key Signing | Accepted | Pure safe Rust FROST threshold Ed25519 signing, Shamir secret sharing, Feldman VSS commitments, Schnorr NIZK Dlog proofs, deterministic blame attribution, and cluster root tokens |
 | [ADR-070](adr/ADR-070-autonomous-ai-transfer-anomaly-traffic-shaper.md) | Autonomous AI/ML Transfer Anomaly Detection & Self-Healing Traffic Shaper | Accepted | Pure safe Rust streaming Isolation Forest, CUSUM drift detection, closed-loop self-healing traffic shaper, bufferbloat draining, dynamic FEC scaling, and incident post-mortems |
+| [ADR-071](adr/ADR-071-smartnic-dpu-nvme-of-storage-fabric.md) | SmartNIC / DPU Offloaded Direct-to-NVMe Storage Fabric (NVMe-oF over RDMA) | Accepted | Pure safe Rust NVMe-oF 1.1 capsules (64B SQE / 16B CQE), Keyed SGL RDMA descriptors, LBA block namespaces (512B/4096B), virtual subsystem/controllers, Asymmetric Namespace Access (ANA), direct P2P DMA bypass, CPU cycle savings accounting, and multipath router |
 
 
 

@@ -36,6 +36,7 @@ pub mod kms;
 pub mod manifest;
 pub mod mpc;
 pub mod netem;
+pub mod nvme;
 pub mod protocol;
 pub mod provenance;
 pub mod proxy;
@@ -141,6 +142,18 @@ pub use mpc::{
     Point as MpcPoint, Polynomial as MpcPolynomial, Scalar as MpcScalar, SchnorrDlogProof,
     SecretShare as MpcSecretShare, SignatureShare as MpcSignatureShare, SigningNonces,
     ThresholdSignature, ThresholdSigner,
+};
+pub use nvme::{
+    AnaState, ControllerPath, DpuBenchmarkSummary, DpuDmaExecutionResult, DpuHardwareProfile,
+    DpuOffloadEngine, MultipathPolicy, NvmeCompletionQueueEntry, NvmeController,
+    NvmeFabricConnectData, NvmeIdentifyController, NvmeIdentifyNamespace, NvmeMultipathRouter,
+    NvmeNamespace, NvmeSglDescriptor, NvmeSubmissionQueueEntry, NvmeSubsystem, CPU_CYCLES_PER_BYTE,
+    CPU_CYCLES_PER_IO_OVERHEAD, NVME_FABRIC_AUTH, NVME_FABRIC_CONNECT, NVME_FABRIC_DISCONNECT,
+    NVME_OP_FABRIC, NVME_OP_FLUSH, NVME_OP_IDENTIFY, NVME_OP_READ, NVME_OP_WRITE,
+    NVME_STATUS_CAPACITY_EXCEEDED, NVME_STATUS_FABRIC_CONNECT_REJECTED, NVME_STATUS_INVALID_FIELD,
+    NVME_STATUS_INVALID_OPCODE, NVME_STATUS_LBA_OUT_OF_RANGE, NVME_STATUS_NAMESPACE_NOT_READY,
+    NVME_STATUS_SUCCESS, SGL_TYPE_DATA_BLOCK, SGL_TYPE_KEYED_DATA_BLOCK,
+    SGL_TYPE_TRANSPORT_DATA_BLOCK,
 };
 pub use protocol::{
     compress_with_dict, compute_shannon_entropy, decompress_with_dict_bounded, estimate_entropy,
