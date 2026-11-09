@@ -207,3 +207,4 @@ fn test_cli_traffic_prometheus() {
     assert!(stdout.contains("velcrux_traffic_incidents_total"));
     assert!(stdout.contains("velcrux_traffic_mitigations_total"));
 }
+

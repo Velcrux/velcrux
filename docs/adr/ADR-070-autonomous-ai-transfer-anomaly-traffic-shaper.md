@@ -163,3 +163,4 @@ velcrux traffic prometheus
   - Native Prometheus integration for production Grafana dashboards.
 - **Negative / Trade-offs**:
   - Pacing throttling reduces instantaneous throughput temporarily to drain queues (trade-off for latency collapse).
+
