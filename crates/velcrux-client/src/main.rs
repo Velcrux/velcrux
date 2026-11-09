@@ -839,6 +839,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: MpcSubCmd,
     },
+    /// Autonomous AI/ML Transfer Anomaly Detection & Self-Healing Traffic Shaper (Option DB).
+    Traffic {
+        #[command(subcommand)]
+        sub: TrafficSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2382,6 +2387,48 @@ enum MpcSubCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum TrafficSubCmd {
+    /// Inspect real-time streaming traffic telemetry, anomaly detector score, and shaper actuation state.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect historical anomaly incident records, root causes, and self-healing mitigation actions.
+    Incidents {
+        /// Maximum number of recent incidents to display.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run streaming anomaly detection and self-healing benchmark with optional synthetic anomaly injection.
+    Bench {
+        /// Total metric samples to stream through the engine.
+        #[arg(long, default_value_t = 100)]
+        samples: usize,
+        /// Injected anomaly profile: "bufferbloat", "link_degradation", "route_flap", "microburst", or "contention".
+        #[arg(long)]
+        inject: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dynamically tune anomaly detection sensitivity threshold.
+    Tune {
+        /// Composite anomaly score threshold in [0.5, 0.95] (default: 0.65).
+        #[arg(long, default_value_t = 0.65)]
+        sensitivity: f64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export Prometheus metrics exposition text.
+    Prometheus,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -4505,6 +4552,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Mpc { sub } => {
             run_mpc(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Traffic { sub } => {
+            run_traffic(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -9082,6 +9133,182 @@ async fn run_mpc(cli: &Cli, sub: &MpcSubCmd) -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_traffic(cli: &Cli, sub: &TrafficSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::traffic::{AnomalyType, MetricSample, TrafficEngine};
+
+    let is_json = cli.json;
+
+    match sub {
+        TrafficSubCmd::Status { json } => {
+            let mut engine = TrafficEngine::new(1_000_000_000.0);
+            // Simulate a few baseline ticks
+            for i in 0..10 {
+                let sample = MetricSample::healthy_baseline(1_000_000 + i * 50);
+                let _ = engine.process_sample(sample).await;
+            }
+
+            let status = engine.status().await;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("=== Autonomous AI/ML Transfer Anomaly Detection & Traffic Shaper ===");
+                println!(
+                    "  Baseline Capacity:      {:.2} Gbps",
+                    status.baseline_capacity_bps / 1_000_000_000.0
+                );
+                println!(
+                    "  Current Pacing Rate:    {:.2} Mbps",
+                    status.current_pacing_bps / 1_000_000.0
+                );
+                println!(
+                    "  Current FEC Parity:     {:.1}%",
+                    status.current_fec_ratio * 100.0
+                );
+                println!(
+                    "  Anomaly Score:          {:.4} / 1.0000",
+                    status.current_anomaly_score
+                );
+                println!(
+                    "  Anomaly Status:         {}",
+                    if status.is_anomalous {
+                        "ANOMALY DETECTED (Mitigating)"
+                    } else {
+                        "NORMAL (Nominal Flow)"
+                    }
+                );
+                if let Some(active) = status.active_anomaly {
+                    println!("  Active Anomaly Profile: {}", active.as_str());
+                }
+                println!(
+                    "  Mitigations Executed:   {}",
+                    status.total_mitigations_applied
+                );
+                println!(
+                    "  Incidents Logged:       {}",
+                    status.total_incidents_recorded
+                );
+                println!(
+                    "  Telemetry Window Size:  {} samples",
+                    status.window_samples_collected
+                );
+                println!(
+                    "  Healthy Consecutive:    {}",
+                    status.healthy_consecutive_count
+                );
+            }
+        }
+        TrafficSubCmd::Incidents { limit, json } => {
+            let mut engine = TrafficEngine::new(1_000_000_000.0);
+            // Seed a representative incident
+            let mut anom_sample = MetricSample::healthy_baseline(1_000_000);
+            anom_sample.rtt_ms = 145.0;
+            anom_sample.loss_rate = 0.05;
+            anom_sample.throughput_bps = 500_000_000.0;
+            let _ = engine.process_sample(anom_sample).await;
+
+            let incidents = engine.ledger().list_recent(*limit).await;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&incidents)?);
+            } else {
+                println!("=== Network Transport Anomaly Incident Log ===");
+                println!("  Total Incidents Displayed: {}", incidents.len());
+                for inc in &incidents {
+                    println!("  --------------------------------------------------");
+                    println!("  Incident ID:        {}", inc.incident_id);
+                    println!("  Timestamp:          {} ms", inc.timestamp_ms);
+                    println!("  Classification:     {}", inc.anomaly_type.as_str());
+                    println!("  Severity:           {:.2} / 1.00", inc.severity);
+                    println!("  Confidence:         {:.1}%", inc.confidence * 100.0);
+                    println!("  Root Cause:         {}", inc.root_cause);
+                    println!("  Mitigation Action:  {}", inc.mitigation_action);
+                    println!(
+                        "  Resolved:           {}",
+                        if inc.resolved { "YES" } else { "NO" }
+                    );
+                    if let Some(rec) = inc.recovery_latency_ms {
+                        println!("  Recovery Latency:   {} ms", rec);
+                    }
+                }
+            }
+        }
+        TrafficSubCmd::Bench {
+            samples,
+            inject,
+            json,
+        } => {
+            let anomaly_type = inject
+                .as_deref()
+                .and_then(|s| match s.to_lowercase().as_str() {
+                    "bufferbloat" => Some(AnomalyType::Bufferbloat),
+                    "link_degradation" | "degradation" => Some(AnomalyType::LinkDegradation),
+                    "route_flap" | "blackhole" => Some(AnomalyType::RouteFlapBlackhole),
+                    "microburst" => Some(AnomalyType::MicroburstCongestion),
+                    "contention" => Some(AnomalyType::CrossTrafficContention),
+                    _ => None,
+                });
+
+            let report = TrafficEngine::run_benchmark(*samples, anomaly_type).await;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("=== Autonomous Anomaly Detection & Self-Healing Benchmark ===");
+                println!("  Total Streamed Samples: {}", report.total_samples);
+                println!("  Anomalies Injected:     {}", report.anomalies_injected);
+                println!("  Anomalies Detected:     {}", report.anomalies_detected);
+                println!("  Mitigations Executed:   {}", report.mitigations_applied);
+                println!("  Detection Accuracy:     {:.2}%", report.accuracy_percent);
+                println!(
+                    "  Avg Anomaly Score:      {:.4}",
+                    report.avg_detection_score
+                );
+                println!(
+                    "  Avg Recovery Latency:   {:.1} ms",
+                    report.avg_recovery_latency_ms
+                );
+                println!(
+                    "  Final Pacing Rate:      {:.2} Mbps",
+                    report.final_pacing_bps / 1_000_000.0
+                );
+                println!("  Execution Elapsed:      {:.2} ms", report.duration_millis);
+            }
+        }
+        TrafficSubCmd::Tune { sensitivity, json } => {
+            let mut engine = TrafficEngine::new(1_000_000_000.0);
+            engine.tune_sensitivity(*sensitivity);
+
+            if *json || is_json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "CONFIGURED",
+                        "anomaly_score_threshold": sensitivity,
+                        "isolation_forest_trees": 25,
+                        "cusum_slack_k": 0.5,
+                        "cusum_threshold_h": 4.0
+                    })
+                );
+            } else {
+                println!("=== Anomaly Detection Sensitivity Tuned ===");
+                println!("  Anomaly Score Threshold: {:.2}", sensitivity);
+                println!("  Isolation Forest Trees:  25");
+                println!("  CUSUM Slack (k):         0.5");
+                println!("  CUSUM Threshold (h):     4.0");
+                println!("  Status:                  UPDATED");
+            }
+        }
+        TrafficSubCmd::Prometheus => {
+            let engine = TrafficEngine::new(1_000_000_000.0);
+            let prom = engine.prometheus_metrics().await;
+            print!("{}", prom);
         }
     }
 

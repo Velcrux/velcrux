@@ -279,6 +279,42 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_mpc`: 4/4 passing CLI integration tests verifying `init`, `sign`, `verify`, and `audit` commands in human-readable and structured JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+---
+
+## 15. Autonomous AI/ML Transfer Anomaly Detection & Self-Healing Traffic Shaper (ADR-070 / Option DB)
+
+- **Streaming Telemetry & Rolling Window Pipeline (`MetricSample`, `FeatureVector`, `RollingWindowStats`)**:
+  - Captures fine-grained real-time transport metrics: smoothed RTT, variance, queuing delay gradient ($Q_d = (\text{RTT} - \text{minRTT}) / \text{minRTT}$), packet loss rate, retransmission ratio, inter-arrival jitter, and in-flight BDP utilization ratio.
+  - Maintains a 50-sample circular rolling window with exponential smoothing (EWMA $\alpha = 0.15$), standardizing metrics into 7-dimensional normalized feature vectors.
+- **Dual AI/ML Detection Engine (`StreamingIsolationForest`, `CusumDetector`, `CompositeAnomalyDetector`)**:
+  - `StreamingIsolationForest`: Pure safe-Rust random partition tree ensemble evaluating normalized anomaly scores via average path length: $s(\mathbf{x}, n) = 2^{-\mathbb{E}[h(\mathbf{x})] / c(n)}$.
+  - `CusumDetector`: Two-sided cumulative sum change-point detector catching abrupt positive or negative metric drifts before packet drop storms occur.
+  - `CompositeAnomalyDetector`: Fuses Isolation Forest scores with CUSUM drift flags and computes feature dominance rankings.
+- **Multidimensional Anomaly Taxonomy & Root-Cause Classifier (`AnomalyClassifier`, `AnomalyType`)**:
+  - Classifies network anomalies into explicit root-cause categories: `Bufferbloat`, `LinkDegradation`, `MicroburstCongestion`, `RouteFlapBlackhole`, `CrossTrafficContention`, and `AsymmetricBdpShift`.
+  - Computes confidence scores and impact severities $[0.0, 1.0]$ with human-readable diagnostic explanations.
+- **Closed-Loop Autonomous Actuation Engine (`SelfHealingShaper`, `ShaperAction`)**:
+  - Executes dynamic real-time traffic shaping mitigations:
+    - *Bufferbloat*: Dynamically steps down token bucket pacing rate (-30%) to drain intermediate switch queues.
+    - *Link Degradation*: Elevates Reed-Solomon / RaptorQ erasure code parity redundancy up to 35% to shield against loss bursts without stalling goodput.
+    - *Microburst Congestion*: Fine-grained token bucket smoothing with a 150ms queue drain.
+    - *Route Blackholes*: Autonomously reroutes traffic to alternate multipath subflows and triggers PMTU probing.
+  - Cooldown hysteresis preventing thrashing and gradual rate recovery (+5% per step) as metrics stabilize.
+- **Incident Post-Mortem Ledger & Prometheus Exporter (`IncidentLedger`, `AnomalyIncident`)**:
+  - Preserves structured post-mortem records tracking incident IDs, trigger metrics snapshots, executed mitigations, resolution latencies, and throughput deltas.
+  - Generates standard Prometheus metrics exposition text: `velcrux_traffic_anomaly_score`, `velcrux_traffic_pacing_rate_bps`, `velcrux_traffic_fec_redundancy_ratio`, `velcrux_traffic_incidents_total`, and `velcrux_traffic_mitigations_total`.
+- **Operator CLI Tooling**:
+  - `velcrux traffic status [--json]`: Inspects real-time streaming traffic telemetry, anomaly score, and shaper actuation state.
+  - `velcrux traffic incidents [--limit <N>] [--json]`: Displays historical anomaly incident records and root-cause post-mortems.
+  - `velcrux traffic bench [--samples <N>] [--inject <TYPE>] [--json]`: Executes synthetic anomaly injection and self-healing benchmark.
+  - `velcrux traffic tune [--sensitivity <FLOAT>] [--json]`: Dynamically tunes detection sensitivity score threshold.
+  - `velcrux traffic prometheus`: Emits official Prometheus exposition text format.
+- **Verification Matrix**:
+  - `traffic_anomaly_tests`: 9/9 passing unit tests covering rolling window stats, isolation forest scoring, CUSUM drift detection, anomaly classifier taxonomy, shaper mitigations, gradual rate recovery, incident ledger post-mortems, end-to-end benchmark, and Prometheus metrics.
+  - `cli_traffic_shaper`: 5/5 passing CLI integration tests verifying `status`, `incidents`, `bench`, `tune`, and `prometheus` commands in human-readable and structured JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

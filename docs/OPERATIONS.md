@@ -5367,6 +5367,54 @@ cargo test -p velcrux-core --test mpc_threshold_tests -- --nocapture
 cargo test -p velcrux-client --test cli_mpc -- --nocapture
 ```
 
+## 54. Autonomous AI/ML Transfer Anomaly Detection & Self-Healing Traffic Shaper (ADR-070)
+
+### 54.1. Overview
+
+Velcrux provides an autonomous AI/ML streaming anomaly detection and closed-loop self-healing traffic shaper as specified in `ADR-070`.
+
+Key Capabilities:
+- **Streaming Telemetry Pipeline**: Continuously collects and normalizes RTT, queuing delay gradients, packet loss rates, jitter variances, and in-flight BDP utilization.
+- **Dual AI/ML Detection Engine**: Employs a streaming partition Isolation Forest ensemble ($s = 2^{-\mathbb{E}[h(x)] / c(n)}$) combined with two-sided CUSUM drift detection to spot emerging anomalies within sub-10ms windows.
+- **Root-Cause Anomaly Taxonomy**: Diagnoses specific network anomaly categories: `Bufferbloat`, `LinkDegradation`, `MicroburstCongestion`, `RouteFlapBlackhole`, `CrossTrafficContention`, and `AsymmetricBdpShift`.
+- **Closed-Loop Autonomous Actuation**: Dynamically throttles token bucket pacing rates (-30%), elevates FEC erasure code parity redundancy (up to 35%), triggers queue drains, and reroutes traffic away from blackholes.
+- **Incident Post-Mortem Ledger**: Preserves structured incident records tracking trigger metrics, root cause, mitigation action, recovery latency, and throughput delta.
+- **Production Prometheus Exposition**: Exposes `velcrux_traffic_anomaly_score`, `velcrux_traffic_pacing_rate_bps`, `velcrux_traffic_fec_redundancy_ratio`, and incident counters.
+- **100% Pure Safe Rust**: `#![forbid(unsafe_code)]` with zero external C dependencies.
+
+### 54.2. Operational Commands
+
+```bash
+# 1. Inspect real-time streaming traffic status, anomaly score, and shaper actuation state
+velcrux traffic status
+
+# 2. Output traffic status in structured JSON format
+velcrux traffic status --json
+
+# 3. Inspect historical anomaly incident records and root-cause post-mortems
+velcrux traffic incidents --limit 10
+
+# 4. Inspect incident records in JSON format
+velcrux traffic incidents --limit 5 --json
+
+# 5. Run streaming anomaly detection and self-healing benchmark with bufferbloat injection
+velcrux traffic bench --samples 100 --inject bufferbloat
+
+# 6. Run benchmark with link degradation injection in JSON format
+velcrux traffic bench --samples 50 --inject link_degradation --json
+
+# 7. Dynamically tune anomaly detection sensitivity threshold
+velcrux traffic tune --sensitivity 0.70
+
+# 8. Export Prometheus metrics exposition text
+velcrux traffic prometheus
+
+# 9. Execute traffic anomaly and self-healing test suites
+cargo test -p velcrux-core --test traffic_anomaly_tests -- --nocapture
+cargo test -p velcrux-client --test cli_traffic_shaper -- --nocapture
+```
+
+
 
 
 

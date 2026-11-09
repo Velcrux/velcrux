@@ -49,6 +49,7 @@ pub mod swarm;
 pub mod sync;
 pub mod tee;
 pub mod telemetry;
+pub mod traffic;
 pub mod transfer;
 pub mod transport;
 pub mod txsnapshot;
@@ -273,6 +274,13 @@ pub use netem::{
 pub use proxy::{
     run_l7_benchmark, FlowTier, L7Action, L7BenchmarkReport, L7ProxyEngine, L7ProxyStatus,
     L7RequestInfo, L7Rule, L7StreamType, L7TokenBucket, PressureSensor,
+};
+pub use traffic::{
+    format_prometheus_metrics as format_traffic_prometheus_metrics, AnomalyClassification,
+    AnomalyDetectionResult, AnomalyIncident, AnomalyType, CompositeAnomalyDetector, CusumDetector,
+    FeatureVector, IncidentLedger, MetricSample, RollingWindowStats, SelfHealingShaper,
+    ShaperAction, StreamingIsolationForest, TrafficBenchmarkReport, TrafficEngine,
+    TrafficStatusReport, FEATURE_DIMENSIONS as TRAFFIC_FEATURE_DIMENSIONS,
 };
 pub use transport::{
     simulate_fec_recovery, AdaptiveFecController, AdaptiveFlowController,

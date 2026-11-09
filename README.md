@@ -378,6 +378,27 @@ velcrux mpc verify --message "Cluster Root Rebalance Ticket" --signature <SIG_HE
 velcrux mpc audit
 ```
 
+### Autonomous AI/ML Anomaly Detection & Self-Healing Traffic Shaper
+
+Real-time streaming anomaly detection (Streaming Isolation Forest + CUSUM drift detection) and closed-loop autonomous mitigation (pacing throttling, dynamic FEC scaling, and subflow rerouting) to eliminate WAN bufferbloat and link degradation stalls:
+
+```bash
+# Inspect real-time streaming traffic telemetry, anomaly score, and shaper actuation state
+velcrux traffic status
+
+# Inspect historical anomaly incident records and root-cause post-mortems
+velcrux traffic incidents --limit 10
+
+# Execute synthetic streaming anomaly injection and self-healing benchmark
+velcrux traffic bench --samples 100 --inject bufferbloat
+
+# Dynamically tune anomaly detection sensitivity threshold
+velcrux traffic tune --sensitivity 0.70
+
+# Export Prometheus metrics exposition text
+velcrux traffic prometheus
+```
+
 ### Transfer State and Resumption
 
 ```bash
