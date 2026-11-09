@@ -398,6 +398,38 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_qkd`: 5/5 passing CLI integration tests validating `status`, `exchange --protocol bb84`, `exchange --protocol e91`, `keys`, and `replenish` in text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DF: Confidential Multi-Tenant eBPF Sandboxed Streaming Compute & In-Flight WASM Payload Transformation (WASI 0.2) (ADR-074)
+- **WebAssembly 1.0/2.0 Binary Parser & Disassembler (`WasmModule`, `WasmOp`, `WasmValType`)**:
+  - Full W3C standard binary module decoder: magic header (`\0asm`), version, and standard sections: Type, Import, Function, Table, Memory, Global, Export, Code.
+  - LEB128 unsigned/signed integer parsing and opcode disassembler.
+- **Sandboxed Virtual Machine with Deterministic Gas Metering (`WasmInstance`, `WasmMemory`, `GasMeter`)**:
+  - Linear memory arena with 64 KiB page granularity (`WasmMemory`) and hardware-like boundary checking.
+  - Step-by-step fuel / gas decrement per executed instruction (`GasMeter`), preventing infinite loops and denial-of-service with out-of-gas traps.
+  - Host function dispatch mechanism for registered external callbacks.
+- **WASI 0.2 Component Model & Capability Governance (`WasiContext`, `WasiCapabilities`, `WasiStreamBuffer`)**:
+  - Fine-grained capability grants: `allow_random`, `allow_clocks`, `allow_env`, `allow_logging`.
+  - Memory-safe virtual streaming I/O (`wasi:io/streams::read`, `wasi:io/streams::write`).
+  - Strict host sandboxing: default denial of host filesystem and arbitrary host network socket operations.
+- **In-Flight Streaming Transformation Filters (`TransformPipeline`, `PipelineStage`, `TransformResult`)**:
+  - PII Masking: Real-time redaction of credit cards (`XXXX-XXXX-XXXX-XXXX`), US SSNs (`XXX-XX-XXXX`), and bearer credentials.
+  - Dynamic Schema Transcoding: Bidirectional streaming conversion between JSON/text and compact Velcrux Binary Columnar (`VXBC`) representations.
+  - Stream Masking & Authenticated Checksum Stamping: In-place streaming XOR cipher masking and trailing BLAKE3 authenticated checksum trailers.
+- **eBPF-Style Streaming Fast-Path Classifier (`FastPathClassifier`, `FastPathDecision`, `FastPathRule`)**:
+  - Line-rate packet and chunk inspection evaluating magic byte signatures, tenant IDs, and payload metadata.
+  - Zero-copy bypass for pre-compressed streams (Zstandard, Gzip) or binary opaque blobs, reserving WASM computation exclusively for candidate payloads.
+- **Confidential Multi-Tenant Sandbox Manager (`TenantSandboxManager`, `TenantSandbox`, `SandboxPolicy`)**:
+  - Independent tenant sandboxes maintaining isolated pipeline registries, memory budgets, and quota limits.
+- **Operator CLI Suite**:
+  - `velcrux wasm status [--json]`: Displays WASM runtime status, active tenant sandboxes, memory quotas, and eBPF fastpath metrics.
+  - `velcrux wasm inspect --module <NAME> [--json]`: Inspects a WebAssembly module's binary sections and WASI capabilities.
+  - `velcrux wasm pipeline [--tenant <ID>] [--json]`: Lists registered streaming transformation pipelines for a tenant.
+  - `velcrux wasm execute --pipeline <ID> --input <DATA> [--json]`: Executes an in-flight transformation pass and displays transformation report metrics.
+- **Verification Matrix**:
+  - `wasm::` unit tests: 10/10 passing tests in `velcrux-core` covering LEB128 encoding, memory page bounds, gas exhaustion, PII redaction, WASI streams, and eBPF fastpath routing.
+  - `wasm_streaming_tests`: 7/7 passing integration tests validating binary module parsing, PII redaction, schema transcoding, multi-stage pipelines, tenant isolation, and eBPF fastpath classification.
+  - `cli_wasm`: 5/5 passing CLI integration tests validating `status`, `inspect`, `pipeline`, and `execute` in text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

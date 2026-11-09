@@ -456,6 +456,24 @@ velcrux qkd keys
 velcrux qkd replenish --count 4 --peer sae-peer-frankfurt-01
 ```
 
+### Confidential eBPF & In-Flight WASM Streaming Compute (WASI 0.2)
+
+Direct-to-memory in-flight streaming payload transmutation using an eBPF fastpath classifier and a pure safe-Rust WebAssembly (WASI 0.2) execution sandbox with deterministic fuel/gas metering, isolated 64 KiB memory arenas, and PII masking:
+
+```bash
+# Inspect WASM streaming compute status, memory quotas, and eBPF fastpath metrics
+velcrux wasm status
+
+# Inspect a registered WebAssembly module's binary sections and WASI capabilities
+velcrux wasm inspect --module pii_redactor
+
+# List registered streaming transformation pipelines for a tenant
+velcrux wasm pipeline --tenant tenant-finance
+
+# Execute in-flight PII redaction transformation on a sensitive text payload
+velcrux wasm execute --pipeline pipeline-pii-redact --input "Client: Bob, Card: 4111-2222-3333-4444, SSN: 123-45-6789"
+```
+
 ### Transfer State and Resumption
 
 ```bash

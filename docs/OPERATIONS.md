@@ -5529,6 +5529,43 @@ cargo test -p velcrux-core --test qkd_optical_tests -- --nocapture
 cargo test -p velcrux-client --test cli_qkd -- --nocapture
 ```
 
+## 58. Confidential Multi-Tenant eBPF Sandboxed Streaming Compute & WASM Transformation (ADR-074)
+
+The Confidential Multi-Tenant In-Flight WASM Streaming Compute engine executes dynamic payload transformations, schema transcodings, PII sanitization, and streaming encryption directly in memory without hitting disk. The architecture couples an eBPF fastpath classifier (zero-copy bypassing pre-compressed payloads) with a pure safe-Rust WebAssembly (WASI 0.2) execution sandbox featuring deterministic fuel/gas metering, isolated 64 KiB memory arenas, and strict capability governance.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect WASM streaming compute status, memory quotas, and eBPF fastpath metrics
+velcrux wasm status
+
+# 2. Inspect WASM status in machine-readable JSON format
+velcrux wasm status --json
+
+# 3. Inspect a registered WebAssembly module's binary sections and WASI capabilities
+velcrux wasm inspect --module pii_redactor
+
+# 4. Inspect module capabilities in JSON format
+velcrux wasm inspect --module arrow_transcoder --json
+
+# 5. List registered streaming transformation pipelines for a tenant
+velcrux wasm pipeline --tenant tenant-finance
+
+# 6. List pipelines in JSON format
+velcrux wasm pipeline --tenant tenant-finance --json
+
+# 7. Execute in-flight PII redaction transformation on a sensitive text payload
+velcrux wasm execute --pipeline pipeline-pii-redact --input "Client: Bob, Card: 4111-2222-3333-4444, SSN: 123-45-6789"
+
+# 8. Execute in-flight schema packaging and checksum stamping in JSON format
+velcrux wasm execute --pipeline pipeline-schema-pack --input "{\"account\":101,\"balance\":5000}" --json
+
+# 9. Execute WASM streaming compute unit and integration test suites
+cargo test -p velcrux-core --lib wasm:: -- --nocapture
+cargo test -p velcrux-core --test wasm_streaming_tests -- --nocapture
+cargo test -p velcrux-client --test cli_wasm -- --nocapture
+```
+
 
 
 
