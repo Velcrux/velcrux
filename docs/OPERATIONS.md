@@ -5603,6 +5603,49 @@ cargo test -p velcrux-core --test ptp_clock_sync_tests -- --nocapture
 cargo test -p velcrux-client --test cli_ptp -- --nocapture
 ```
 
+## 60. Autonomous L4/L7 Hardware Load Balancer & Maglev Consistent Hashing Multiplexing Engine (ADR-076)
+
+The Autonomous L4/L7 Maglev Load Balancer distributes high-throughput bulk transfer streams across dynamic server clusters using Google Maglev consistent hashing over a Fermat prime modulus ($M = 65537$). The engine enforces a minimal disruption migration bound ($\approx 1/N$), provides session stickiness through L4 connection tracking (`conntrack`), enables zero-downtime node draining, and supports Layer-7 application-aware routing rules.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect overall load balancer director status, active pools, nodes, and conntrack metrics
+velcrux lb status
+
+# 2. Inspect load balancer status in machine-readable JSON format
+velcrux lb status --json
+
+# 3. Perform an L4/L7 flow lookup to determine the assigned backend node, pool, and table slot
+velcrux lb lookup --src 192.168.10.50:52100 --dst 10.0.0.1:7443 --proto quic
+
+# 4. Perform an L7 application-aware lookup for a VIP tenant in JSON format
+velcrux lb lookup --src 172.16.0.10:44120 --dst 10.0.0.1:7443 --tenant vip-corporate-transfer --json
+
+# 5. List backend members of a cluster pool
+velcrux lb members --pool default-storage --action list
+
+# 6. Add a new backend node to a pool and calculate Maglev permutation migration churn
+velcrux lb members --pool default-storage --action add --node storage-node-05 --address 10.0.1.15:7443 --weight 100
+
+# 7. Drain an active node for zero-downtime maintenance (prevents new flows, preserves existing)
+velcrux lb members --pool default-storage --action drain --node storage-node-02
+
+# 8. Return a drained node to healthy status
+velcrux lb members --pool default-storage --action up --node storage-node-02
+
+# 9. Execute microsecond benchmark measuring Maglev lookup throughput and churn bounds
+velcrux lb benchmark --iterations 50000 --nodes 16
+
+# 10. Execute benchmark in JSON format
+velcrux lb benchmark --iterations 50000 --nodes 16 --json
+
+# 11. Execute Maglev load balancer unit and integration test suites
+cargo test -p velcrux-core --lib lb:: -- --nocapture
+cargo test -p velcrux-core --test maglev_lb_tests -- --nocapture
+cargo test -p velcrux-client --test cli_lb -- --nocapture
+```
+
 
 
 

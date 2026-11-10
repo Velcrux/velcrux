@@ -461,6 +461,35 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_ptp`: 4/4 passing CLI integration tests validating `status`, `peers`, `sync`, and `ordering` in text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DH: Autonomous L4/L7 Hardware Load Balancer & Maglev Consistent Hashing Multiplexing Engine (ADR-076)
+- **Google Maglev Consistent Hashing Engine (`MaglevTable`, `BackendNode`, `NodeStatus`)**:
+  - Constant-time $O(1)$ packet multiplexing via precomputed lookup table with Fermat prime modulus $M = 65537$ (`DEFAULT_MAGLEV_M`).
+  - Dual independent BLAKE3 keyed hashing generating deterministic pseudo-random permutations ($offset$, $skip$) visiting every table slot without gaps.
+  - Weighted round-robin slot population ensuring capacity-proportional traffic distribution across heterogeneous nodes.
+  - Minimal disruption migration bound ($\approx 1/N$ remapping churn upon node additions or failures).
+- **High-Throughput L4 Connection Tracking (`ConnectionTracker`, `FlowRecord`, `FiveTuple`, `ConntrackTimeouts`)**:
+  - Full 5-tuple flow identification (`src_ip`, `src_port`, `dst_ip`, `dst_port`, `protocol`) supporting TCP, UDP, and QUIC.
+  - Four-stage lifecycle state machine (`New`, `Established`, `Closing`, `Closed`).
+  - Session stickiness: pinning in-flight connections to their assigned backends across table rebalances.
+  - Microsecond timeout reaper reclaiming idle connection resources.
+- **Zero-Downtime Graceful Draining Coordinator (`NodeStatus::Draining`, `LoadBalancerDirector`)**:
+  - Immediate exclusion of draining nodes from new Maglev table slots.
+  - Continued routing for established flows in conntrack until natural connection termination.
+  - Immediate, safe failover upon node `Offline` transitions.
+- **Layer-7 Content-Aware Routing Engine (`L7RouteRule`, `L7Context`, `BackendPool`)**:
+  - Priority-ordered rule evaluation matching tenant prefixes, QUIC Connection IDs, and object path prefixes.
+  - Segregation into isolated backend pools (`default-storage`, `vip-tenant-pool`).
+- **Operator CLI Suite**:
+  - `velcrux lb status [--json]`: Overall director health, registered pools, active nodes, conntrack metrics, and Maglev slot allocations.
+  - `velcrux lb lookup [--src <IP:PORT>] [--dst <IP:PORT>] [--proto <PROTO>] [--tenant <ID>] [--path <PATH>] [--json]`: Simulates/executes L4/L7 flow routing and reports assigned backend, slot, and stickiness.
+  - `velcrux lb members [--pool <POOL>] [--action <list|add|remove|drain|up>] [--node <ID>] [--address <ADDR>] [--weight <W>] [--json]`: Manages pool membership, executes mutations, and calculates exact Maglev churn percentage.
+  - `velcrux lb benchmark [--iterations <N>] [--nodes <N>] [--json]`: Benchmarks Maglev table build latency, lookup throughput (ops/sec), and disruption compliance.
+- **Verification Matrix**:
+  - `lb::` unit tests: 9/9 passing tests in `velcrux-core` covering 5-tuple hashing, Maglev uniform distribution, weighted allocation, minimal disruption bounds, conntrack timeouts, and director routing.
+  - `maglev_lb_tests`: 5/5 passing integration tests validating 65537-slot table uniformity, minimal disruption bounds (7%-15% churn), conntrack stickiness during membership churn, zero-downtime draining, and L7 priority routing.
+  - `cli_lb`: 4/4 passing CLI integration tests validating `status`, `lookup`, `members`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

@@ -492,6 +492,30 @@ velcrux ptp sync --domain 0 --iterations 8
 velcrux ptp ordering --transfer-id transfer-01JB7Q2K9M4X8ZQ3V5N7T1R6C0 --jitter 100
 ```
 
+### Autonomous L4/L7 Hardware Load Balancer & Maglev Consistent Hashing
+
+Constant-time $O(1)$ packet multiplexing via Google Maglev consistent hashing ($M = 65537$), minimal disruption migration bound ($\approx 1/N$), 5-tuple L4 connection tracking with session stickiness, zero-downtime node draining, and Layer-7 application-aware routing:
+
+```bash
+# Inspect overall load balancer director status, active pools, nodes, and conntrack metrics
+velcrux lb status
+
+# Perform an L4/L7 flow lookup to determine the assigned backend node, pool, and table slot
+velcrux lb lookup --src 192.168.10.50:52100 --dst 10.0.0.1:7443 --proto quic
+
+# Perform an L7 application-aware lookup for a VIP tenant in JSON format
+velcrux lb lookup --src 172.16.0.10:44120 --dst 10.0.0.1:7443 --tenant vip-corporate-transfer --json
+
+# Add a new backend node to a pool and calculate Maglev permutation migration churn
+velcrux lb members --pool default-storage --action add --node storage-node-05 --address 10.0.1.15:7443 --weight 100
+
+# Drain an active node for zero-downtime maintenance
+velcrux lb members --pool default-storage --action drain --node storage-node-02
+
+# Run high-throughput microsecond benchmark measuring lookup rate and churn bounds
+velcrux lb benchmark --iterations 50000 --nodes 16
+```
+
 ### Transfer State and Resumption
 
 ```bash

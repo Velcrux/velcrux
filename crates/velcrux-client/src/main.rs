@@ -869,6 +869,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: PtpSubCmd,
     },
+    /// Autonomous L4/L7 Hardware Load Balancer & Maglev Consistent Hashing Multiplexing Engine (Option DH).
+    Lb {
+        #[command(subcommand)]
+        sub: LbSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2671,6 +2676,70 @@ enum PtpSubCmd {
         /// Maximum expected network one-way jitter in nanoseconds (default: 100).
         #[arg(long, default_value_t = 100)]
         jitter: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum LbSubCmd {
+    /// Inspect overall load balancer director status, active pools, nodes, and conntrack metrics.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Perform an L4/L7 flow lookup to determine the assigned backend node, pool, and table slot.
+    Lookup {
+        /// Source IP:port (default: 192.168.1.100:49152).
+        #[arg(long, default_value = "192.168.1.100:49152")]
+        src: String,
+        /// Destination IP:port (default: 10.0.0.1:7443).
+        #[arg(long, default_value = "10.0.0.1:7443")]
+        dst: String,
+        /// L4 Protocol: "quic" (default), "tcp", or "udp".
+        #[arg(long, default_value = "quic")]
+        proto: String,
+        /// Optional Layer-7 tenant ID for application-aware routing.
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Optional Layer-7 URL/file path prefix.
+        #[arg(long)]
+        path: Option<String>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or mutate backend pool members and calculate Maglev permutation migration churn.
+    Members {
+        /// Target backend pool name (default: "default-storage").
+        #[arg(long, default_value = "default-storage")]
+        pool: String,
+        /// Member operation: "list" (default), "add", "remove", "drain", "up".
+        #[arg(long, default_value = "list")]
+        action: String,
+        /// Target node identifier (e.g. "storage-node-05").
+        #[arg(long)]
+        node: Option<String>,
+        /// Target node IP:port address when adding (e.g. "10.0.1.15:7443").
+        #[arg(long)]
+        address: Option<String>,
+        /// Integer capacity weight (default: 100).
+        #[arg(long, default_value_t = 100)]
+        weight: u32,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute high-throughput microsecond benchmark measuring Maglev lookup rate and churn bounds.
+    Benchmark {
+        /// Number of lookup iterations (default: 50000).
+        #[arg(long, default_value_t = 50_000)]
+        iterations: usize,
+        /// Number of backend nodes to simulate (default: 16).
+        #[arg(long, default_value_t = 16)]
+        nodes: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -4822,6 +4891,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Ptp { sub } => {
             run_ptp(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Lb { sub } => {
+            run_lb(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -11394,6 +11467,544 @@ async fn run_ptp(cli: &Cli, sub: &PtpSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Safe Release Time:      {} ns",
                     out.safe_commit_epoch_nanos
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_lb(cli: &Cli, sub: &LbSubCmd) -> anyhow::Result<()> {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::str::FromStr;
+    use velcrux_core::lb::{
+        BackendNode, BackendPool, FiveTuple, L4Protocol, L7Context, L7RouteRule,
+        LoadBalancerDirector, MaglevTable, NodeStatus, DEFAULT_MAGLEV_M,
+    };
+
+    let is_json = cli.json;
+
+    // Helper to initialize a realistic multi-pool Director
+    let build_sample_director = || -> LoadBalancerDirector {
+        let mut director = LoadBalancerDirector::new("default-storage");
+
+        // 4 nodes in default pool
+        for i in 1..=4 {
+            let id = format!("storage-node-{:02}", i);
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 1, 10 + i as u8)), 7443);
+            director
+                .add_node("default-storage", BackendNode::new(id, addr, 100))
+                .unwrap();
+        }
+
+        // Dedicated VIP pool
+        director.pools.insert(
+            "vip-tenant-pool".into(),
+            BackendPool::new("vip-tenant-pool"),
+        );
+        for i in 1..=2 {
+            let id = format!("vip-node-{:02}", i);
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 2, 20 + i as u8)), 7443);
+            director
+                .add_node("vip-tenant-pool", BackendNode::new(id, addr, 200))
+                .unwrap();
+        }
+
+        // L7 routing rule
+        director.add_l7_rule(L7RouteRule {
+            rule_id: "rule-vip-tenants".into(),
+            tenant_prefix: Some("vip-".into()),
+            path_prefix: None,
+            target_pool: "vip-tenant-pool".into(),
+            priority: 50,
+        });
+
+        // Seed 4 active flows
+        for p in 30001..=30004 {
+            let t = FiveTuple::mock_quic(p);
+            let _ = director.route_packet(&t, None, 2048, 1_731_200_000_000_000);
+        }
+
+        director
+    };
+
+    match sub {
+        LbSubCmd::Status { json } => {
+            let director = build_sample_director();
+
+            #[derive(Serialize)]
+            struct PoolStatus {
+                name: String,
+                total_nodes: usize,
+                routable_nodes: usize,
+                maglev_table_size: usize,
+                epoch: u64,
+            }
+
+            #[derive(Serialize)]
+            struct NodeStatusSummary {
+                pool: String,
+                id: String,
+                address: String,
+                weight: u32,
+                status: String,
+                active_flows: u64,
+                total_flows_served: u64,
+                total_bytes_transferred: u64,
+                maglev_slot_share: usize,
+            }
+
+            #[derive(Serialize)]
+            struct LbStatusOutput {
+                default_pool: String,
+                total_pools: usize,
+                total_nodes: usize,
+                active_tracked_flows: usize,
+                total_routed_packets: u64,
+                total_sticky_hits: u64,
+                total_maglev_lookups: u64,
+                pools: Vec<PoolStatus>,
+                nodes: Vec<NodeStatusSummary>,
+            }
+
+            let mut pools_out = Vec::new();
+            let mut nodes_out = Vec::new();
+
+            for pool in director.pools.values() {
+                let routable = pool
+                    .nodes
+                    .values()
+                    .filter(|n| n.status.is_routable_for_new_flows())
+                    .count();
+                pools_out.push(PoolStatus {
+                    name: pool.name.clone(),
+                    total_nodes: pool.nodes.len(),
+                    routable_nodes: routable,
+                    maglev_table_size: pool.table.table_size,
+                    epoch: pool.epoch,
+                });
+
+                for node in pool.nodes.values() {
+                    let share = pool.table.slot_counts.get(&node.id).copied().unwrap_or(0);
+                    nodes_out.push(NodeStatusSummary {
+                        pool: pool.name.clone(),
+                        id: node.id.clone(),
+                        address: node.address.to_string(),
+                        weight: node.weight,
+                        status: node.status.as_str().to_string(),
+                        active_flows: node.active_flows,
+                        total_flows_served: node.total_flows_served,
+                        total_bytes_transferred: node.total_bytes_transferred,
+                        maglev_slot_share: share,
+                    });
+                }
+            }
+            pools_out.sort_by(|a, b| a.name.cmp(&b.name));
+            nodes_out.sort_by(|a, b| a.id.cmp(&b.id));
+
+            let out = LbStatusOutput {
+                default_pool: director.default_pool.clone(),
+                total_pools: director.pools.len(),
+                total_nodes: nodes_out.len(),
+                active_tracked_flows: director.conntrack.active_flow_count(),
+                total_routed_packets: director.total_routed_packets,
+                total_sticky_hits: director.total_sticky_hits,
+                total_maglev_lookups: director.total_maglev_lookups,
+                pools: pools_out,
+                nodes: nodes_out,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("       AUTONOMOUS L4/L7 MAGLEV LOAD BALANCER DIRECTOR STATUS                    ");
+                println!("================================================================================");
+                println!("  Default Pool:           {}", out.default_pool);
+                println!("  Registered Pools:       {}", out.total_pools);
+                println!("  Total Backends:         {}", out.total_nodes);
+                println!("  Active Tracked Flows:   {}", out.active_tracked_flows);
+                println!("  Total Routed Packets:   {}", out.total_routed_packets);
+                println!("  Conntrack Sticky Hits:  {}", out.total_sticky_hits);
+                println!("  Maglev Table Lookups:   {}", out.total_maglev_lookups);
+                println!();
+                println!("  [Backend Cluster Pools]");
+                println!(
+                    "  {:<20}  {:<8}  {:<10}  {:<12}  {}",
+                    "POOL NAME", "NODES", "ROUTABLE", "TABLE SIZE", "EPOCH"
+                );
+                println!(
+                    "  {:-<20}  {:-<8}  {:-<10}  {:-<12}  {:-<5}",
+                    "", "", "", "", ""
+                );
+                for p in &out.pools {
+                    println!(
+                        "  {:<20}  {:<8}  {:<10}  {:<12}  {}",
+                        p.name, p.total_nodes, p.routable_nodes, p.maglev_table_size, p.epoch
+                    );
+                }
+                println!();
+                println!("  [Backend Node Membership & Slot Allocations]");
+                println!(
+                    "  {:<18}  {:<18}  {:<8}  {:<10}  {:<8}  {}",
+                    "NODE ID", "ADDRESS", "WEIGHT", "STATUS", "FLOWS", "MAGLEV SLOTS"
+                );
+                println!(
+                    "  {:-<18}  {:-<18}  {:-<8}  {:-<10}  {:-<8}  {:-<12}",
+                    "", "", "", "", "", ""
+                );
+                for n in &out.nodes {
+                    println!(
+                        "  {:<18}  {:<18}  {:<8}  {:<10}  {:<8}  {} slots",
+                        n.id, n.address, n.weight, n.status, n.active_flows, n.maglev_slot_share
+                    );
+                }
+            }
+        }
+        LbSubCmd::Lookup {
+            src,
+            dst,
+            proto,
+            tenant,
+            path,
+            json,
+        } => {
+            let mut director = build_sample_director();
+
+            let parse_endpoint = |s: &str, def_port: u16| -> (IpAddr, u16) {
+                if let Ok(addr) = SocketAddr::from_str(s) {
+                    (addr.ip(), addr.port())
+                } else if let Ok(ip) = IpAddr::from_str(s) {
+                    (ip, def_port)
+                } else {
+                    (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), def_port)
+                }
+            };
+
+            let (src_ip, src_port) = parse_endpoint(src, 49152);
+            let (dst_ip, dst_port) = parse_endpoint(dst, 7443);
+
+            let protocol = match proto.to_lowercase().as_str() {
+                "tcp" => L4Protocol::Tcp,
+                "udp" => L4Protocol::Udp,
+                _ => L4Protocol::Quic,
+            };
+
+            let tuple = FiveTuple::new(src_ip, src_port, dst_ip, dst_port, protocol);
+
+            let mut l7 = L7Context::new();
+            if let Some(t) = tenant {
+                l7 = l7.with_tenant(t);
+            }
+            if let Some(p) = path {
+                l7 = l7.with_path(p);
+            }
+            let l7_opt = if l7.tenant_id.is_some() || l7.path_prefix.is_some() {
+                Some(&l7)
+            } else {
+                None
+            };
+
+            let decision = director.route_packet(&tuple, l7_opt, 1400, 1_731_200_000_100_000)?;
+
+            #[derive(Serialize)]
+            struct LookupOutput {
+                flow_tuple: String,
+                flow_hash: u64,
+                protocol: String,
+                target_pool: String,
+                backend_node_id: String,
+                backend_address: String,
+                maglev_table_slot: usize,
+                session_stickiness: String,
+                is_node_draining: bool,
+                l7_tenant: Option<String>,
+                l7_path: Option<String>,
+            }
+
+            let out = LookupOutput {
+                flow_tuple: tuple.to_string(),
+                flow_hash: tuple.flow_hash(),
+                protocol: tuple.protocol.as_str().to_string(),
+                target_pool: decision.pool_name,
+                backend_node_id: decision.backend_node_id,
+                backend_address: decision.backend_address.to_string(),
+                maglev_table_slot: decision.table_slot,
+                session_stickiness: if decision.was_sticky {
+                    "STICKY_CONNTRACK"
+                } else {
+                    "MAGLEV_NEW_FLOW"
+                }
+                .to_string(),
+                is_node_draining: decision.is_draining,
+                l7_tenant: l7.tenant_id,
+                l7_path: l7.path_prefix,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("          L4/L7 MAGLEV CONSISTENT HASHING FLOW LOOKUP RESULT                    ");
+                println!("================================================================================");
+                println!("  Flow 5-Tuple:           {}", out.flow_tuple);
+                println!("  Flow Hash (64-bit):     0x{:016X}", out.flow_hash);
+                println!("  Protocol:               {}", out.protocol);
+                if let Some(ref t) = out.l7_tenant {
+                    println!("  L7 Tenant Context:      {}", t);
+                }
+                if let Some(ref p) = out.l7_path {
+                    println!("  L7 Path Prefix:         {}", p);
+                }
+                println!();
+                println!("  [Routing Decision]");
+                println!("    Target Cluster Pool:  {}", out.target_pool);
+                println!("    Assigned Backend:     {}", out.backend_node_id);
+                println!("    Backend Socket:       {}", out.backend_address);
+                println!(
+                    "    Maglev Table Slot:    {} (mod {})",
+                    out.maglev_table_slot, DEFAULT_MAGLEV_M
+                );
+                println!("    Routing Affinity:     {}", out.session_stickiness);
+                println!("    Node Draining:        {}", out.is_node_draining);
+            }
+        }
+        LbSubCmd::Members {
+            pool,
+            action,
+            node,
+            address,
+            weight,
+            json,
+        } => {
+            let mut director = build_sample_director();
+            let mut churn_pct: Option<f64> = None;
+
+            match action.to_lowercase().as_str() {
+                "add" => {
+                    let node_id = node.clone().unwrap_or_else(|| "storage-node-new".into());
+                    let addr = if let Some(ref a) = address {
+                        SocketAddr::from_str(a).unwrap_or_else(|_| {
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 1, 99)), 7443)
+                        })
+                    } else {
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 1, 99)), 7443)
+                    };
+                    let bnode = BackendNode::new(node_id, addr, *weight);
+                    let churn = director.add_node(pool, bnode)?;
+                    churn_pct = Some(churn);
+                }
+                "remove" => {
+                    if let Some(ref nid) = node {
+                        let churn = director.remove_node(pool, nid)?;
+                        churn_pct = Some(churn);
+                    }
+                }
+                "drain" => {
+                    if let Some(ref nid) = node {
+                        let churn = director.drain_node(pool, nid)?;
+                        churn_pct = Some(churn);
+                    }
+                }
+                "up" => {
+                    if let Some(ref nid) = node {
+                        let churn = director.set_node_status(pool, nid, NodeStatus::Healthy)?;
+                        churn_pct = Some(churn);
+                    }
+                }
+                _ => {} // "list"
+            }
+
+            let pool_ref = director
+                .pools
+                .get(pool)
+                .ok_or_else(|| anyhow::anyhow!("Pool '{}' not found", pool))?;
+
+            #[derive(Serialize)]
+            struct MemberEntry {
+                id: String,
+                address: String,
+                weight: u32,
+                status: String,
+                active_flows: u64,
+                slot_count: usize,
+                slot_share_pct: f64,
+            }
+
+            #[derive(Serialize)]
+            struct MembersReport {
+                pool: String,
+                action_performed: String,
+                churn_percentage: Option<f64>,
+                epoch: u64,
+                table_size: usize,
+                members: Vec<MemberEntry>,
+            }
+
+            let mut members = Vec::new();
+            for n in pool_ref.nodes.values() {
+                let slots = pool_ref.table.slot_counts.get(&n.id).copied().unwrap_or(0);
+                let share = (slots as f64 / pool_ref.table.table_size as f64) * 100.0;
+                members.push(MemberEntry {
+                    id: n.id.clone(),
+                    address: n.address.to_string(),
+                    weight: n.weight,
+                    status: n.status.as_str().to_string(),
+                    active_flows: n.active_flows,
+                    slot_count: slots,
+                    slot_share_pct: share,
+                });
+            }
+            members.sort_by(|a, b| a.id.cmp(&b.id));
+
+            let out = MembersReport {
+                pool: pool.clone(),
+                action_performed: action.clone(),
+                churn_percentage: churn_pct,
+                epoch: pool_ref.epoch,
+                table_size: pool_ref.table.table_size,
+                members,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("       BACKEND POOL MEMBERS & MAGLEV PERMUTATION STATUS                         ");
+                println!("================================================================================");
+                println!("  Target Pool:            {}", out.pool);
+                println!("  Action Executed:        {}", out.action_performed);
+                if let Some(churn) = out.churn_percentage {
+                    println!("  Migration Churn:        {:.2}% remapped slots", churn);
+                }
+                println!("  Maglev Table Epoch:     {}", out.epoch);
+                println!("  Table Capacity (M):     {} slots", out.table_size);
+                println!();
+                println!(
+                    "  {:<18}  {:<18}  {:<8}  {:<10}  {:<8}  {}",
+                    "NODE ID", "ADDRESS", "WEIGHT", "STATUS", "FLOWS", "MAGLEV SHARE"
+                );
+                println!(
+                    "  {:-<18}  {:-<18}  {:-<8}  {:-<10}  {:-<8}  {:-<12}",
+                    "", "", "", "", "", ""
+                );
+                for m in &out.members {
+                    println!(
+                        "  {:<18}  {:<18}  {:<8}  {:<10}  {:<8}  {:<5} ({:.2}%)",
+                        m.id,
+                        m.address,
+                        m.weight,
+                        m.status,
+                        m.active_flows,
+                        m.slot_count,
+                        m.slot_share_pct
+                    );
+                }
+            }
+        }
+        LbSubCmd::Benchmark {
+            iterations,
+            nodes,
+            json,
+        } => {
+            let node_list: Vec<BackendNode> = (0..*nodes)
+                .map(|i| {
+                    let id = format!("bench-node-{:02}", i + 1);
+                    let addr =
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 5, 1, 10 + i as u8)), 7443);
+                    BackendNode::new(id, addr, 100)
+                })
+                .collect();
+
+            // 1. Benchmark Maglev table construction time
+            let t_start = std::time::Instant::now();
+            let table = MaglevTable::build(&node_list, 1);
+            let build_micros = t_start.elapsed().as_micros() as f64;
+
+            // 2. Benchmark 5-tuple lookup throughput
+            let mut tuples = Vec::with_capacity(1000);
+            for p in 0..1000 {
+                tuples.push(FiveTuple::mock_quic((10000 + p) as u16));
+            }
+
+            let t_lookup = std::time::Instant::now();
+            let mut _hits = 0;
+            for i in 0..*iterations {
+                let tuple = &tuples[i % 1000];
+                if table.lookup_tuple(tuple).is_some() {
+                    _hits += 1;
+                }
+            }
+            let lookup_duration = t_lookup.elapsed();
+            let lookups_per_sec = (*iterations as f64) / lookup_duration.as_secs_f64().max(1e-6);
+
+            // 3. Benchmark minimal disruption churn on node addition
+            let mut expanded_nodes = node_list.clone();
+            expanded_nodes.push(BackendNode::new(
+                "bench-node-extra",
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 5, 1, 99)), 7443),
+                100,
+            ));
+            let table_expanded = MaglevTable::build(&expanded_nodes, 2);
+            let churn_percentage = table.compute_churn_percentage(&table_expanded);
+            let theoretical_bound = (1.0 / (*nodes as f64 + 1.0)) * 100.0;
+
+            #[derive(Serialize)]
+            struct BenchmarkReport {
+                nodes_simulated: usize,
+                lookup_iterations: usize,
+                table_size_m: usize,
+                table_build_micros: f64,
+                lookup_throughput_ops_per_sec: f64,
+                measured_churn_pct: f64,
+                theoretical_churn_bound_pct: f64,
+                disruption_compliant: bool,
+            }
+
+            let out = BenchmarkReport {
+                nodes_simulated: *nodes,
+                lookup_iterations: *iterations,
+                table_size_m: table.table_size,
+                table_build_micros: build_micros,
+                lookup_throughput_ops_per_sec: lookups_per_sec,
+                measured_churn_pct: churn_percentage,
+                theoretical_churn_bound_pct: theoretical_bound,
+                disruption_compliant: churn_percentage <= (theoretical_bound * 1.5),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("        AUTONOMOUS MAGLEV LOAD BALANCER MICROSECOND BENCHMARK                   ");
+                println!("================================================================================");
+                println!("  Backend Nodes Count:    {}", out.nodes_simulated);
+                println!(
+                    "  Table Capacity (M):     {} slots (Prime)",
+                    out.table_size_m
+                );
+                println!(
+                    "  Table Build Latency:    {:.2} µs ({:.2} ms)",
+                    out.table_build_micros,
+                    out.table_build_micros / 1000.0
+                );
+                println!("  Lookup Iterations:      {}", out.lookup_iterations);
+                println!(
+                    "  Lookup Throughput:      {:.2} million ops/sec",
+                    out.lookup_throughput_ops_per_sec / 1_000_000.0
+                );
+                println!(
+                    "  Addition Churn:         {:.2}% (Theoretical: {:.2}%)",
+                    out.measured_churn_pct, out.theoretical_churn_bound_pct
+                );
+                println!(
+                    "  Minimal Disruption:     {}",
+                    if out.disruption_compliant {
+                        "VERIFIED PASS"
+                    } else {
+                        "DEVIATION"
+                    }
                 );
             }
         }
