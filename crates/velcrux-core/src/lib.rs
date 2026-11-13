@@ -33,6 +33,7 @@ pub mod did;
 pub mod ec;
 pub mod error;
 pub mod k8s;
+pub mod lb;
 pub mod kms;
 pub mod lb;
 pub mod manifest;
@@ -142,6 +143,11 @@ pub use k8s::{
     ObjectMeta, OperatorReconciler, ReconciliationResult, RetryPolicy, TransferCondition,
     TransferPhase, VelcruxCluster, VelcruxClusterSpec, VelcruxClusterStatus, VelcruxTransfer,
     VelcruxTransferSpec, VelcruxTransferStatus, CRD_GROUP, CRD_VERSION,
+};
+pub use lb::{
+    BackendNode, BackendPool, ConnectionState, ConnectionTracker, ConntrackTimeouts, FiveTuple,
+    FlowRecord, L4Protocol, L7Context, L7RouteRule, LbRouteDecision, LoadBalancerDirector,
+    MaglevTable, NodeId, NodeStatus, DEFAULT_MAGLEV_M, SMALL_MAGLEV_M,
 };
 pub use kms::{
     hex_decode as kms_hex_decode, hex_encode as kms_hex_encode, HsmKmsBridge, KeyRotationReport,

@@ -146,3 +146,4 @@ For an 8-node cluster expanding to 9 nodes, $\mathbb{E}[\Delta] \approx 11.1\%$,
 - Core Integration Tests: `crates/velcrux-core/tests/maglev_lb_tests.rs`
 - Operator CLI Suite: `crates/velcrux-client/src/main.rs` (`velcrux lb status|lookup|members|benchmark`)
 - CLI Integration Tests: `crates/velcrux-client/tests/cli_lb.rs`
+
