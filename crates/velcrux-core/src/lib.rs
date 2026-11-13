@@ -31,9 +31,9 @@ pub mod crdt;
 pub mod crypto;
 pub mod did;
 pub mod ec;
+pub mod enclave;
 pub mod error;
 pub mod k8s;
-pub mod lb;
 pub mod kms;
 pub mod lb;
 pub mod manifest;
@@ -136,6 +136,12 @@ pub use ec::{
     ErasureEngine, ErasureSchema, ObjectHealthState, ShardEnvelope, ShardScrubMesh, SHARD_MAGIC,
     SHARD_VERSION,
 };
+pub use enclave::{
+    generate_channel_binding_report_data, verify_channel_binding, EnclaveAttestationEngine,
+    EnclaveAttestationEvidence, EnclaveMeasurement, EnclaveMeshEngine, EnclaveMeshPeer,
+    EnclavePlatform, EnclavePolicy, EnclaveQuote, EnclaveSealingEngine, EnclaveVerificationReport,
+    SealedEnclavePayload, SealingPolicy, TcbVersion,
+};
 pub use error::{Result, VelcruxError};
 pub use k8s::{
     generate_cluster_crd_yaml, generate_operator_deployment_yaml, generate_operator_rbac_yaml,
@@ -143,11 +149,6 @@ pub use k8s::{
     ObjectMeta, OperatorReconciler, ReconciliationResult, RetryPolicy, TransferCondition,
     TransferPhase, VelcruxCluster, VelcruxClusterSpec, VelcruxClusterStatus, VelcruxTransfer,
     VelcruxTransferSpec, VelcruxTransferStatus, CRD_GROUP, CRD_VERSION,
-};
-pub use lb::{
-    BackendNode, BackendPool, ConnectionState, ConnectionTracker, ConntrackTimeouts, FiveTuple,
-    FlowRecord, L4Protocol, L7Context, L7RouteRule, LbRouteDecision, LoadBalancerDirector,
-    MaglevTable, NodeId, NodeStatus, DEFAULT_MAGLEV_M, SMALL_MAGLEV_M,
 };
 pub use kms::{
     hex_decode as kms_hex_decode, hex_encode as kms_hex_encode, HsmKmsBridge, KeyRotationReport,

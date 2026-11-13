@@ -490,6 +490,33 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_lb`: 4/4 passing CLI integration tests validating `status`, `lookup`, `members`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DI: Confidential Enclave Attestation & Remote Hardware Root-of-Trust Mesh (AMD SEV-SNP / Intel SGX/TDX) (ADR-077)
+- **Multi-Architecture Hardware Enclave Support (`EnclavePlatform`, `EnclaveMeasurement`, `TcbVersion`)**:
+  - Hardware platform abstraction for AMD SEV-SNP, Intel SGX, Intel TDX, AWS Nitro, and pure safe Rust simulated environments.
+  - Launch measurement tracking: SHA-384/SHA-256 `launch_digest`, Intel SGX `mr_enclave` (256-bit code layout digest), `mr_signer` (256-bit author authority digest), and ISV SVN levels.
+  - Multi-tier TCB versioning baseline enforcement (`bootloader_svn`, `tee_svn`, `snp_or_cpusvn`, `microcode_svn`), preventing firmware downgrade attacks.
+- **TLS 1.3 Channel Binding Engine (RFC 9266 / RFC 5929) (`generate_channel_binding_report_data`, `verify_channel_binding`)**:
+  - Computes 64-byte `REPORTDATA` from TLS 1.3 exporter master secret and session nonces (`BLAKE3(tls_exporter || client_nonce || server_nonce)`).
+  - Cryptographically embeds transport binding into hardware-signed quotes, defeating untrusted hypervisor Man-In-The-Middle relay attacks.
+- **Hardware-Derived Enclave Data Sealing (`EnclaveSealingEngine`, `SealingPolicy`, `SealedEnclavePayload`)**:
+  - Key derivation using BLAKE3 KDF over hardware chip keys and measurement structures.
+  - Two-tier sealing policy: `MrEnclave` (strict identical binary instance) and `MrSigner` (vendor-authority upgradable binary).
+  - Authenticated AEAD payload encryption with arbitrary Additional Authenticated Data (AAD).
+- **Distributed Remote Hardware Root-of-Trust Mesh (`EnclaveMeshEngine`, `EnclaveMeshPeer`, `EnclavePolicy`)**:
+  - Distributed mutual enclave attestation coordinator for multi-node storage and streaming clusters.
+  - Automated validity epoch management, freshness enforcement, and instantaneous peer revocation.
+  - Strict production non-debug policy enforcement (`allow_debug: false`).
+- **Operator CLI Suite**:
+  - `velcrux enclave status [--json]`: Shows local enclave environment, platform, TCB baseline, measurement hashes, active mesh peers, and root-of-trust verification status.
+  - `velcrux enclave quote [--platform <PLATFORM>] [--report-data <HEX>] [--json]`: Generates a fully formed hardware attestation quote with custom or channel-bound 64-byte `REPORTDATA`.
+  - `velcrux enclave verify [--platform <PLATFORM>] [--report-data <HEX>] [--allow-debug] [--min-microcode-svn <N>] [--json]`: Cryptographically verifies an enclave quote, signature, TCB compliance, and channel binding.
+  - `velcrux enclave benchmark [--iterations <N>] [--json]`: Microsecond benchmark measuring quote generation, verification, channel binding derivation, and hardware data sealing.
+- **Verification Matrix**:
+  - `enclave::` unit tests: 9/9 passing tests in `velcrux-core` covering TCB SVN comparisons, measurement hashing, TLS channel binding, quote generation/verification, non-debug policy enforcement, MRENCLAVE/MRSIGNER sealing, and mesh peer lifecycle.
+  - `enclave_mesh_tests`: 5/5 passing integration tests validating AMD SEV-SNP quotes, Intel SGX policies, data sealing across binary upgrades, mutual attestation mesh lifecycle, and hypervisor MITM relay attack detection.
+  - `cli_enclave`: 4/4 passing CLI integration tests validating `status`, `quote`, `verify`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

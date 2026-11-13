@@ -516,6 +516,24 @@ velcrux lb members --pool default-storage --action drain --node storage-node-02
 velcrux lb benchmark --iterations 50000 --nodes 16
 ```
 
+### Confidential Enclave Attestation & Remote Hardware Root-of-Trust Mesh
+
+Zero-trust hardware execution environment attestation (AMD SEV-SNP, Intel SGX/TDX, AWS Nitro), cryptographic launch measurements (`MRENCLAVE`, `MRSIGNER`), TCB SVN baselines, TLS 1.3 channel binding (`tls-exporter` in `REPORTDATA`) defeating hypervisor MITM relay attacks, and hardware-derived secret sealing:
+
+```bash
+# Inspect local confidential enclave status, hardware platform, TCB baseline, and mesh peers
+velcrux enclave status
+
+# Generate a cryptographically signed hardware attestation quote for AMD SEV-SNP
+velcrux enclave quote --platform amd_sev_snp
+
+# Cryptographically verify an enclave quote against strict non-debug policy and TCB baseline
+velcrux enclave verify --platform amd_sev_snp
+
+# Run microsecond benchmark measuring quote generation, verification, and hardware sealing
+velcrux enclave benchmark --iterations 50
+```
+
 ### Transfer State and Resumption
 
 ```bash

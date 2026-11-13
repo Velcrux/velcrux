@@ -293,4 +293,3 @@ mod tests {
         assert!(!NodeStatus::Offline.is_routable_for_new_flows());
     }
 }
-

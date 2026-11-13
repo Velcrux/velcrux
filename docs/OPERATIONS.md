@@ -5646,6 +5646,43 @@ cargo test -p velcrux-core --test maglev_lb_tests -- --nocapture
 cargo test -p velcrux-client --test cli_lb -- --nocapture
 ```
 
+## 61. Confidential Enclave Attestation & Remote Hardware Root-of-Trust Mesh (ADR-077)
+
+The Confidential Enclave Attestation & Hardware Root-of-Trust Mesh verifies hardware execution environments (AMD SEV-SNP, Intel SGX/TDX, AWS Nitro), enforcing cryptographic launch measurements (`launch_digest`, `mr_enclave`, `mr_signer`), minimum TCB SVN levels, and strict non-debug policies. Embedded TLS 1.3 channel binding (`tls-exporter` in 64-byte `REPORTDATA`) defeats untrusted hypervisor Man-In-The-Middle relay attacks, and hardware-derived data sealing protects cluster keys.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect local confidential enclave status, hardware platform, TCB baseline, and mesh peers
+velcrux enclave status
+
+# 2. Inspect enclave status in machine-readable JSON format
+velcrux enclave status --json
+
+# 3. Generate a cryptographically signed hardware attestation quote for AMD SEV-SNP
+velcrux enclave quote --platform amd_sev_snp
+
+# 4. Generate an attestation quote for Intel SGX in JSON format
+velcrux enclave quote --platform intel_sgx --json
+
+# 5. Cryptographically verify an enclave quote against strict non-debug policy and TCB baseline
+velcrux enclave verify --platform amd_sev_snp
+
+# 6. Verify enclave quote in JSON format
+velcrux enclave verify --platform amd_sev_snp --json
+
+# 7. Execute microsecond benchmark measuring quote generation, verification, and hardware sealing
+velcrux enclave benchmark --iterations 50
+
+# 8. Execute benchmark in JSON format
+velcrux enclave benchmark --iterations 50 --json
+
+# 9. Execute enclave attestation and mesh unit and integration test suites
+cargo test -p velcrux-core --lib enclave:: -- --nocapture
+cargo test -p velcrux-core --test enclave_mesh_tests -- --nocapture
+cargo test -p velcrux-client --test cli_enclave -- --nocapture
+```
+
 
 
 
