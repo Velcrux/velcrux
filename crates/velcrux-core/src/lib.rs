@@ -155,11 +155,6 @@ pub use kms::{
     KmsBenchmarkReport, KmsBridgeConfig, KmsKeyMetadata, KmsKeyPurpose, KmsProviderType,
     KmsSignature, KmsStatusReport, WrappedKeyEnvelope, KMS_KEY_LEN, KMS_NONCE_LEN,
 };
-pub use lb::{
-    BackendNode, BackendPool, ConnectionState, ConnectionTracker, ConntrackTimeouts, FiveTuple,
-    FlowRecord, L4Protocol, L7Context, L7RouteRule, LbRouteDecision, LoadBalancerDirector,
-    MaglevTable, NodeId, NodeStatus, DEFAULT_MAGLEV_M, SMALL_MAGLEV_M,
-};
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,

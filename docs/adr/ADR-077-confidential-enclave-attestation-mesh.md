@@ -137,3 +137,4 @@ If an adversary attempts to relay a valid quote generated from an enclave to ano
 - Core Integration Tests: `crates/velcrux-core/tests/enclave_mesh_tests.rs`
 - Operator CLI Suite: `crates/velcrux-client/src/main.rs` (`velcrux enclave status|quote|verify|benchmark`)
 - CLI Integration Tests: `crates/velcrux-client/tests/cli_enclave.rs`
+
