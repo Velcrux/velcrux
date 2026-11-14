@@ -31,6 +31,7 @@ pub mod consensus;
 pub mod crdt;
 pub mod crypto;
 pub mod did;
+pub mod dr;
 pub mod ec;
 pub mod enclave;
 pub mod error;
@@ -141,6 +142,12 @@ pub use did::{
     parse_ed25519_keypair, resolve_did, CredentialProof, DidAttestationEngine, DidBenchmarkReport,
     DidDocument, DidMethod, TransferCapabilitySubject, VerifiableCredential, VerificationMethod,
     VerificationReport,
+};
+pub use dr::{
+    ClusterRegion, ClusterRole, DrBenchmarkReport, DrError, DrFailoverCoordinator,
+    DrFailoverReport, DrFailureDetector, DrFailureDetectorConfig, DrResult, DrState,
+    DrStatusReport, FailoverMode, FencingToken, HeartbeatMsg, ProbeHealthStatus, RegionStatus,
+    StorageFencingEngine,
 };
 pub use ec::{
     EcAutoRepairReport, EcBenchmarkReport, EcObjectScrubSummary, EcRepairReport, EcScrubReport,

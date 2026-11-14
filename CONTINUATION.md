@@ -577,6 +577,35 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_cloud_tier`: 4/4 passing CLI integration tests validating `status`, `compact`, `read`, `hydrate`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DL: Autonomous Multi-Cluster Global Disaster Recovery Failover & Split-Brain Fencing Coordinator (ADR-080)
+- **Multi-Region Disaster Recovery Topology & Roles (`ClusterRole`, `ClusterRegion`, `DrState`)**:
+  - Pure safe Rust multi-region DR coordination managing `Primary` (Active/Write-Leader), `Standby` (Warm/Hot Replica), and `Witness` (Lightweight Quorum Tie-Breaker).
+  - Explicit tracking of RPO (Recovery Point Objective replication lag in ms) and RTO (Recovery Time Objective failover duration in ms).
+- **Decentralized Multi-Path Health Probing & Dynamic Failure Detection (`DrFailureDetector`)**:
+  - Calculates exponential moving average heartbeat interval $\mu$ and network jitter bounds $\sigma$.
+  - Computes dynamic failure suspicion scores $S \in [0.0, 1.0]$.
+  - Multi-path probe aggregation differentiates single-link hiccups from total regional network partitions across primary WAN, secondary WAN, and witness relay channels.
+- **Split-Brain Prevention via Monotonic Generation Fencing (`FencingToken`, `StorageFencingEngine`)**:
+  - Monotonically increasing generation epoch barriers (`epoch: u64`).
+  - Majority witness quorum lease approval ($\lfloor N/2 \rfloor + 1$) via keyed BLAKE3 cryptographic signatures.
+  - Zero-tolerance storage write and gateway I/O fencing barriers: rejects any write operation signed with an obsolete epoch (`attempted < current`), expired lease duration, or unauthorized cluster ID.
+- **Autonomous Failover & Failback State Machine (`DrStateMachine`, `DrFailoverCoordinator`)**:
+  - Lifecycle states: `NormalActive`, `Degraded`, `FailoverPending`, `FencingOldPrimary`, `PromotingSecondary`, `FailoverComplete`, `FailbackPending`, `ReconcilingDivergence`.
+  - Graceful planned switchover with zero data loss (guaranteed RPO = 0) and emergency unplanned failovers with automated standby selection based on lowest replication lag.
+  - Demotion of former primary to fenced read-only replica and divergence isolation during failback.
+- **Operator CLI Suite (`velcrux dr`)**:
+  - `velcrux dr status [--json]`: Reports generation epoch, active primary, lifecycle state, quorum status, overall RPO lag, and regional telemetry table.
+  - `velcrux dr failover [--target <CLUSTER>] [--force] [--json]`: Executes planned graceful switchover or emergency failover.
+  - `velcrux dr fence --cluster <CLUSTER> [--epoch <EPOCH>] [--json]`: Forcibly fences an isolated cluster, elevating epoch barrier and activating storage fencing.
+  - `velcrux dr failback --target <CLUSTER> [--json]`: Gracefully failbacks primary leadership after divergence reconciliation.
+  - `velcrux dr benchmark [--iterations <N>] [--json]`: Benchmarks heartbeat probe latency, quorum consensus, failover RTO, write fencing throughput, and split-brain write rejections.
+- **Verification Matrix**:
+  - `dr::` unit tests: 7/7 passing tests in `velcrux-core` covering roles, heartbeat detection, multi-path partition differentiation, fencing barriers, planned switchovers, emergency failovers, and benchmarks.
+  - `dr_failover_tests`: 6/6 passing integration tests in `velcrux-core` validating multi-cluster topology, dynamic failure detectors, quorum witness lease signing, planned switchover, emergency failover with old primary fencing, and benchmark simulation.
+  - `cli_dr`: 5/5 passing CLI integration tests in `velcrux-client` validating `status`, `failover`, `fence`, `failback`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

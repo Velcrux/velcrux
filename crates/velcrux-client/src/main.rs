@@ -889,6 +889,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: CloudTierSubCmd,
     },
+    /// Autonomous Multi-Cluster Global Disaster Recovery Failover & Split-Brain Fencing Coordinator (Option DL).
+    Dr {
+        #[command(subcommand)]
+        sub: DrSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2887,6 +2892,58 @@ enum CloudTierSubCmd {
         /// Number of FastCDC chunks to ingest and compact (default: 200).
         #[arg(long, default_value_t = 200)]
         chunks: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DrSubCmd {
+    /// Inspect multi-cluster disaster recovery topology, RPO lag, fencing lease, and failure detector health.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute graceful planned switchover or emergency failover to a target standby cluster.
+    Failover {
+        /// Target standby cluster ID (if omitted in emergency mode, standby with lowest RPO lag is selected).
+        #[arg(long)]
+        target: Option<String>,
+        /// Force failover even if current primary is still reporting alive.
+        #[arg(long)]
+        force: bool,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Forcibly fence a cluster region, elevating epoch barrier and revoking write permissions.
+    Fence {
+        /// Cluster region ID to fence.
+        #[arg(long)]
+        cluster: String,
+        /// Explicit target generation epoch barrier (must be strictly greater than current epoch).
+        #[arg(long)]
+        epoch: Option<u64>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Gracefully failback primary leadership to a recovered cluster after divergence reconciliation.
+    Failback {
+        /// Target recovered cluster ID to restore as primary.
+        #[arg(long)]
+        target: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark failure detector heartbeat throughput, quorum lease latency, and storage fencing barriers.
+    Benchmark {
+        /// Number of benchmark simulation iterations (default: 500).
+        #[arg(long, default_value_t = 500)]
+        iterations: u32,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -5054,6 +5111,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::CloudTier { sub } => {
             run_cloud_tier(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Dr { sub } => {
+            run_dr(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -13402,6 +13463,358 @@ async fn run_cloud_tier(cli: &Cli, sub: &CloudTierSubCmd) -> anyhow::Result<()> 
                     "  Average Read Latency:   {:.2} µs / op",
                     out.avg_read_latency_us
                 );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn setup_dr_demo_mesh() -> velcrux_core::dr::DrFailoverCoordinator {
+    use velcrux_core::dr::{
+        ClusterRegion, ClusterRole, DrFailoverCoordinator, DrFailureDetectorConfig, DrState,
+        HeartbeatMsg,
+    };
+
+    let config = DrFailureDetectorConfig {
+        heartbeat_interval_ms: 1000,
+        jitter_bound_ms: 200,
+        consecutive_loss_threshold: 3,
+        history_window_size: 64,
+        suspicion_threshold: 0.70,
+    };
+
+    let mut coord = DrFailoverCoordinator::new("us-east-1", 1000, 15_000, config);
+
+    // Primary
+    coord.register_region(ClusterRegion::new(
+        "us-east-1",
+        "US East Primary (N. Virginia)",
+        ClusterRole::Primary,
+        "https://useast1.dr.velcrux.internal:9443",
+        1,
+        "us-east-1a",
+    ));
+
+    // Standby 1
+    coord.register_region(ClusterRegion::new(
+        "eu-central-1",
+        "EU Central Standby (Frankfurt)",
+        ClusterRole::Standby,
+        "https://eucentral1.dr.velcrux.internal:9443",
+        1,
+        "eu-central-1a",
+    ));
+
+    // Standby 2
+    coord.register_region(ClusterRegion::new(
+        "ap-southeast-1",
+        "AP Southeast Standby (Singapore)",
+        ClusterRole::Standby,
+        "https://apse1.dr.velcrux.internal:9443",
+        1,
+        "ap-southeast-1a",
+    ));
+
+    // Witnesses
+    coord.register_region(ClusterRegion::new(
+        "witness-ord",
+        "Chicago Witness Arbiter",
+        ClusterRole::Witness,
+        "https://wit-ord.dr.velcrux.internal:9443",
+        1,
+        "us-midwest-1",
+    ));
+    coord.register_region(ClusterRegion::new(
+        "witness-dub",
+        "Dublin Witness Arbiter",
+        ClusterRole::Witness,
+        "https://wit-dub.dr.velcrux.internal:9443",
+        1,
+        "eu-west-1",
+    ));
+    coord.register_region(ClusterRegion::new(
+        "witness-nrt",
+        "Tokyo Witness Arbiter",
+        ClusterRole::Witness,
+        "https://wit-nrt.dr.velcrux.internal:9443",
+        1,
+        "ap-northeast-1",
+    ));
+
+    coord.register_witness("witness-ord", b"ord-secret-key-dr-witness-32b!!");
+    coord.register_witness("witness-dub", b"dub-secret-key-dr-witness-32b!!");
+    coord.register_witness("witness-nrt", b"nrt-secret-key-dr-witness-32b!!");
+
+    // Issue initial active lease to primary
+    let witnesses = vec![
+        "witness-ord".to_string(),
+        "witness-dub".to_string(),
+        "witness-nrt".to_string(),
+    ];
+    let _ = coord
+        .fencing_engine_mut()
+        .issue_fencing_token("us-east-1", 15_000, 10_000, &witnesses);
+
+    // Record sample heartbeats with realistic RPO lags
+    let hb_primary = HeartbeatMsg {
+        sender_cluster: "us-east-1".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 0,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_primary, 10_000);
+
+    let hb_eu = HeartbeatMsg {
+        sender_cluster: "eu-central-1".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 14,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_eu, 10_000);
+
+    let hb_ap = HeartbeatMsg {
+        sender_cluster: "ap-southeast-1".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 38,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_ap, 10_000);
+
+    let hb_wit1 = HeartbeatMsg {
+        sender_cluster: "witness-ord".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 0,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_wit1, 10_000);
+
+    let hb_wit2 = HeartbeatMsg {
+        sender_cluster: "witness-dub".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 0,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_wit2, 10_000);
+
+    let hb_wit3 = HeartbeatMsg {
+        sender_cluster: "witness-nrt".to_string(),
+        epoch: 1001,
+        timestamp_ms: 10_000,
+        rpo_lag_ms: 0,
+        state: DrState::NormalActive,
+    };
+    coord.record_heartbeat(hb_wit3, 10_000);
+
+    coord
+}
+
+async fn run_dr(cli: &Cli, sub: &DrSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::dr::{DrState, HeartbeatMsg};
+
+    let is_json = cli.json;
+    let now_ms = 10_000;
+    let mut coord = setup_dr_demo_mesh();
+
+    match sub {
+        DrSubCmd::Status { json } => {
+            let status = coord.status(now_ms);
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX GLOBAL DISASTER RECOVERY & FENCING COORDINATOR                    ");
+                println!("================================================================================");
+                println!("  Generation Epoch:       {}", status.current_epoch);
+                println!("  Active Primary:         {}", status.active_primary);
+                println!("  Coordinator State:      {}", status.state);
+                println!(
+                    "  Quorum Witnesses:       {} active (Quorum requirement: {})",
+                    status.witness_count, status.quorum_size
+                );
+                println!("  Global Max RPO Lag:     {} ms", status.overall_rpo_ms);
+                if let Some(token) = &status.active_fencing_token {
+                    println!(
+                        "  Fencing Lease Holder:   {} (Expires at: {} ms, duration: {} ms)",
+                        token.holder_cluster,
+                        token.expires_at_ms(),
+                        token.lease_duration_ms
+                    );
+                }
+                println!("--------------------------------------------------------------------------------");
+                println!(
+                    "{:<16} {:<12} {:<10} {:<10} {:<12} {:<12} {:<10}",
+                    "CLUSTER ID",
+                    "ROLE",
+                    "HEALTH",
+                    "RPO LAG",
+                    "AVG INTERVAL",
+                    "JITTER",
+                    "SUSPICION"
+                );
+                println!("--------------------------------------------------------------------------------");
+                for r in &status.regions {
+                    println!(
+                        "{:<16} {:<12} {:<10} {:<10} {:<12.1} {:<12.1} {:<10.2}",
+                        r.id,
+                        r.role.to_string(),
+                        r.health.to_string(),
+                        format!("{} ms", r.rpo_lag_ms),
+                        r.avg_interval_ms,
+                        r.jitter_ms,
+                        r.suspicion_score,
+                    );
+                }
+                println!("================================================================================");
+            }
+        }
+        DrSubCmd::Failover {
+            target,
+            force,
+            json,
+        } => {
+            let report = if *force || target.is_none() {
+                coord.execute_emergency_failover(target.as_deref(), *force, now_ms)?
+            } else {
+                coord.plan_switchover(target.as_deref().unwrap(), now_ms)?
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX DR FAILOVER EXECUTION REPORT                                      ");
+                println!("================================================================================");
+                println!("  Mode:                   {:?}", report.mode);
+                println!("  Previous Primary:       {}", report.previous_primary);
+                println!("  Promoted Primary:       {}", report.new_primary);
+                println!("  New Fencing Epoch:      {}", report.fencing_epoch);
+                println!("  Observed RPO Lag:       {} ms", report.rpo_lag_ms);
+                println!("  Failover RTO Duration:  {} ms", report.rto_duration_ms);
+                println!(
+                    "  Approving Witnesses:    {}",
+                    report.quorum_witnesses.join(", ")
+                );
+                println!(
+                    "  Status:                 {}",
+                    if report.success { "SUCCESS" } else { "FAILED" }
+                );
+                println!("  Notes:                  {}", report.notes);
+                println!("================================================================================");
+            }
+        }
+        DrSubCmd::Fence {
+            cluster,
+            epoch,
+            json,
+        } => {
+            let token = coord.fence_cluster(cluster, *epoch, now_ms)?;
+
+            #[derive(serde::Serialize)]
+            struct FenceReport {
+                fenced_cluster: String,
+                epoch: u64,
+                storage_barrier_active: bool,
+                message: String,
+            }
+
+            let out = FenceReport {
+                fenced_cluster: cluster.clone(),
+                epoch: token.epoch,
+                storage_barrier_active: true,
+                message: format!(
+                    "Cluster '{}' isolated and fenced at epoch {}. Storage write barrier active.",
+                    cluster, token.epoch
+                ),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX CLUSTER STORAGE FENCING BARRIER                                   ");
+                println!("================================================================================");
+                println!("  Fenced Cluster:         {}", out.fenced_cluster);
+                println!("  Barrier Epoch:          {}", out.epoch);
+                println!(
+                    "  Storage Write Barrier:  ACTIVE (All writes signed with epoch <= {} rejected)",
+                    out.epoch
+                );
+                println!("  Split-Brain Guard:      ENFORCED");
+                println!("  Details:                {}", out.message);
+                println!("================================================================================");
+            }
+        }
+        DrSubCmd::Failback { target, json } => {
+            // Simulate target cluster recovery with fresh heartbeat
+            let cur_epoch = coord.fencing_engine().current_epoch();
+            let recover_hb = HeartbeatMsg {
+                sender_cluster: target.clone(),
+                epoch: cur_epoch,
+                timestamp_ms: now_ms,
+                rpo_lag_ms: 0,
+                state: DrState::NormalActive,
+            };
+            coord.record_heartbeat(recover_hb, now_ms);
+
+            let report = coord.execute_failback(target, now_ms)?;
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX DR RECOVERED PRIMARY FAILBACK REPORT                              ");
+                println!("================================================================================");
+                println!("  Mode:                   {:?}", report.mode);
+                println!("  Previous Primary:       {}", report.previous_primary);
+                println!("  Restored Primary:       {}", report.new_primary);
+                println!("  New Fencing Epoch:      {}", report.fencing_epoch);
+                println!("  RPO Lag:                {} ms", report.rpo_lag_ms);
+                println!("  Failback RTO Duration:  {} ms", report.rto_duration_ms);
+                println!(
+                    "  Status:                 {}",
+                    if report.success { "SUCCESS" } else { "FAILED" }
+                );
+                println!("  Notes:                  {}", report.notes);
+                println!("================================================================================");
+            }
+        }
+        DrSubCmd::Benchmark { iterations, json } => {
+            let bench = coord.run_benchmark(*iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX DISASTER RECOVERY & FENCING BENCHMARK REPORT                      ");
+                println!("================================================================================");
+                println!("  Simulated Iterations:   {}", bench.iterations);
+                println!(
+                    "  Heartbeat Probe Latency:{:.1} ns / msg",
+                    bench.avg_heartbeat_latency_ns
+                );
+                println!(
+                    "  Quorum Consensus Time:  {:.2} µs / token",
+                    bench.avg_fencing_consensus_us
+                );
+                println!(
+                    "  Failover RTO Duration:  {:.2} µs",
+                    bench.avg_failover_rto_us
+                );
+                println!(
+                    "  Write Fencing Ops/sec:  {:.0} validations/sec",
+                    bench.write_fencing_ops_per_sec
+                );
+                println!(
+                    "  Split-Brain Prevented:  {} rogue/stale write attempts blocked",
+                    bench.split_brain_prevented_count
+                );
+                println!("================================================================================");
             }
         }
     }

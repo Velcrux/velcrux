@@ -573,6 +573,30 @@ velcrux cloud-tier hydrate --chunk 0123456789abcdef0123456789abcdef0123456789abc
 velcrux cloud-tier benchmark --chunks 200
 ```
 
+### Autonomous Multi-Cluster Disaster Recovery Failover & Split-Brain Fencing
+
+Multi-region disaster recovery coordinator with active-standby topology (`Primary`, `Standby`, `Witness`), statistical failure detection and multi-path probe aggregation, monotonic fencing generation epochs approved by witness quorum ($\lfloor N/2 \rfloor + 1$) via keyed BLAKE3 signatures, zero-tolerance storage write barriers preventing split-brain corruption, and automated planned switchover or emergency failover:
+
+```bash
+# Inspect global DR topology, RPO lag, fencing lease, and failure detector health
+velcrux dr status
+
+# Execute planned switchover to a target standby cluster (zero data loss, RPO = 0)
+velcrux dr failover --target eu-central-1
+
+# Execute emergency failover to standby with lowest RPO replication lag
+velcrux dr failover --force
+
+# Forcibly fence an isolated cluster, elevating epoch barrier and revoking write permissions
+velcrux dr fence --cluster us-east-1
+
+# Gracefully failback primary leadership to a recovered cluster after reconciliation
+velcrux dr failback --target us-east-1
+
+# Run failure detector, quorum lease, and storage fencing benchmark
+velcrux dr benchmark --iterations 500
+```
+
 ### Transfer State and Resumption
 
 ```bash

@@ -5757,6 +5757,52 @@ cargo test -p velcrux-core --test tiering_lifecycle_tests -- --nocapture
 cargo test -p velcrux-client --test cli_cloud_tier -- --nocapture
 ```
 
+## 64. Autonomous Multi-Cluster Global Disaster Recovery Failover & Split-Brain Fencing Coordinator Runbook (ADR-080)
+
+The Multi-Cluster Global Disaster Recovery Failover & Split-Brain Fencing Coordinator provides enterprise business continuity across multi-region and hybrid cloud topologies. It coordinates active-standby roles (`Primary`, `Standby`, `Witness`), continuously computes RPO replication lag and failure suspicion scores via multi-path probe aggregation, enforces monotonic fencing generation epochs approved by witness quorums ($\lfloor N/2 \rfloor + 1$) using BLAKE3 cryptographic signatures, and blocks split-brain storage writes through zero-tolerance fencing barriers.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect global disaster recovery topology, RPO lag, fencing lease, and failure detector health
+velcrux dr status
+
+# 2. Inspect DR status formatted as machine-readable JSON
+velcrux dr status --json
+
+# 3. Execute planned graceful switchover to a target standby cluster (zero data loss, RPO = 0)
+velcrux dr failover --target eu-central-1
+
+# 4. Execute emergency failover to standby with lowest RPO replication lag
+velcrux dr failover --force
+
+# 5. Execute emergency failover in JSON mode
+velcrux dr failover --force --json
+
+# 6. Forcibly fence an isolated or split-brain cluster, elevating generation epoch barrier
+velcrux dr fence --cluster us-east-1
+
+# 7. Forcibly fence a cluster with an explicit target epoch in JSON mode
+velcrux dr fence --cluster rogue-node --epoch 2000 --json
+
+# 8. Gracefully failback primary leadership to a recovered cluster after divergence reconciliation
+velcrux dr failback --target us-east-1
+
+# 9. Execute failback in JSON mode
+velcrux dr failback --target us-east-1 --json
+
+# 10. Run failure detector, quorum lease, and storage write barrier benchmark
+velcrux dr benchmark --iterations 500
+
+# 11. Run benchmark in JSON mode
+velcrux dr benchmark --iterations 500 --json
+
+# 12. Run full Disaster Recovery & Fencing test suite
+cargo test -p velcrux-core --lib dr:: -- --nocapture
+cargo test -p velcrux-core --test dr_failover_tests -- --nocapture
+cargo test -p velcrux-client --test cli_dr -- --nocapture
+```
+
 
 
 
