@@ -35,6 +35,7 @@ pub mod dr;
 pub mod ec;
 pub mod enclave;
 pub mod error;
+pub mod fountain;
 pub mod ioring;
 pub mod k8s;
 pub mod kms;
@@ -162,6 +163,12 @@ pub use enclave::{
     SealedEnclavePayload, SealingPolicy, TcbVersion,
 };
 pub use error::{Result, VelcruxError};
+pub use fountain::{
+    run_fountain_benchmark, sample_neighbors, FountainBenchmarkReport, FountainConfig,
+    FountainContainer, FountainDecoder, FountainDecoderStatus, FountainEncoder, FountainError,
+    FountainHeader, FountainRatePacer, FountainResult, FountainSymbol, RobustSolitonCdf,
+    SplitMix64, FOUNTAIN_MAGIC, FOUNTAIN_VERSION,
+};
 pub use ioring::{
     cqe_flags, feature_flags, setup_flags, sqe_flags, FixedBuffer, FixedBufferRegistry,
     IoUringCompletionQueue, IoUringCqe, IoUringOp, IoUringParams, IoUringProbe, IoUringSqe,

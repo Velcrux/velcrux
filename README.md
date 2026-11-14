@@ -618,6 +618,27 @@ velcrux mesh disconnect --peer edge-node-1
 velcrux mesh benchmark --packets 500 --packet-size 1024
 ```
 
+### Dynamic Rateless Fountain Coding & Loss-Resilient Erasure Streaming
+
+Pure safe Rust rateless Luby Transform / Soliton fountain coding engine with infinite repair symbol generation on demand, Robust Soliton degree distribution $\Omega(d)$ with deterministic pseudo-random neighbor selection (`SplitMix64`), hybrid two-tier peeling belief propagation ($O(K \log K)$) + $GF(2)$ Gaussian elimination solver, dynamic rate pacer, and `VFT1` binary container packaging:
+
+```bash
+# Inspect fountain coding status, Soliton parameters, and codec engine state
+velcrux fountain status
+
+# Encode a file into a rateless fountain container (.vft) with 1024-byte symbols
+velcrux fountain encode --input /path/to/archive.tar.zst --output /path/to/archive.vft --symbol-size 1024
+
+# Encode a file simulating 25% transmission packet loss with 1.8x repair overhead
+velcrux fountain encode --input dataset.bin --output dataset.vft --loss-sim 0.25 --repair-overhead 1.80
+
+# Decode a fountain container file back into original reconstructed data
+velcrux fountain decode --input /path/to/archive.vft --output /path/to/restored_archive.tar.zst
+
+# Benchmark fountain encoding/decoding throughput, peeling, GF(2) solver, and loss resilience
+velcrux fountain benchmark --symbols 50 --symbol-size 1024 --loss-rate 0.20
+```
+
 ### Transfer State and Resumption
 
 ```bash

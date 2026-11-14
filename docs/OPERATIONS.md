@@ -5846,6 +5846,47 @@ cargo test -p velcrux-core --test mesh_tunnel_tests -- --nocapture
 cargo test -p velcrux-client --test cli_mesh -- --nocapture
 ```
 
+## 66. Dynamic Rateless Fountain Coding & Loss-Resilient Erasure Streaming Engine Runbook (ADR-082)
+
+The Dynamic Rateless Fountain Coding Engine provides near-zero overhead erasure streaming across lossy satellite links, cross-continental WANs, and adversarial edge networks. It generates an infinite sequence of repair symbols using the Robust Soliton degree distribution $\Omega(d)$ and deterministic pseudo-random neighbor selection (`SplitMix64`), reconstructs source blocks via a hybrid two-tier peeling belief propagation ($O(K \log K)$) + $GF(2)$ row-echelon Gaussian elimination solver, and packages data into self-contained `VFT1` containers.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect fountain coding status, Soliton parameters, and codec engine state
+velcrux fountain status
+
+# 2. Inspect fountain coding status formatted as machine-readable JSON
+velcrux fountain status --json
+
+# 3. Encode a file into a rateless fountain container (.vft) with 1024-byte symbols
+velcrux fountain encode --input /path/to/archive.tar.zst --output /path/to/archive.vft --symbol-size 1024
+
+# 4. Encode a file simulating 25% transmission packet loss with 1.8x repair overhead
+velcrux fountain encode --input dataset.bin --output dataset.vft --loss-sim 0.25 --repair-overhead 1.80
+
+# 5. Encode in JSON format for automated pipeline reporting
+velcrux fountain encode --input dataset.bin --symbol-size 512 --json
+
+# 6. Decode a fountain container file back into original reconstructed data
+velcrux fountain decode --input /path/to/archive.vft --output /path/to/restored_archive.tar.zst
+
+# 7. Decode in JSON format reporting reception overhead and BLAKE3 verification
+velcrux fountain decode --input dataset.vft --output dataset_restored.bin --json
+
+# 8. Benchmark fountain encoding/decoding throughput, peeling, GF(2) solver, and loss resilience
+velcrux fountain benchmark --symbols 50 --symbol-size 1024 --loss-rate 0.20
+
+# 9. Benchmark in JSON format
+velcrux fountain benchmark --symbols 100 --symbol-size 512 --loss-rate 0.30 --json
+
+# 10. Run full Fountain Coding test suite
+cargo test -p velcrux-core --lib fountain:: -- --nocapture
+cargo test -p velcrux-core --test fountain_coding_tests -- --nocapture
+cargo test -p velcrux-client --test cli_fountain -- --nocapture
+```
+
+
 
 
 

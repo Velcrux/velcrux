@@ -634,6 +634,34 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_mesh`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `peers`, `connect`, `disconnect`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DN: Dynamic Rateless Fountain Coding & Loss-Resilient Erasure Streaming Engine (ADR-082)
+- **Rateless Infinite Repair Symbol Generation on Demand (`FountainEncoder`, `FountainSymbol`)**:
+  - Pure safe Rust implementation generating potentially infinite sequences of independent repair symbols with monotonically increasing Encoding Symbol IDs (ESI: $0, 1, 2, \dots$).
+  - Systematic fast-path: The first $K$ symbols ($ESI < K$) are exact unencoded source blocks, allowing zero-overhead instant recovery under clean network conditions.
+- **Robust Soliton Degree Distribution $\Omega(d)$ & Deterministic Sampler (`RobustSolitonCdf`, `SplitMix64`)**:
+  - Blends Ideal Soliton distribution with a shifted inverted hyperbolic spike ($\mu(d) = (\rho(d) + \tau(d)) / \beta$).
+  - Guarantees constant ripple size during belief propagation, preventing solver stall.
+  - Deterministic pseudo-random neighbor selection using `SplitMix64` ensures sender and receiver agree on bipartite graph edges using only the 32-bit ESI.
+- **Hybrid Two-Tier Decoder: Peeling Belief Propagation + $GF(2)$ Gaussian Elimination (`FountainDecoder`)**:
+  - Tier 1: Fast $O(K \log K)$ linear peeling belief propagation solving degree-1 symbols and cascading bitwise XOR substitutions.
+  - Tier 2: Deterministic row-reduced echelon Gaussian elimination over $GF(2)$ resolving under-determined systems when peeling pauses.
+  - Newly solved variables trigger full ripple cascades into buffered equations, guaranteeing reconstruction with near-zero overhead ($\le 1.05\times K$).
+- **Dynamic Loss-Adaptive Rate Pacer (`FountainRatePacer`)**:
+  - Dynamically calculates repair symbol overhead multipliers and microsecond inter-packet pacing delays based on real-time smoothed RTT and loss rate feedback.
+- **Self-Contained Container Serialization Format (`FountainContainer`, `FountainHeader`, magic `VFT1`)**:
+  - Embeds original data length, symbol size, source symbol count $K$, and 256-bit cryptographic BLAKE3 integrity verification digest.
+- **Operator CLI Suite (`velcrux fountain`)**:
+  - `velcrux fountain status [--json]`: Displays engine status, Soliton distribution parameters ($c$, $\delta$), default symbol chunk size, decoding pipeline stages, and container format version.
+  - `velcrux fountain encode --input <FILE> [--output <PATH>] [--symbol-size <BYTES>] [--loss-sim <RATIO>] [--repair-overhead <MULT>] [--json]`: Encodes source files into `.vft` containers with optional simulated erasure packet loss.
+  - `velcrux fountain decode --input <CONTAINER> --output <FILE> [--json]`: Decodes containers back into original files and verifies cryptographic BLAKE3 integrity.
+  - `velcrux fountain benchmark [--symbols <K>] [--symbol-size <BYTES>] [--loss-rate <FLOAT>] [--json]`: Measures encoding/decoding throughput (MB/s), symbol overhead percentage, and simulated loss resilience.
+- **Verification Matrix**:
+  - `fountain::` unit tests: 7/7 passing tests in `velcrux-core` covering Soliton distribution, CDF normalization, deterministic neighbor sampling, encoder batching, peeling & GF(2) solver, rate pacing, and benchmark.
+  - `fountain_coding_tests`: 6/6 passing integration tests in `velcrux-core` validating zero-loss fastpath, 30% severe loss recovery, 60% catastrophic loss recovery, out-of-order & duplicate packet immunity, container serialization/deserialization, and benchmark simulation.
+  - `cli_fountain`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `encode`, `decode`, simulated loss resilience, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 
