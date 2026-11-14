@@ -552,6 +552,27 @@ velcrux ioring benchmark --entries 256 --ops 1000
 velcrux ioring benchmark --entries 512 --ops 5000 --sqpoll --json
 ```
 
+### Autonomous Multi-Cloud Object Storage Tiering & Lifecycle Compaction
+
+Multi-cloud object storage tiering (AWS S3, Google GCS, Azure Blob, Local NVMe), small-chunk aggregation into 64–128 MiB cloud-optimized compacted containers (`VLXT`), transparent random-access byte-range reads (`Range: bytes=start-end`), automated multi-cloud lifecycle policies, tombstone garbage collection and dead-space auto-repacking (30% threshold), and asynchronous archive hydration (Expedited, Standard, Bulk) with a 7-day temporary hot cache:
+
+```bash
+# Inspect multi-cloud storage tiering state, endpoints, containers, and costs
+velcrux cloud-tier status
+
+# Flush staging container and trigger compaction / repacking
+velcrux cloud-tier compact --target-tier cool --container-size-mb 64
+
+# Transparently read a chunk across the multi-cloud mesh via byte-range random access
+velcrux cloud-tier read --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# Initiate or check asynchronous cloud archive restoration (S3 RestoreObject / Azure Rehydration)
+velcrux cloud-tier hydrate --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --retrieval-tier expedited
+
+# Run high-throughput container compaction and range-read benchmark
+velcrux cloud-tier benchmark --chunks 200
+```
+
 ### Transfer State and Resumption
 
 ```bash

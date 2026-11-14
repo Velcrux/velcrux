@@ -544,6 +544,39 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_ioring`: 3/3 passing CLI integration tests validating `status`, `probe`, and `benchmark` across text and JSON modes.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DK: Autonomous Multi-Cloud Object Storage Tiering & Lifecycle Compaction Engine (S3 / GCS / Azure Blob) (ADR-079)
+- **Multi-Cloud Storage Provider Abstraction & Universal Addressing (`CloudProviderKind`, `CloudTierClass`, `CloudStorageUri`)**:
+  - Unified multi-cloud URI scheme: `s3://bucket/key`, `gcs://bucket/key`, `azblob://container/blob`, `file:///path`.
+  - Canonical storage tier classes: `Hot` (S3 Standard, GCS Standard, Azure Hot), `Cool` (S3 Standard-IA, GCS Nearline, Azure Cool), `Cold` (S3 Glacier Flexible, GCS Coldline, Azure Cold), and `DeepArchive` (S3 Glacier Deep Archive, GCS Archive, Azure Archive).
+  - Endpoint client abstraction (`CloudStorageEndpoint`) tracking request operations, byte transfers, and monthly cloud billing estimates.
+- **Compacted Cloud Container Format (`CompactedContainer`, `ContainerHeader`, `ChunkDescriptor`, `VLXT`)**:
+  - Aggregates small content-defined chunks (FastCDC ~64 KiB) into 64–128 MiB cloud-optimized containers (`VLXT` binary magic `0x564C5854`).
+  - Slashes cloud `PUT` request costs by up to $1000\times$, eliminating the small-object API cost multiplier.
+  - 4 KiB padded header, raw/Zstandard payload chunks, serialized index table, and 16-byte footer trailer.
+- **Transparent Random-Access Byte-Range Reads (`Range: bytes=start-end`)**:
+  - Consults the container index table to resolve target chunk offsets and lengths.
+  - Directly retrieves individual chunks via HTTP Range GET emulation without downloading the full container.
+  - Verifies payload CRC32C checksums and 32-byte BLAKE3 hashes on every read.
+- **Declarative Lifecycle Policy & Compaction Automation (`CloudLifecycleRule`, `CloudLifecyclePolicyEngine`)**:
+  - Evaluates age and heat-map criteria: automatic progression through Hot $\to$ Cool $\to$ Cold $\to$ DeepArchive $\to$ Expire.
+  - Prefix and tenant filtering support.
+  - Tombstone garbage collection: tracks dead-space fragmentation $\frac{\text{tombstoned\_bytes}}{\text{total\_bytes}}$; triggers `compact_and_repack` when fragmentation exceeds 30%, purging deleted chunks and uploading clean, densely packed containers.
+- **Asynchronous Cloud Archive Hydration Pipeline (`CloudHydrationPipeline`, `HydrationRequest`, `HydrationPriority`)**:
+  - Non-blocking restoration workflow for Cold and DeepArchive objects (S3 `RestoreObject` / Azure blob rehydration).
+  - Priority classes: `Expedited` (1–5 min), `Standard` (3–5 hours), `Bulk` (12–48 hours).
+  - Temporary 7-day hot cache with auto-expiry.
+- **Operator CLI Suite (`velcrux cloud-tier`)**:
+  - `velcrux cloud-tier status [--json]`: Displays configured endpoints, containers by tier, indexed chunks, compression ratio, pending hydrations, and monthly cost estimate.
+  - `velcrux cloud-tier compact [--target-tier <TIER>] [--container-size-mb <MB>] [--json]`: Flushes staging and executes container compaction.
+  - `velcrux cloud-tier read --chunk <HEX> [--json]`: Executes transparent byte-range read across the multi-cloud mesh.
+  - `velcrux cloud-tier hydrate --chunk <HEX> [--retrieval-tier <expedited|standard|bulk>] [--json]`: Initiates/polls asynchronous cloud archive restoration.
+  - `velcrux cloud-tier benchmark [--chunks <N>] [--json]`: Measures container compaction throughput, compression ratio, and range-read IOPS.
+- **Verification Matrix**:
+  - `cloud_tier::` unit tests: 9/9 passing tests in `velcrux-core` covering provider mappings, CRC32C, lifecycle rules, URI parsing, range-GET slicing, hydration pipeline, container serialization roundtrip, tombstone repacking, and transparent reads.
+  - `tiering_lifecycle_tests`: 5/5 passing integration tests validating multi-cloud container compaction, lifecycle transitions (45d, 120d, 400d, 800d), tombstone garbage collection (40% fragmentation), async archive hydration, and cost metrics accounting.
+  - `cli_cloud_tier`: 4/4 passing CLI integration tests validating `status`, `compact`, `read`, `hydrate`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

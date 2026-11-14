@@ -26,6 +26,7 @@ pub mod bdp_rebalance;
 pub mod bgp;
 pub mod chaos;
 pub mod chunking;
+pub mod cloud_tier;
 pub mod consensus;
 pub mod crdt;
 pub mod crypto;
@@ -110,6 +111,15 @@ pub use chunking::{
     create_chunker, is_all_zeros, CdcChunker, ChunkBoundary, ChunkEngine, ChunkMode, ChunkParams,
     Chunker, FastCdcChunker, FixedChunker, PipelinedChunk, PipelinedChunker, ReuseStats,
     RollingChunker, CHUNK_DEFAULT_MAX, CHUNK_DEFAULT_MIN, CHUNK_DEFAULT_TARGET,
+};
+pub use cloud_tier::{
+    compute_crc32c, ChunkDescriptor, CloudHydrationPipeline, CloudLifecyclePolicyEngine,
+    CloudLifecycleRule, CloudProviderKind, CloudStorageEndpoint, CloudStorageUri, CloudTierClass,
+    CloudTierStatusReport, CloudTieringEngine, CompactedContainer, CompressionCodec,
+    ContainerHeader, HydrationPriority, HydrationRequest, HydrationStatus, ReadChunkResult,
+    RebalanceReport, TieringAction, DEFAULT_COMPACTION_FRAGMENTATION_THRESHOLD,
+    DEFAULT_TARGET_CONTAINER_BYTES, MIN_CONTAINER_BYTES, VLXT_CONTAINER_MAGIC,
+    VLXT_CONTAINER_VERSION,
 };
 pub use consensus::{
     run_raft_benchmark, AppendEntriesRequest, AppendEntriesResponse, ClusterLease,

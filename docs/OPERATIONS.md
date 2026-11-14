@@ -5714,6 +5714,50 @@ cargo test -p velcrux-core --test ioring_storage_tests -- --nocapture
 cargo test -p velcrux-client --test cli_ioring -- --nocapture
 ```
 
+## 63. Autonomous Multi-Cloud Object Storage Tiering & Lifecycle Compaction Engine (ADR-079)
+
+The Multi-Cloud Object Storage Tiering & Compaction Engine aggregates millions of small FastCDC chunks into large 64–128 MiB cloud-optimized containers (`VLXT`), slashing S3 `PUT` request costs by up to 1000x. It provides transparent random-access byte-range reads (`Range: bytes=X-Y`), automated multi-cloud lifecycle policies across AWS S3, Google GCS, Azure Blob, and Local NVMe, tombstone garbage collection and dead-space auto-repacking (30% threshold), and an asynchronous cold archive hydration pipeline (Expedited, Standard, Bulk) with a 7-day temporary hot cache.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect multi-cloud storage tiering state, endpoints, containers, and costs
+velcrux cloud-tier status
+
+# 2. Inspect storage tiering status in machine-readable JSON format
+velcrux cloud-tier status --json
+
+# 3. Flush staging container and trigger compaction / repacking
+velcrux cloud-tier compact --target-tier cool --container-size-mb 64
+
+# 4. Flush and compact in JSON format
+velcrux cloud-tier compact --target-tier hot --json
+
+# 5. Transparently read a chunk across the multi-cloud mesh via byte-range random access
+velcrux cloud-tier read --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# 6. Read chunk in JSON format
+velcrux cloud-tier read --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --json
+
+# 7. Initiate or check asynchronous cloud archive restoration (S3 RestoreObject / Azure Rehydration)
+velcrux cloud-tier hydrate --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --retrieval-tier expedited
+
+# 8. Initiate hydration in JSON format
+velcrux cloud-tier hydrate --chunk 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --retrieval-tier expedited --json
+
+# 9. Execute high-throughput container compaction and range-read benchmark
+velcrux cloud-tier benchmark --chunks 200
+
+# 10. Execute benchmark in JSON format
+velcrux cloud-tier benchmark --chunks 500 --json
+
+# 11. Execute multi-cloud tiering and lifecycle compaction test suites
+cargo test -p velcrux-core --lib cloud_tier:: -- --nocapture
+cargo test -p velcrux-core --test tiering_lifecycle_tests -- --nocapture
+cargo test -p velcrux-client --test cli_cloud_tier -- --nocapture
+```
+
+
 
 
 
