@@ -661,6 +661,35 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_fountain`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `encode`, `decode`, simulated loss resilience, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DO: Autonomous Zero-Copy QUIC Kernel-Bypass Direct NIC Memory Fabric (AF_XDP / UMEM) (ADR-083)
+- **Pre-Registered User-Space Memory Pool (`NicUmemPool`, `NicFrameMetadata`)**:
+  - Contiguous pre-allocated virtual memory pool sliced into power-of-two frame buffers (2048 or 4096 bytes).
+  - Standard 256-byte `XDP_HEADROOM` reservation for driver metadata, zero memory fragmentation, and lockless free-list stack allocation.
+- **AF_XDP Lock-Free SPSC Circular Descriptor Rings (`NicCircularRing`, `NicRingSet`)**:
+  - 4 canonical AF_XDP descriptor rings with power-of-two mask modulo arithmetic:
+    1. Fill Ring (Userspace $\to$ NIC DMA): hands free frame addresses to hardware DMA.
+    2. Rx Ring (NIC DMA $\to$ Userspace): receives incoming packet descriptors without payload copying.
+    3. Tx Ring (Userspace $\to$ NIC DMA): submits packet descriptors directly out of UMEM.
+    4. Completion Ring (NIC DMA $\to$ Userspace): reclaims transmitted frame addresses back into UMEM pool.
+- **Wire-Speed Zero-Copy Packet Demuxer (`NicPacketDemuxer`, `NicQuicPacketView`)**:
+  - Dissects Ethernet (DIX II, 802.1Q VLAN, QinQ), IPv4/IPv6, UDP, and QUIC (RFC 9000) directly inside UMEM frame slices.
+  - Classifies QUIC Long Header (Initial, 0-RTT, Handshake, Retry) and Short Header (1-RTT application data, spin bit, key phase).
+  - Extracts Destination Connection ID (DCID) and Source Connection ID (SCID) with zero heap allocations on the hot path.
+- **Autonomous Direct NIC Memory Fabric (`NicMemoryFabric`)**:
+  - High-level coordinator orchestrating automatic Fill Ring replenishment, Completion Ring reclamation, and burst Rx/Tx processing.
+  - Driver operating modes: `ZeroCopyDriver`, `CopySkbGeneric`, `HardwareOffloadAsic`, and `EmulatedUserSpace`.
+- **Operator CLI Suite (`velcrux nic`)**:
+  - `velcrux nic status [--interface <IFACE>] [--mode <MODE>] [--json]`: Displays interface name, driver mode, zero-copy bypass status, UMEM frame utilization, ring occupancy, and traffic counters.
+  - `velcrux nic pools [--interface <IFACE>] [--json]`: Displays UMEM pool footprint, frame size, headroom prefix, and in-flight DMA frames.
+  - `velcrux nic rings [--interface <IFACE>] [--json]`: Displays circular descriptor ring capacities, occupied slots, total produced/consumed, and utilization.
+  - `velcrux nic benchmark [--frames <N>] [--frame-size <BYTES>] [--iterations <N>] [--json]`: Measures line-rate Mpps, Gbps, ring cycle latency (ns/desc), zero-copy efficiency, and frame reuse.
+- **Verification Matrix**:
+  - `nic::` unit tests: 6/6 passing tests in `velcrux-core` covering UMEM pool allocation, ring power-of-two rollover, QUIC Long/Short demuxing, replenish/reclaim lifecycle, end-to-end loopback, and benchmark runner.
+  - `nic_memory_fabric_tests`: 6/6 passing integration tests in `velcrux-core` validating multi-frame concurrency and exhaustion, ring saturation and rollover, 802.1Q VLAN and QinQ packet demuxing, line-rate burst loopback, driver modes, and benchmark simulation.
+  - `cli_nic`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `pools`, `rings`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

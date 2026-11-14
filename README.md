@@ -639,6 +639,27 @@ velcrux fountain decode --input /path/to/archive.vft --output /path/to/restored_
 velcrux fountain benchmark --symbols 50 --symbol-size 1024 --loss-rate 0.20
 ```
 
+### Autonomous Zero-Copy QUIC Kernel-Bypass Direct NIC Memory Fabric (AF_XDP / UMEM)
+
+Pure safe Rust line-rate kernel-bypass networking fabric directly targeting pre-registered user-space UMEM frame buffers, lockless single-producer single-consumer circular descriptor rings (Fill, Rx, Tx, Completion), wire-speed L2-L7 zero-copy QUIC packet demuxing and connection ID classification, and SmartNIC/FPGA hardware offloading:
+
+```bash
+# Inspect direct NIC memory fabric status, driver mode, UMEM utilization, and traffic counters
+velcrux nic status
+
+# Inspect status with hardware offload (SmartNIC / FPGA ASIC) mode
+velcrux nic status --mode hardware
+
+# Inspect UMEM contiguous memory pool, frame sizes, and base headroom offsets
+velcrux nic pools
+
+# Inspect AF_XDP circular descriptor rings (Fill, Rx, Tx, Completion) capacity and utilization
+velcrux nic rings
+
+# Execute line-rate kernel-bypass benchmark measuring Mpps, Gbps, ring latency, and recycling
+velcrux nic benchmark --frames 512 --frame-size 2048 --iterations 100
+```
+
 ### Transfer State and Resumption
 
 ```bash

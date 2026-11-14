@@ -5886,6 +5886,50 @@ cargo test -p velcrux-core --test fountain_coding_tests -- --nocapture
 cargo test -p velcrux-client --test cli_fountain -- --nocapture
 ```
 
+## 67. Autonomous Zero-Copy QUIC Kernel-Bypass Direct NIC Memory Fabric Runbook (ADR-083)
+
+The Direct NIC Memory Fabric provides line-rate, sub-microsecond zero-copy packet bypassing directly into user-space UMEM memory pools using AF_XDP lockless circular descriptor rings. It bypasses kernel SKB allocation, memory copying, and context switching, classifying QUIC headers and connection IDs directly within UMEM frame slices.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect NIC memory fabric status, driver mode, UMEM frame utilization, and traffic counters
+velcrux nic status
+
+# 2. Inspect status formatted as machine-readable JSON
+velcrux nic status --json
+
+# 3. Inspect NIC fabric status on a specific network interface
+velcrux nic status --interface eth0 --mode zerocopy
+
+# 4. Inspect status with hardware offload (SmartNIC / FPGA ASIC) mode
+velcrux nic status --mode hardware
+
+# 5. Inspect UMEM contiguous memory pool, frame sizes, and base headroom offsets
+velcrux nic pools
+
+# 6. Inspect UMEM pools formatted as JSON
+velcrux nic pools --json
+
+# 7. Inspect AF_XDP circular descriptor rings (Fill, Rx, Tx, Completion) capacity and utilization
+velcrux nic rings
+
+# 8. Inspect AF_XDP rings formatted as JSON
+velcrux nic rings --json
+
+# 9. Execute line-rate kernel-bypass benchmark measuring Mpps, Gbps, ring latency, and recycling
+velcrux nic benchmark --frames 512 --frame-size 2048 --iterations 100
+
+# 10. Execute benchmark formatted as JSON
+velcrux nic benchmark --frames 256 --iterations 50 --json
+
+# 11. Run full NIC Memory Fabric test suite
+cargo test -p velcrux-core --lib nic:: -- --nocapture
+cargo test -p velcrux-core --test nic_memory_fabric_tests -- --nocapture
+cargo test -p velcrux-client --test cli_nic -- --nocapture
+```
+
+
 
 
 

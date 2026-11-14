@@ -44,6 +44,7 @@ pub mod manifest;
 pub mod mesh;
 pub mod mpc;
 pub mod netem;
+pub mod nic;
 pub mod nvme;
 pub mod protocol;
 pub mod provenance;
@@ -206,6 +207,14 @@ pub use mpc::{
     Point as MpcPoint, Polynomial as MpcPolynomial, Scalar as MpcScalar, SchnorrDlogProof,
     SecretShare as MpcSecretShare, SignatureShare as MpcSignatureShare, SigningNonces,
     ThresholdSignature, ThresholdSigner,
+};
+pub use nic::{
+    craft_benchmark_quic_packet, run_nic_benchmark, NicBenchmarkReport, NicCircularRing,
+    NicCompletionRing, NicDriverMode, NicError, NicFillRing, NicFrameMetadata, NicFrameState,
+    NicMemoryFabric, NicPacketDemuxer, NicPacketDescriptor, NicQuicHeaderForm, NicQuicPacketView,
+    NicResult, NicRingSet, NicRingStats, NicRxRing, NicStatus, NicTxRing, NicUmemConfig,
+    NicUmemPool, NIC_DEFAULT_FRAME_SIZE, NIC_DEFAULT_HEADROOM, NIC_DEFAULT_RING_SIZE,
+    NIC_DEFAULT_TOTAL_FRAMES,
 };
 pub use nvme::{
     AnaState, ControllerPath, DpuBenchmarkSummary, DpuDmaExecutionResult, DpuHardwareProfile,

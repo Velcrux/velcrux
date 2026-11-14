@@ -904,6 +904,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: FountainSubCmd,
     },
+    /// Autonomous Zero-Copy QUIC Kernel-Bypass Direct NIC Memory Fabric (AF_XDP / UMEM) (Option DO).
+    Nic {
+        #[command(subcommand)]
+        sub: NicSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -3067,6 +3072,55 @@ enum FountainSubCmd {
         /// Simulated packet erasure loss rate (0.0 to 0.9, default: 0.20).
         #[arg(long = "loss-rate", default_value_t = 0.20)]
         loss_rate: f64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum NicSubCmd {
+    /// Inspect direct NIC memory fabric status, driver mode, UMEM utilization, and packet counters.
+    Status {
+        /// Target network interface name (default: "vlx-nic0").
+        #[arg(long, default_value = "vlx-nic0")]
+        interface: String,
+        /// Driver mode: "zerocopy", "generic", "hardware", or "emulated" (default: "zerocopy").
+        #[arg(long, default_value = "zerocopy")]
+        mode: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect UMEM memory pool frame allocation, base offsets, and memory headroom.
+    Pools {
+        /// Target network interface name (default: "vlx-nic0").
+        #[arg(long, default_value = "vlx-nic0")]
+        interface: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect AF_XDP circular descriptor rings (Fill, Rx, Tx, Completion) capacity and utilization.
+    Rings {
+        /// Target network interface name (default: "vlx-nic0").
+        #[arg(long, default_value = "vlx-nic0")]
+        interface: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute line-rate kernel-bypass benchmark measuring Mpps, Gbps, ring cycle latency, and frame recycling.
+    Benchmark {
+        /// Total UMEM frames to allocate for benchmark (default: 512).
+        #[arg(long, default_value_t = 512)]
+        frames: usize,
+        /// Frame buffer size in bytes (default: 2048).
+        #[arg(long, default_value_t = 2048)]
+        frame_size: usize,
+        /// Number of benchmark iteration bursts (default: 100).
+        #[arg(long, default_value_t = 100)]
+        iterations: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -5246,6 +5300,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Fountain { sub } => {
             run_fountain(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Nic { sub } => {
+            run_nic(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -14575,6 +14633,231 @@ async fn run_fountain(cli: &Cli, sub: &FountainSubCmd) -> anyhow::Result<()> {
                     }
                 );
                 println!("  Erasure Recovery:       SUCCESSFUL");
+                println!("================================================================================");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_nic(cli: &Cli, sub: &NicSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::nic::{run_nic_benchmark, NicDriverMode, NicMemoryFabric, NicUmemConfig};
+
+    let is_json = cli.json;
+
+    match sub {
+        NicSubCmd::Status {
+            interface,
+            mode,
+            json,
+        } => {
+            let driver_mode = match mode.to_lowercase().as_str() {
+                "generic" | "skb" => NicDriverMode::CopySkbGeneric,
+                "hardware" | "offload" | "asic" => NicDriverMode::HardwareOffloadAsic,
+                "emulated" | "user" => NicDriverMode::EmulatedUserSpace,
+                _ => NicDriverMode::ZeroCopyDriver,
+            };
+
+            let config = NicUmemConfig::default();
+            let fabric = NicMemoryFabric::new(interface, driver_mode, config)?;
+            let status = fabric.status();
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX ZERO-COPY QUIC KERNEL-BYPASS DIRECT NIC MEMORY FABRIC             ");
+                println!("================================================================================");
+                println!("  Interface:              {}", status.interface_name);
+                println!("  Driver Mode:            {:?}", status.driver_mode);
+                println!(
+                    "  Zero-Copy Bypass:       {}",
+                    if status.zero_copy_active {
+                        "ACTIVE (DMA Direct into UMEM)"
+                    } else {
+                        "GENERIC (SKB Copy Fallback)"
+                    }
+                );
+                println!(
+                    "  UMEM Memory Pool:       {} frames ({} bytes)",
+                    status.umem_total_frames, status.umem_total_bytes
+                );
+                println!(
+                    "  Frame Allocation:       {} in flight / {} free ({:.2}% utilized)",
+                    status.frames_in_flight, status.frames_free, status.umem_utilization_percent
+                );
+                println!("  AF_XDP Ring Occupancy:");
+                println!(
+                    "    Fill Ring (DMA Ingress):       {} / 1024 slots",
+                    status.fill_ring_count
+                );
+                println!(
+                    "    Rx Ring (Userspace Ingress):   {} / 1024 slots",
+                    status.rx_ring_count
+                );
+                println!(
+                    "    Tx Ring (Userspace Egress):    {} / 1024 slots",
+                    status.tx_ring_count
+                );
+                println!(
+                    "    Completion Ring (DMA Reclaim): {} / 1024 slots",
+                    status.completion_ring_count
+                );
+                println!("  Traffic Counters:");
+                println!(
+                    "    Rx Traffic:           {} packets ({} bytes)",
+                    status.total_rx_packets, status.total_rx_bytes
+                );
+                println!(
+                    "    Tx Traffic:           {} packets ({} bytes)",
+                    status.total_tx_packets, status.total_tx_bytes
+                );
+                println!("    Dropped Packets:      {}", status.dropped_packets);
+                println!("================================================================================");
+            }
+        }
+        NicSubCmd::Pools { interface, json } => {
+            let config = NicUmemConfig::default();
+            let fabric = NicMemoryFabric::new(interface, NicDriverMode::ZeroCopyDriver, config)?;
+            let pool = fabric.umem();
+
+            #[derive(serde::Serialize)]
+            struct UmemPoolInfo {
+                interface: String,
+                total_frames: usize,
+                frame_size_bytes: usize,
+                headroom_bytes: usize,
+                total_pool_bytes: usize,
+                free_frames: usize,
+                in_flight_frames: usize,
+                packet_base_offset: usize,
+            }
+
+            let info = UmemPoolInfo {
+                interface: interface.clone(),
+                total_frames: pool.config().total_frames,
+                frame_size_bytes: pool.config().frame_size,
+                headroom_bytes: pool.config().headroom,
+                total_pool_bytes: pool.total_bytes(),
+                free_frames: pool.free_frames_count(),
+                in_flight_frames: pool.in_flight_count(),
+                packet_base_offset: pool.config().headroom,
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("================================================================================");
+                println!("      UMEM USER-SPACE CONTIGUOUS MEMORY POOL CONFIGURATION                     ");
+                println!("================================================================================");
+                println!("  Interface:              {}", info.interface);
+                println!(
+                    "  Total Pool Footprint:   {} bytes ({:.2} MiB)",
+                    info.total_pool_bytes,
+                    info.total_pool_bytes as f64 / (1024.0 * 1024.0)
+                );
+                println!("  Total Sliced Frames:    {} frames", info.total_frames);
+                println!("  Frame Buffer Size:      {} bytes", info.frame_size_bytes);
+                println!(
+                    "  Headroom Prefix:        {} bytes (XDP_HEADROOM)",
+                    info.headroom_bytes
+                );
+                println!("  Available Free Frames:  {}", info.free_frames);
+                println!("  In-Flight DMA Frames:   {}", info.in_flight_frames);
+                println!(
+                    "  Packet Ingress Offset:  0x{:04x} within each frame",
+                    info.packet_base_offset
+                );
+                println!("================================================================================");
+            }
+        }
+        NicSubCmd::Rings { interface, json } => {
+            let config = NicUmemConfig::default();
+            let fabric = NicMemoryFabric::new(interface, NicDriverMode::ZeroCopyDriver, config)?;
+            let rings = fabric.rings();
+
+            let fill_stats = rings.fill.stats();
+            let rx_stats = rings.rx.stats();
+            let tx_stats = rings.tx.stats();
+            let comp_stats = rings.completion.stats();
+
+            let all_stats = vec![fill_stats, rx_stats, tx_stats, comp_stats];
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&all_stats)?);
+            } else {
+                println!("================================================================================");
+                println!("      AF_XDP SPSC LOCKLESS CIRCULAR DESCRIPTOR RINGS                            ");
+                println!("================================================================================");
+                println!(
+                    "{:<20} {:<12} {:<12} {:<16} {:<16} {:<12}",
+                    "RING NAME",
+                    "CAPACITY",
+                    "OCCUPIED",
+                    "TOTAL PRODUCED",
+                    "TOTAL CONSUMED",
+                    "UTILIZATION"
+                );
+                println!("--------------------------------------------------------------------------------");
+                for s in &all_stats {
+                    println!(
+                        "{:<20} {:<12} {:<12} {:<16} {:<16} {:.2}%",
+                        s.ring_name,
+                        s.capacity,
+                        s.current_len,
+                        s.total_produced,
+                        s.total_consumed,
+                        s.utilization_percent
+                    );
+                }
+                println!("================================================================================");
+            }
+        }
+        NicSubCmd::Benchmark {
+            frames,
+            frame_size,
+            iterations,
+            json,
+        } => {
+            let report = run_nic_benchmark(*frames, *frame_size, *iterations);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("      NIC ZERO-COPY KERNEL-BYPASS LINE-RATE PERFORMANCE BENCHMARK               ");
+                println!("================================================================================");
+                println!("  Target Interface:       {}", report.interface_name);
+                println!("  Driver Operating Mode:  {:?}", report.driver_mode);
+                println!(
+                    "  Total Packets Cycled:   {} packets",
+                    report.packets_processed
+                );
+                println!(
+                    "  UMEM Frame Size:        {} bytes",
+                    report.frame_size_bytes
+                );
+                println!(
+                    "  Packet Throughput:      {:.3} Million Packets/sec (Mpps)",
+                    report.throughput_mpps
+                );
+                println!(
+                    "  Wire Bandwidth:         {:.2} Gbps",
+                    report.throughput_gbps
+                );
+                println!(
+                    "  Ring Cycle Latency:     {:.2} ns / descriptor",
+                    report.ring_cycle_latency_ns
+                );
+                println!(
+                    "  Zero-Copy Efficiency:   {:.1}% (0 heap allocations on hot path)",
+                    report.zero_copy_efficiency_percent
+                );
+                println!(
+                    "  UMEM Frame Reuse:       {:.2}x (perfect conservation)",
+                    report.frame_reuse_ratio
+                );
                 println!("================================================================================");
             }
         }
