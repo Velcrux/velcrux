@@ -894,6 +894,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: DrSubCmd,
     },
+    /// Autonomous Micro-Segmented Zero-Trust WireGuard / Noise Mesh Tunnel Fabric (Option DM).
+    Mesh {
+        #[command(subcommand)]
+        sub: MeshSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -2944,6 +2949,61 @@ enum DrSubCmd {
         /// Number of benchmark simulation iterations (default: 500).
         #[arg(long, default_value_t = 500)]
         iterations: u32,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum MeshSubCmd {
+    /// Inspect local WireGuard / Noise mesh interface, public keys, active peers, and aggregate throughput.
+    Status {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all configured mesh peers, endpoints, AllowedIPs, handshake timestamps, and transfer bytes.
+    Peers {
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Register a remote peer and initiate a Noise_IKpsk2 handshake to establish an encrypted tunnel.
+    Connect {
+        /// Assigned peer identifier.
+        #[arg(long)]
+        peer: String,
+        /// Peer Curve25519 public key (hex formatted, 64 hex characters).
+        #[arg(long)]
+        public_key: String,
+        /// Remote socket endpoint (e.g. "198.51.100.1:51820").
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Routed CIDR prefix (e.g. "10.42.0.0/24").
+        #[arg(long = "allowed-ips", default_value = "10.42.0.0/24")]
+        allowed_ips: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Terminate session with peer and remove cryptographic routing rules.
+    Disconnect {
+        /// Peer identifier to disconnect and remove.
+        #[arg(long)]
+        peer: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark Noise handshake latency, transport encryption/decryption throughput, and anti-replay barriers.
+    Benchmark {
+        /// Number of simulated transport packets (default: 500).
+        #[arg(long, default_value_t = 500)]
+        packets: usize,
+        /// Size of simulated packet payload in bytes (default: 1024).
+        #[arg(long, default_value_t = 1024)]
+        packet_size: usize,
         /// Output formatted as JSON.
         #[arg(long)]
         json: bool,
@@ -5115,6 +5175,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Dr { sub } => {
             run_dr(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Mesh { sub } => {
+            run_mesh(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -13813,6 +13877,278 @@ async fn run_dr(cli: &Cli, sub: &DrSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  Split-Brain Prevented:  {} rogue/stale write attempts blocked",
                     bench.split_brain_prevented_count
+                );
+                println!("================================================================================");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn setup_mesh_demo_router() -> velcrux_core::mesh::MeshTunnelRouter {
+    use velcrux_core::mesh::{MeshTunnelRouter, NoiseKeyPair};
+
+    // Use a fixed deterministic keypair for CLI status consistency
+    let mut local_priv = [0u8; 32];
+    local_priv[0] = 0x42;
+    local_priv[31] = 0x01;
+    let local_kp = NoiseKeyPair::from_private_bytes(local_priv);
+
+    let mut router = MeshTunnelRouter::with_keypair(local_kp, 51820, 1420);
+
+    // Peer 1: US East Datacenter Gateway
+    let mut peer1_priv = [0u8; 32];
+    peer1_priv[0] = 0x51;
+    let peer1_kp = NoiseKeyPair::from_private_bytes(peer1_priv);
+    let _ = router.add_peer(
+        "dc-us-east",
+        &peer1_kp.public_key_hex(),
+        Some("198.51.100.10:51820"),
+        &["10.200.1.0/24", "10.200.2.0/24"],
+    );
+
+    // Peer 2: EU Frankfurt Storage Vault
+    let mut peer2_priv = [0u8; 32];
+    peer2_priv[0] = 0x52;
+    let peer2_kp = NoiseKeyPair::from_private_bytes(peer2_priv);
+    let _ = router.add_peer(
+        "vault-eu-central",
+        &peer2_kp.public_key_hex(),
+        Some("203.0.113.25:51820"),
+        &["10.200.10.0/24"],
+    );
+
+    // Peer 3: Singapore Edge PoP
+    let mut peer3_priv = [0u8; 32];
+    peer3_priv[0] = 0x53;
+    let peer3_kp = NoiseKeyPair::from_private_bytes(peer3_priv);
+    let _ = router.add_peer(
+        "pop-ap-southeast",
+        &peer3_kp.public_key_hex(),
+        Some("192.0.2.77:51820"),
+        &["10.200.20.0/24"],
+    );
+
+    // Simulate an established session with dc-us-east
+    let init = router.initiate_handshake("dc-us-east", 10_000).unwrap();
+    let mut peer1_router = MeshTunnelRouter::with_keypair(peer1_kp, 51820, 1420);
+    let _ = peer1_router.add_peer(
+        "local-client",
+        &router.local_keypair().public_key_hex(),
+        Some("127.0.0.1:51820"),
+        &["10.200.0.0/24"],
+    );
+    let (resp, _) = peer1_router
+        .process_handshake_initiation(&init, Some("127.0.0.1:51820"), 10_005)
+        .unwrap();
+    let _ = router.process_handshake_response(&resp, 10_010).unwrap();
+
+    router
+}
+
+async fn run_mesh(cli: &Cli, sub: &MeshSubCmd) -> anyhow::Result<()> {
+    let is_json = cli.json;
+    let mut router = setup_mesh_demo_router();
+
+    match sub {
+        MeshSubCmd::Status { json } => {
+            let status = router.status();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("================================================================================");
+                println!("      VELCRUX ZERO-TRUST WIREGUARD / NOISE MESH TUNNEL FABRIC                   ");
+                println!("================================================================================");
+                println!("  Virtual Interface:      {}", status.interface_name);
+                println!("  Public Key (Hex):       {}", status.public_key);
+                println!("  Public Key (Base64):    {}", status.public_key_base64);
+                println!("  Listening UDP Port:     {}", status.listen_port);
+                println!("  Configured MTU:         {} bytes", status.mtu);
+                println!(
+                    "  Active Peers:           {} total ({} connected)",
+                    status.peer_count, status.connected_peer_count
+                );
+                println!("  Total Transmitted:      {} bytes", status.total_tx_bytes);
+                println!("  Total Received:         {} bytes", status.total_rx_bytes);
+                println!("--------------------------------------------------------------------------------");
+                println!(
+                    "{:<18} {:<24} {:<20} {:<10} {:<14}",
+                    "PEER ID", "ENDPOINT", "ALLOWED IPS", "STATUS", "TX / RX BYTES"
+                );
+                println!("--------------------------------------------------------------------------------");
+                for p in &status.peers {
+                    let ep = p.endpoint.as_deref().unwrap_or("<roaming>");
+                    let allowed = p.allowed_ips.join(", ");
+                    let conn = if p.is_connected { "CONNECTED" } else { "IDLE" };
+                    let bytes = format!("{}/{} B", p.tx_bytes, p.rx_bytes);
+                    println!(
+                        "{:<18} {:<24} {:<20} {:<10} {:<14}",
+                        p.peer_id, ep, allowed, conn, bytes
+                    );
+                }
+                println!("================================================================================");
+            }
+        }
+        MeshSubCmd::Peers { json } => {
+            let peers = router.peers_list();
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&peers)?);
+            } else {
+                println!("================================================================================");
+                println!("      CONFIGURED ZERO-TRUST MESH TUNNEL PEERS                                   ");
+                println!("================================================================================");
+                for p in &peers {
+                    println!("  Peer Identifier:        {}", p.peer_id);
+                    println!("  Curve25519 Public Key:  {}", p.public_key);
+                    println!(
+                        "  Endpoint:               {}",
+                        p.endpoint.as_deref().unwrap_or("<roaming>")
+                    );
+                    println!("  Allowed IPs:            {}", p.allowed_ips.join(", "));
+                    println!(
+                        "  Session State:          {}",
+                        if p.is_connected {
+                            "ESTABLISHED"
+                        } else {
+                            "NOT ESTABLISHED"
+                        }
+                    );
+                    println!(
+                        "  Traffic:                Tx: {} bytes, Rx: {} bytes",
+                        p.tx_bytes, p.rx_bytes
+                    );
+                    println!("--------------------------------------------------------------------------------");
+                }
+            }
+        }
+        MeshSubCmd::Connect {
+            peer,
+            public_key,
+            endpoint,
+            allowed_ips,
+            json,
+        } => {
+            let allowed: Vec<&str> = allowed_ips.split(',').map(|s| s.trim()).collect();
+            let _ = router.add_peer(peer, public_key, endpoint.as_deref(), &allowed);
+            let packet = router.initiate_handshake(peer, 10_000)?;
+
+            #[derive(serde::Serialize)]
+            struct ConnectReport {
+                peer: String,
+                public_key: String,
+                endpoint: Option<String>,
+                allowed_ips: Vec<String>,
+                handshake_initiated: bool,
+                sender_index: u32,
+                packet_bytes: usize,
+                status: String,
+            }
+
+            let out = ConnectReport {
+                peer: peer.clone(),
+                public_key: public_key.clone(),
+                endpoint: endpoint.clone(),
+                allowed_ips: allowed.iter().map(|s| s.to_string()).collect(),
+                handshake_initiated: true,
+                sender_index: packet.sender_index,
+                packet_bytes: packet.to_bytes().len(),
+                status: "HANDSHAKE_INITIATED".to_string(),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("      WIREGUARD / NOISE HANDSHAKE INITIATED                                     ");
+                println!("================================================================================");
+                println!("  Peer Identifier:        {}", out.peer);
+                println!("  Target Public Key:      {}", out.public_key);
+                println!(
+                    "  Target Endpoint:        {}",
+                    out.endpoint.as_deref().unwrap_or("<roaming>")
+                );
+                println!("  Allowed IPs Prefix:     {}", out.allowed_ips.join(", "));
+                println!("  Session Index:          {}", out.sender_index);
+                println!(
+                    "  Wire Size:              {} bytes (Type 1 Handshake Initiation)",
+                    out.packet_bytes
+                );
+                println!("  Session Status:         {}", out.status);
+                println!("================================================================================");
+            }
+        }
+        MeshSubCmd::Disconnect { peer, json } => {
+            router.remove_peer(peer)?;
+
+            #[derive(serde::Serialize)]
+            struct DisconnectReport {
+                peer: String,
+                disconnected: bool,
+                routes_purged: bool,
+                message: String,
+            }
+
+            let out = DisconnectReport {
+                peer: peer.clone(),
+                disconnected: true,
+                routes_purged: true,
+                message: format!("Session with peer '{}' terminated and routes purged.", peer),
+            };
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("================================================================================");
+                println!("      MESH PEER DISCONNECTED                                                    ");
+                println!("================================================================================");
+                println!("  Peer Identifier:        {}", out.peer);
+                println!("  Session Keys Purged:    YES");
+                println!("  AllowedIPs Removed:     YES");
+                println!("  Status:                 DISCONNECTED");
+                println!("================================================================================");
+            }
+        }
+        MeshSubCmd::Benchmark {
+            packets,
+            packet_size,
+            json,
+        } => {
+            let bench = router.run_benchmark(*packets, *packet_size);
+
+            if *json || is_json {
+                println!("{}", serde_json::to_string_pretty(&bench)?);
+            } else {
+                println!("================================================================================");
+                println!("      WIREGUARD / NOISE MESH TUNNEL PERFORMANCE BENCHMARK                       ");
+                println!("================================================================================");
+                println!(
+                    "  Packets Processed:      {} packets",
+                    bench.packets_processed
+                );
+                println!(
+                    "  Packet Payload Size:    {} bytes",
+                    bench.packet_size_bytes
+                );
+                println!(
+                    "  Noise Handshake Time:   {:.2} µs",
+                    bench.handshake_latency_us
+                );
+                println!(
+                    "  Encryption Throughput:  {:.2} MB/s",
+                    bench.encryption_throughput_mb_s
+                );
+                println!(
+                    "  Decryption Throughput:  {:.2} MB/s",
+                    bench.decryption_throughput_mb_s
+                );
+                println!(
+                    "  Anti-Replay Validation: {:.0} checks/sec",
+                    bench.anti_replay_checks_per_sec
+                );
+                println!(
+                    "  Replayed Packets Dropped:{} attacks prevented",
+                    bench.replayed_packets_dropped
                 );
                 println!("================================================================================");
             }

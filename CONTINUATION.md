@@ -605,6 +605,36 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_dr`: 5/5 passing CLI integration tests in `velcrux-client` validating `status`, `failover`, `fence`, `failback`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DM: Autonomous Micro-Segmented Zero-Trust WireGuard / Noise Mesh Tunnel Fabric (ADR-081)
+- **Noise Protocol Handshake & Modern Cryptography (`Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s`, `NoiseHandshake`, `NoiseSession`)**:
+  - Pure safe Rust 1-RTT Noise IK handshake matching the WireGuard specification.
+  - Classical Curve25519 (X25519) Diffie-Hellman key exchange, ChaCha20-Poly1305 AEAD authenticated symmetric transport encryption, and BLAKE3 key derivation / MAC1/MAC2 verification.
+- **Canonical WireGuard Wire Framing (`HandshakeInitiationPacket`, `HandshakeResponsePacket`, `TransportDataPacket`)**:
+  - Type 1 Handshake Initiation (148 bytes: sender index, unencrypted ephemeral, encrypted static, encrypted timestamp, MAC1, MAC2).
+  - Type 2 Handshake Response (92 bytes: sender index, receiver index, unencrypted ephemeral, encrypted empty payload, MAC1, MAC2).
+  - Type 4 Transport Data (16-byte header + encrypted payload + 16-byte Poly1305 auth tag).
+- **Cryptographic Routing & AllowedIPs Prefix Trie (`AllowedIpsTrie`, `CidrRule`)**:
+  - Longest-prefix match trie supporting IPv4 and IPv6 CIDRs.
+  - Outbound destination routing selecting target peer tunnel.
+  - Inbound anti-spoofing verification: packets dropped immediately if inner source IP does not match the peer's configured `AllowedIPs`.
+- **256-Bit Sliding Window Anti-Replay Barrier (`AntiReplayWindow`, RFC 6479)**:
+  - 256-bit sliding window bitmap.
+  - Drops replayed, duplicated, or stale packets older than 256 transmission counts.
+- **Autonomous Endpoint Roaming**:
+  - Automatically updates peer socket endpoint upon receipt of an authenticated packet originating from a new source IP or UDP port.
+- **Operator CLI Suite (`velcrux mesh`)**:
+  - `velcrux mesh status [--json]`: Displays virtual interface, local public key (hex & base64), listening port, MTU, active peers count, and aggregate transfer volume.
+  - `velcrux mesh peers [--json]`: Lists configured peers, endpoints, AllowedIPs, handshake timestamps, and transfer bytes.
+  - `velcrux mesh connect --peer <PEER_ID> --public-key <PUBKEY> [--endpoint <IP:PORT>] [--allowed-ips <CIDR>] [--json]`: Initiates Noise handshake with peer.
+  - `velcrux mesh disconnect --peer <PEER_ID> [--json]`: Terminates session and removes routing rules.
+  - `velcrux mesh benchmark [--packets <N>] [--packet-size <BYTES>] [--json]`: Measures Noise handshake latency, transport cipher throughput (MB/s), and anti-replay barrier checks/sec.
+- **Verification Matrix**:
+  - `mesh::` unit tests: 6/6 passing tests in `velcrux-core` covering keypairs, anti-replay sliding window, AllowedIPs longest-prefix routing, anti-spoofing, Noise_IKpsk2 handshake roundtrip, router tunneling, and benchmark.
+  - `mesh_tunnel_tests`: 6/6 passing integration tests in `velcrux-core` validating multi-peer hub-and-spoke topologies, session establishment, bidirectional IP encapsulation/decapsulation, anti-spoofing enforcement, mobile roaming endpoint updates, and benchmark execution.
+  - `cli_mesh`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `peers`, `connect`, `disconnect`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 

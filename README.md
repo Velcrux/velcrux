@@ -597,6 +597,27 @@ velcrux dr failback --target us-east-1
 velcrux dr benchmark --iterations 500
 ```
 
+### Autonomous Micro-Segmented Zero-Trust WireGuard / Noise Mesh Fabric
+
+Site-to-site zero-trust encrypted mesh tunneling with 1-RTT `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` handshake state machine, canonical WireGuard wire framing (Type 1 Initiation, Type 2 Response, Type 4 TransportData), longest-prefix matching `AllowedIPs` routing trie with anti-spoofing verification, 256-bit sliding window anti-replay barrier, and dynamic endpoint roaming:
+
+```bash
+# Inspect local mesh interface status, public keys, active peers, and transfer volume
+velcrux mesh status
+
+# List configured mesh peers, endpoints, AllowedIPs, and connection states
+velcrux mesh peers
+
+# Initiate Noise handshake to a remote peer with routed CIDR prefix
+velcrux mesh connect --peer edge-node-1 --public-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --endpoint 198.51.100.10:51820 --allowed-ips 10.200.1.0/24
+
+# Disconnect peer, purge session keys, and remove routing rules
+velcrux mesh disconnect --peer edge-node-1
+
+# Run high-throughput Noise handshake, transport cipher, and anti-replay benchmark
+velcrux mesh benchmark --packets 500 --packet-size 1024
+```
+
 ### Transfer State and Resumption
 
 ```bash

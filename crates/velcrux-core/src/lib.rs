@@ -40,6 +40,7 @@ pub mod k8s;
 pub mod kms;
 pub mod lb;
 pub mod manifest;
+pub mod mesh;
 pub mod mpc;
 pub mod netem;
 pub mod nvme;
@@ -181,6 +182,14 @@ pub use kms::{
 pub use manifest::{
     ChunkDesc, ChunkFlags, FileEntry, FileFlags, FileType, ManifestBatchDecoder, ManifestReader,
     ManifestStore, ManifestWriter,
+};
+pub use mesh::{
+    base64_encode as mesh_base64_encode, hex_decode_32 as mesh_hex_decode_32,
+    hex_encode as mesh_hex_encode, AllowedIpsTrie, AntiReplayWindow, CidrRule,
+    HandshakeInitiationPacket, HandshakeResponsePacket, MeshBenchmarkReport, MeshError, MeshResult,
+    MeshStatusReport, MeshTunnelRouter, NoiseHandshake, NoiseKeyPair, NoiseSession, PeerStatus,
+    TransportDataPacket, PACKET_COOKIE_REPLY, PACKET_HANDSHAKE_INITIATION,
+    PACKET_HANDSHAKE_RESPONSE, PACKET_TRANSPORT_DATA, REPLAY_WINDOW_SIZE, X25519_BASEPOINT,
 };
 pub use mpc::{
     aggregate_signature_shares, compute_lagrange_coefficient, reconstruct_secret,

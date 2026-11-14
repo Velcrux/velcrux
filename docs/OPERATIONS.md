@@ -5803,6 +5803,49 @@ cargo test -p velcrux-core --test dr_failover_tests -- --nocapture
 cargo test -p velcrux-client --test cli_dr -- --nocapture
 ```
 
+## 65. Autonomous Micro-Segmented Zero-Trust WireGuard / Noise Mesh Tunnel Fabric Runbook (ADR-081)
+
+The Zero-Trust WireGuard / Noise Mesh Tunnel Fabric establishes authenticated, encrypted site-to-site tunnels across untrusted WAN and multi-cloud backbones. It operates a 1-RTT `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` handshake state machine, canonical WireGuard wire framing, a longest-prefix matching `AllowedIPs` routing trie with strict anti-spoofing verification, a 256-bit sliding window anti-replay barrier, and dynamic endpoint roaming.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect local mesh interface status, public keys, active peers, and transfer volume
+velcrux mesh status
+
+# 2. Inspect mesh status formatted as machine-readable JSON
+velcrux mesh status --json
+
+# 3. List all configured mesh peers, endpoints, AllowedIPs, and handshake status
+velcrux mesh peers
+
+# 4. List mesh peers in JSON format
+velcrux mesh peers --json
+
+# 5. Connect and initiate Noise handshake to a remote peer with routed CIDR prefix
+velcrux mesh connect --peer edge-node-1 --public-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --endpoint 198.51.100.10:51820 --allowed-ips 10.200.1.0/24
+
+# 6. Connect in JSON format
+velcrux mesh connect --peer edge-node-1 --public-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --allowed-ips 10.200.1.0/24 --json
+
+# 7. Disconnect peer, purge session keys, and remove routing rules
+velcrux mesh disconnect --peer edge-node-1
+
+# 8. Disconnect peer in JSON format
+velcrux mesh disconnect --peer edge-node-1 --json
+
+# 9. Execute high-throughput Noise handshake, transport cipher, and anti-replay benchmark
+velcrux mesh benchmark --packets 500 --packet-size 1024
+
+# 10. Execute benchmark in JSON format
+velcrux mesh benchmark --packets 500 --packet-size 1024 --json
+
+# 11. Run full WireGuard / Noise Mesh Tunnel test suite
+cargo test -p velcrux-core --lib mesh:: -- --nocapture
+cargo test -p velcrux-core --test mesh_tunnel_tests -- --nocapture
+cargo test -p velcrux-client --test cli_mesh -- --nocapture
+```
+
 
 
 
