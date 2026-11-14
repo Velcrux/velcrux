@@ -230,4 +230,3 @@ fn test_mitm_hypervisor_relay_attack_detection() {
         "Relayed quote on different TLS session MUST be rejected"
     );
 }
-

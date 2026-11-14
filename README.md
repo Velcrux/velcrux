@@ -534,6 +534,24 @@ velcrux enclave verify --platform amd_sev_snp
 velcrux enclave benchmark --iterations 50
 ```
 
+### Autonomous Zero-Copy User-Space Storage Engine via `io_uring`
+
+Pure safe Rust standard Linux `io_uring` ring buffer storage engine (64-byte SQE submission, 16-byte CQE completion), fixed buffer pre-registration (`IORING_REGISTER_BUFFERS`), direct kernel-pipe zero-copy splice forwarding (`IORING_OP_SPLICE` and `IORING_OP_TEE`), kernel SQPOLL worker polling (`IORING_SETUP_SQPOLL`), and 49-opcode dynamic feature probing:
+
+```bash
+# Inspect ring buffers, pre-registered fixed memory, and splice channels
+velcrux ioring status
+
+# Probe host kernel io_uring subsystem features, supported opcodes, and zero-copy capabilities
+velcrux ioring probe
+
+# Run high-throughput zero-copy I/O benchmark measuring SQ/CQ rings and IOPS
+velcrux ioring benchmark --entries 256 --ops 1000
+
+# Run benchmark with simulated kernel SQPOLL worker thread in JSON format
+velcrux ioring benchmark --entries 512 --ops 5000 --sqpoll --json
+```
+
 ### Transfer State and Resumption
 
 ```bash

@@ -33,6 +33,7 @@ pub mod did;
 pub mod ec;
 pub mod enclave;
 pub mod error;
+pub mod ioring;
 pub mod k8s;
 pub mod kms;
 pub mod lb;
@@ -143,6 +144,11 @@ pub use enclave::{
     SealedEnclavePayload, SealingPolicy, TcbVersion,
 };
 pub use error::{Result, VelcruxError};
+pub use ioring::{
+    cqe_flags, feature_flags, setup_flags, sqe_flags, FixedBuffer, FixedBufferRegistry,
+    IoUringCompletionQueue, IoUringCqe, IoUringOp, IoUringParams, IoUringProbe, IoUringSqe,
+    IoUringStorageEngine, IoUringSubmissionQueue, SpliceChannel, ZeroCopySplicePipeline,
+};
 pub use k8s::{
     generate_cluster_crd_yaml, generate_operator_deployment_yaml, generate_operator_rbac_yaml,
     generate_transfer_crd_yaml, ClusterCondition, ClusterPhase, K8sEvent, K8sTransferPriority,

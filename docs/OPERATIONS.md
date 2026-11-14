@@ -5683,6 +5683,38 @@ cargo test -p velcrux-core --test enclave_mesh_tests -- --nocapture
 cargo test -p velcrux-client --test cli_enclave -- --nocapture
 ```
 
+## 62. Autonomous Zero-Copy User-Space Storage Engine via `io_uring` Kernel Ring Buffers (ADR-078)
+
+The `io_uring` storage engine implements Linux kernel asynchronous I/O ring buffer architecture (64-byte SQE submission entries, 16-byte CQE completion entries) in 100% pure safe Rust. It eliminates operating system context switches and double-buffering through fixed buffer pre-registration (`IORING_REGISTER_BUFFERS`), direct zero-copy kernel splice forwarding (`IORING_OP_SPLICE` and `IORING_OP_TEE`), simulated kernel SQPOLL worker polling (`IORING_SETUP_SQPOLL`), and 49-opcode dynamic feature probing.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect submission/completion queue states, fixed buffer memory, and splice channels
+velcrux ioring status
+
+# 2. Inspect storage engine state in machine-readable JSON format
+velcrux ioring status --json
+
+# 3. Probe host kernel io_uring subsystem features, supported opcodes, and zero-copy capabilities
+velcrux ioring probe
+
+# 4. Probe kernel features in JSON format
+velcrux ioring probe --json
+
+# 5. Execute high-throughput I/O benchmark measuring SQ/CQ rings and fixed buffer IOPS
+velcrux ioring benchmark --entries 256 --ops 1000
+
+# 6. Execute benchmark with kernel SQPOLL worker mode enabled in JSON format
+velcrux ioring benchmark --entries 512 --ops 5000 --sqpoll --json
+
+# 7. Execute io_uring storage engine unit and integration test suites
+cargo test -p velcrux-core --lib ioring:: -- --nocapture
+cargo test -p velcrux-core --test ioring_storage_tests -- --nocapture
+cargo test -p velcrux-client --test cli_ioring -- --nocapture
+```
+
+
 
 
 

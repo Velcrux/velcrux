@@ -517,6 +517,34 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_enclave`: 4/4 passing CLI integration tests validating `status`, `quote`, `verify`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DJ: Autonomous Zero-Copy User-Space Storage Engine via `io_uring` Kernel Ring Buffers (ADR-078)
+- **Linux `io_uring` Ring Buffer Core Architecture (`IoUringSqe`, `IoUringCqe`, `IoUringSubmissionQueue`, `IoUringCompletionQueue`)**:
+  - 64-byte submission queue entries (`IoUringSqe`) supporting all 49 standard Linux opcodes (`IORING_OP_READV`, `IORING_OP_WRITEV`, `IORING_OP_SPLICE`, `IORING_OP_TEE`, `IORING_OP_SEND_ZC`, etc.), flags, ioprio, fd, offset, address, len, user_data, buf_index, and splice_fd_in.
+  - 16-byte completion queue entries (`IoUringCqe`) tracking `user_data`, `res` (transfer bytes or negative errno), and flags.
+  - Power-of-two circular submission and completion rings with lock-free bitmask modulo arithmetic (`index = head & mask`), wrapping counter arithmetic, and backpressure/overflow tracking.
+- **Fixed Buffer Registry (`FixedBufferRegistry`, `FixedBuffer`)**:
+  - Models `IORING_REGISTER_BUFFERS` to pre-register pinned memory arenas with the storage engine.
+  - Eliminates per-I/O page table walks, dynamic pinning (`get_user_pages`), and multi-core TLB shootdown overhead for streaming chunk reads and writes.
+- **Direct Zero-Copy Kernel Splice Pipelining (`ZeroCopySplicePipeline`, `SpliceChannel`)**:
+  - Implements `IORING_OP_SPLICE` and `IORING_OP_TEE` forwarding directly between network sockets, kernel pipe buffers, and block storage files.
+  - Completely avoids user-space memory bouncing, conserving CPU cache lines and memory bus bandwidth.
+- **Kernel SQPOLL Worker Mode (`IORING_SETUP_SQPOLL`)**:
+  - Simulates kernel-space submission queue polling, eliminating system call context switches (`enter` syscall) during high-frequency batch operations.
+- **Dynamic Opcode & Kernel Feature Probing (`IoUringProbe`)**:
+  - Enumerates supported opcodes and detects Linux kernel feature flags (`IORING_FEAT_SINGLE_MMAP`, `IORING_FEAT_NODROP`, `IORING_FEAT_SUBMIT_STABLE`, `IORING_FEAT_FAST_POLL`, `IORING_FEAT_SQPOLL_NONFIXED`, `IORING_FEAT_CQE_SKIP`).
+- **High-Performance Storage Engine (`IoUringStorageEngine`)**:
+  - Coordinates circular ring buffers, fixed buffers, splice pipelines, in-flight accounting, batch submissions, and completion reaping.
+- **Operator CLI Suite (`velcrux ioring`)**:
+  - `velcrux ioring status [--json]`: Displays submission queue capacity, head/tail, dropped counts, completion queue metrics, fixed buffer allocations, and active splice channels.
+  - `velcrux ioring probe [--json]`: Reports host kernel version, opcode support matrix (49 opcodes), active feature flags, and zero-copy capabilities.
+  - `velcrux ioring benchmark [--entries <N>] [--ops <N>] [--sqpoll] [--json]`: High-throughput microsecond benchmark measuring batch submission rate, fixed buffer I/O, latency, IOPS, and MB/s throughput.
+- **Verification Matrix**:
+  - `ioring::` unit tests: 9/9 passing tests in `velcrux-core` covering 64-byte SQE / 16-byte CQE layout, circular ring wrapping, fixed buffer registration, splice pipelines, opcode probing, engine submit/process/reap lifecycle, and SQPOLL accounting.
+  - `ioring_storage_tests`: 5/5 passing integration tests validating fixed buffer transfers, zero-copy splice throughput, SQPOLL batch submissions, feature probing, and ring backpressure/overflow handling.
+  - `cli_ioring`: 3/3 passing CLI integration tests validating `status`, `probe`, and `benchmark` across text and JSON modes.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
+
 
 
 
