@@ -1,0 +1,232 @@
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m find-msvc-tools v0.1.12
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m zerocopy v0.8.56
+[1m[92m   Compiling[0m cc v1.4.5
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m syn v3.0.4
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m getrandom v0.2.17
+[1m[92m   Compiling[0m ring v0.17.14
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m pkg-config v0.3.34
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m thiserror v1.0.69
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m smallvec v1.16.0
+[1m[92m   Compiling[0m thiserror-impl v1.0.69
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m time-core v0.1.2
+[1m[92m   Compiling[0m powerfmt v0.2.0
+[1m[92m   Compiling[0m num-conv v0.1.0
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m time-macros v0.2.18
+[1m[92m   Compiling[0m deranged v0.3.11
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m tinyvec_macros v0.1.1
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m minimal-lexical v0.2.1
+[1m[92m   Compiling[0m nom v7.1.3
+[1m[92m   Compiling[0m tinyvec v1.13.2
+[1m[92m   Compiling[0m time v0.3.36
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m unicode-joining-type v1.0.0
+[1m[92m   Compiling[0m parking_lot_core v0.9.12
+[1m[92m   Compiling[0m log v0.4.34
+[1m[92m   Compiling[0m core-foundation-sys v0.8.7
+[1m[92m   Compiling[0m asn1-rs-derive v0.5.1
+[1m[92m   Compiling[0m rusticata-macros v4.1.0
+[1m[92m   Compiling[0m zstd-sys v2.1.0+zstd.1.5.7
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m asn1-rs-impl v0.2.0
+[1m[92m   Compiling[0m displaydoc v0.2.7
+[1m[92m   Compiling[0m ahash v0.8.12
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m scopeguard v1.2.0
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m lock_api v0.4.14
+[1m[92m   Compiling[0m asn1-rs v0.6.2
+[1m[92m   Compiling[0m security-framework-sys v2.17.0
+[1m[92m   Compiling[0m core-foundation v0.9.4
+[1m[92m   Compiling[0m num-integer v0.1.47
+[1m[92m   Compiling[0m rand_core v0.6.4
+[1m[92m   Compiling[0m ring v0.16.20
+[1m[92m   Compiling[0m rustls v0.21.12
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m oid-registry v0.7.1
+[1m[92m   Compiling[0m vcpkg v0.2.15
+[1m[92m   Compiling[0m base64 v0.21.7
+[1m[92m   Compiling[0m rustix v1.1.4
+[1m[92m   Compiling[0m libsqlite3-sys v0.28.0
+[1m[92m   Compiling[0m rustls-pemfile v1.0.4
+[1m[92m   Compiling[0m num-bigint v0.4.8
+[1m[92m   Compiling[0m rand_chacha v0.3.1
+[1m[92m   Compiling[0m security-framework v2.11.1
+[1m[92m   Compiling[0m parking_lot v0.12.5
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m idna_mapping v1.1.0
+[1m[92m   Compiling[0m sct v0.7.1
+[1m[92m   Compiling[0m rustls-webpki v0.101.7
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m unicode-normalization v0.1.25
+[1m[92m   Compiling[0m tokio-macros v2.7.2
+[1m[92m   Compiling[0m mio v1.2.3
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m zstd-safe v7.3.0
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m untrusted v0.7.1
+[1m[92m   Compiling[0m unicode-bidi v0.3.18
+[1m[92m   Compiling[0m idna_adapter v1.1.0
+[1m[92m   Compiling[0m indexmap v2.14.1
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m hashbrown v0.14.5
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m rustls-native-certs v0.6.3
+[1m[92m   Compiling[0m rand v0.8.8
+[1m[92m   Compiling[0m der-parser v9.0.0
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m toml_datetime v0.6.11
+[1m[92m   Compiling[0m serde_spanned v0.6.9
+[1m[92m   Compiling[0m blake3 v1.8.7
+[1m[92m   Compiling[0m socket2 v0.5.10
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m winnow v0.7.15
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m toml_write v0.1.2
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m rustc-hash v1.1.0
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m regex-automata v0.4.18
+[1m[92m   Compiling[0m quinn-proto v0.10.6
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m toml_edit v0.22.27
+[1m[92m   Compiling[0m x509-parser v0.16.0
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m quinn-udp v0.4.1
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m hashlink v0.9.1
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m arrayvec v0.7.8
+[1m[92m   Compiling[0m constant_time_eq v0.4.2
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m rusqlite v0.31.0
+[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[92m   Compiling[0m ulid v1.2.1
+[1m[92m   Compiling[0m zstd v0.13.3
+[1m[92m   Compiling[0m quinn v0.10.2
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m toml v0.8.23
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m fs4 v1.1.0
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m tracing-serde v0.2.0
+[1m[92m   Compiling[0m async-trait v0.1.92
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m velcrux-core v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-core)
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m pem v3.0.6
+[1m[92m   Compiling[0m yasna v0.5.2
+[1m[92m   Compiling[0m fastrand v2.5.0
+[1m[92m   Compiling[0m tempfile v3.27.0
+[1m[92m   Compiling[0m rcgen v0.13.2
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m clap_derive v4.6.4
+[1m[92m   Compiling[0m clap_builder v4.6.6
+[1m[92m   Compiling[0m clap v4.6.6
+[1m[92m   Compiling[0m clap_complete v4.6.10
+[1m[33mwarning[0m[1m: value assigned to `slots_filled` is never read[0m
+   [1m[94m--> [0mcrates/velcrux-core/src/lb/maglev.rs:110:25
+    [1m[94m|[0m
+[1m[94m110[0m [1m[94m|[0m                         slots_filled += 1;
+    [1m[94m|[0m                         [1m[33m^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[92m   Compiling[0m velcrux-client v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-client)
+[1m[92m   Compiling[0m velcrux-server v0.1.0 (/Users/runner/work/velcrux/velcrux/crates/velcrux-server)
+[1m[33mwarning[0m: `velcrux-core` (lib) generated 1 warning
+[1m[33mwarning[0m: `velcrux-core` (lib test) generated 1 warning (1 duplicate)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 3m 39s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/build/velcrux-client/51572c098299cd5a/out/velcrux_client-51572c098299cd5a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/build/velcrux-client/14dcad43bcd174de/out/velcrux-14dcad43bcd174de)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/cli_attestation.rs (target/debug/build/velcrux-client/2c706473886b9c6d/out/cli_attestation-2c706473886b9c6d)
+
+running 4 tests
+
+thread 'test_cli_attest_keygen_and_inspect' (47165) panicked at crates/velcrux-client/tests/cli_attestation.rs:33:10:
+execute velcrux attest keygen: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test test_cli_attest_keygen_and_inspect ... FAILED
+
+thread 'test_cli_attest_sign_and_verify_lifecycle' (47166) panicked at crates/velcrux-client/tests/cli_attestation.rs:76:10:
+keygen: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+test test_cli_attest_sign_and_verify_lifecycle ... FAILED
+
+thread 'test_cli_attest_untrusted_signer_rejection' (47167) panicked at crates/velcrux-client/tests/cli_attestation.rs:200:10:
+keygen genuine: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+test test_cli_attest_untrusted_signer_rejection ... FAILED
+
+thread 'test_cli_sync_with_attestation_signing_and_verification' (47170) panicked at crates/velcrux-client/tests/cli_attestation.rs:266:10:
+keygen: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+test test_cli_sync_with_attestation_signing_and_verification ... FAILED
+
+failures:
+
+failures:
+    test_cli_attest_keygen_and_inspect
+    test_cli_attest_sign_and_verify_lifecycle
+    test_cli_attest_untrusted_signer_rejection
+    test_cli_sync_with_attestation_signing_and_verification
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[91merror[0m: test failed, to rerun pass `-p velcrux-client --test cli_attestation`
