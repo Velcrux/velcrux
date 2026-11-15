@@ -5929,6 +5929,52 @@ cargo test -p velcrux-core --test nic_memory_fabric_tests -- --nocapture
 cargo test -p velcrux-client --test cli_nic -- --nocapture
 ```
 
+## 68. Distributed Homomorphic Encrypted Query & Search Engine Runbook (ADR-084)
+
+The Distributed Homomorphic Encrypted Query & Search Engine provides zero-knowledge, privacy-preserving predicate evaluation and search filtering over sharded encrypted storage records using the Brakerski-Fan-Vercauteren (BFV) leveled homomorphic encryption scheme over cyclotomic polynomial rings $R_q = \mathbb{Z}_q[X]/(X^N + 1)$. Storage nodes evaluate homomorphic predicate differences and weighted relevance scores without decrypting stored metadata or observing search query parameters.
+
+### Operations & Diagnostics Quick Reference
+
+```bash
+# 1. Inspect FHE ring parameters, noise budget, scale factor, and encrypted search status
+velcrux fhe status
+
+# 2. Inspect status formatted as machine-readable JSON
+velcrux fhe status --json
+
+# 3. Inspect status with custom polynomial quotient ring degree
+velcrux fhe status --degree 2048
+
+# 4. Generate a fresh BFV public, secret, and relinearization keypair
+velcrux fhe keygen --degree 1024 --plaintext-modulus 65537
+
+# 5. Generate keypair and export to a JSON file
+velcrux fhe keygen --degree 256 --output /tmp/fhe_keys.json
+
+# 6. Generate keypair output formatted as JSON
+velcrux fhe keygen --degree 128 --json
+
+# 7. Evaluate an encrypted search query over storage records
+velcrux fhe query --query "size=42" --tenant-id tenant-alpha
+
+# 8. Evaluate query formatted as JSON
+velcrux fhe query --query "access_count=100" --tenant-id tenant-beta --json
+
+# 9. Evaluate query with client-assisted verification key
+velcrux fhe query --query "tier=1" --secret-key /tmp/fhe_keys.json --json
+
+# 10. Execute microsecond-accurate benchmark evaluating BFV homomorphic operations and encrypted search
+velcrux fhe benchmark --degree 256 --records 20
+
+# 11. Execute benchmark formatted as JSON
+velcrux fhe benchmark --degree 128 --records 10 --json
+
+# 12. Run full FHE Encrypted Search test suite
+cargo test -p velcrux-core --lib fhe:: -- --nocapture
+cargo test -p velcrux-core --test fhe_search_tests -- --nocapture
+cargo test -p velcrux-client --test cli_fhe -- --nocapture
+```
+
 
 
 

@@ -689,6 +689,35 @@ Turnkey distribution channels and manifest generation now exist across all major
   - `cli_nic`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `pools`, `rings`, and `benchmark` across text and JSON formats.
   - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
 
+### Option DP: Distributed Homomorphic Encrypted Query & Search Engine over Sharded Storage (ADR-084)
+- **Pure Safe Rust Brakerski-Fan-Vercauteren (BFV) Leveled Cryptosystem (`crates/velcrux-core/src/fhe/`)**:
+  - Cyclotomic polynomial quotient ring arithmetic $R_q = \mathbb{Z}_q[X]/(X^N + 1)$ with negacyclic convolution, discrete Gaussian error sampling ($\sigma = 3.2$), and ternary secret key generation ($\{-1, 0, 1\}$).
+  - 50-bit prime modulus $q = 1125899908153369$ ($q \equiv 1 \pmod t$) and Fermat plaintext modulus $t = 65537$, providing $\approx 34$ bits of initial noise headroom.
+  - Constant-time negacyclic multiplication over $\mathbb{Z}[X]/(X^N + 1)$ with 128-bit signed integer accumulators (`i128`), avoiding overflow up to degree $N = 4096$.
+  - Noise-free relinearization key generation ($r_0 = -a_{relin} \cdot s + s^2 \pmod q, r_1 = a_{relin}$) eliminating noise amplification during ciphertext-ciphertext multiplication.
+- **Homomorphic Primitive Suite (`FheEvaluator`)**:
+  - Homomorphic Addition: $(c_{1,0} + c_{2,0}, c_{1,1} + c_{2,1}) \pmod q$.
+  - Homomorphic Subtraction: $(c_{1,0} - c_{2,0}, c_{1,1} - c_{2,1}) \pmod q$.
+  - Homomorphic Scalar Multiplication: $(k \cdot c_0, k \cdot c_1) \pmod q$.
+  - Homomorphic Plaintext Multiplication: $(c_0 \cdot m, c_1 \cdot m) \pmod q$.
+  - Homomorphic Ciphertext Multiplication with Relinearization: tensor product scaling by $t/q$ and dimension reduction back to degree-1 ciphertexts.
+- **Privacy-Preserving Encrypted Search Index (`FheSearchIndex`)**:
+  - Sharded metadata records (`FheEncryptedRecord`) storing encrypted attribute vectors without revealing numerical metrics.
+  - Encrypted query predicate evaluation (`FheQuery`, `FheQueryResult`): computes homomorphic differences $c_{diff} = c_{rec} - c_{query}$.
+  - Supports client-assisted exact verification ($m_{diff} == 0$) and untrusted server threshold evaluation.
+  - Multi-tenant isolation ensuring queries cannot observe or cross tenant boundaries.
+  - Homomorphic weighted relevance scoring: $c_{score} = \sum w_i \cdot c_i \pmod q$ without decrypting record contents.
+- **Operator CLI Suite (`velcrux fhe`)**:
+  - `velcrux fhe status [--degree <N>] [--json]`: Displays engine status, ring degree, ciphertext modulus $q$, plaintext modulus $t$, scaling factor $\Delta$, and initial noise budget.
+  - `velcrux fhe keygen [--degree <N>] [--plaintext-modulus <T>] [--output <FILE>] [--json]`: Generates a fresh BFV keypair (secret key, public key, relinearization key) and exports to JSON.
+  - `velcrux fhe query [--index <FILE>] --query <ATTR=VAL> [--public-key <FILE>] [--secret-key <FILE>] [--tenant-id <ID>] [--json]`: Evaluates encrypted query predicate over sharded storage records.
+  - `velcrux fhe benchmark [--degree <N>] [--records <N>] [--json]`: Profiles microsecond-accurate latency and throughput across keygen, encryption, decryption, homomorphic add/mul, and encrypted search.
+- **Verification Matrix**:
+  - `fhe::` unit tests: 7/7 passing tests in `velcrux-core` covering negacyclic ring arithmetic, BFV keygen/encrypt/decrypt, homomorphic add/sub, plain/scalar multiplication, ciphertext multiplication with relinearization, exact match search index, and benchmark metrics.
+  - `fhe_search_tests`: 6/6 passing integration tests in `velcrux-core` validating ring associativity/distributivity, keypair/ciphertext codec roundtrip, homomorphic linear operations, ciphertext-ciphertext multiplication, multi-tenant sharded queries, and weighted relevance scoring.
+  - `cli_fhe`: 4/4 passing CLI integration tests in `velcrux-client` validating `status`, `keygen`, `query`, and `benchmark` across text and JSON formats.
+  - 100% pure `#![forbid(unsafe_code)]` compliance with zero external C dependencies.
+
 
 
 

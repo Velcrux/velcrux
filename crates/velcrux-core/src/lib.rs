@@ -35,6 +35,7 @@ pub mod dr;
 pub mod ec;
 pub mod enclave;
 pub mod error;
+pub mod fhe;
 pub mod fountain;
 pub mod ioring;
 pub mod k8s;
@@ -164,6 +165,14 @@ pub use enclave::{
     SealedEnclavePayload, SealingPolicy, TcbVersion,
 };
 pub use error::{Result, VelcruxError};
+pub use fhe::{
+    run_fhe_benchmark, FastPrng, FheBenchmarkReport, FheCiphertext, FheDecryptor,
+    FheEncryptedRecord, FheEncryptor, FheError, FheEvaluator, FheKeyGenerator, FheKeyPair,
+    FheParams, FhePlaintext, FhePublicKey, FheQuery, FheQueryResult, FheRelinKey, FheResult,
+    FheSearchIndex, FheSecretKey, FheStatus, PolyRing, Polynomial as FhePolynomial,
+    FHE_DEFAULT_COEFF_MODULUS, FHE_DEFAULT_DEGREE, FHE_DEFAULT_NOISE_STD_DEV,
+    FHE_DEFAULT_PLAIN_MODULUS,
+};
 pub use fountain::{
     run_fountain_benchmark, sample_neighbors, FountainBenchmarkReport, FountainConfig,
     FountainContainer, FountainDecoder, FountainDecoderStatus, FountainEncoder, FountainError,

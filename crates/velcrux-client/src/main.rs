@@ -909,6 +909,11 @@ enum Cmd {
         #[command(subcommand)]
         sub: NicSubCmd,
     },
+    /// Distributed Homomorphic Encrypted Query & Search Engine over Sharded Storage (Option DP).
+    Fhe {
+        #[command(subcommand)]
+        sub: FheSubCmd,
+    },
     /// Quantum-resilient post-quantum hybrid cryptography engine (ML-KEM-768 & ML-DSA-65) (Option CD).
     Pqc {
         #[command(subcommand)]
@@ -3128,6 +3133,73 @@ enum NicSubCmd {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+enum FheSubCmd {
+    /// Inspect FHE ring parameters, noise budget, scale factor, and encrypted search status.
+    Status {
+        /// Degree N of cyclotomic polynomial quotient ring (default: 1024).
+        #[arg(long, default_value_t = 1024)]
+        degree: usize,
+        /// Ciphertext coefficient modulus q (default: 1125899908153369).
+        #[arg(long, default_value_t = 1125899908153369)]
+        coeff_modulus: u64,
+        /// Plaintext modulus t (default: 65537).
+        #[arg(long, default_value_t = 65537)]
+        plain_modulus: u64,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a fresh BFV public, secret, and relinearization keypair.
+    Keygen {
+        /// Degree N of cyclotomic polynomial quotient ring (default: 1024).
+        #[arg(long, default_value_t = 1024)]
+        degree: usize,
+        /// Plaintext modulus t (default: 65537).
+        #[arg(long, default_value_t = 65537)]
+        plaintext_modulus: u64,
+        /// Output file path to write JSON keypair (optional).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate an encrypted search query over sharded encrypted records.
+    Query {
+        /// Optional path to serialized encrypted search index JSON file.
+        #[arg(long)]
+        index: Option<PathBuf>,
+        /// Attribute query expression in ATTR=VAL format (e.g. "size=42").
+        #[arg(long)]
+        query: String,
+        /// Optional path to public key JSON file.
+        #[arg(long)]
+        public_key: Option<PathBuf>,
+        /// Optional path to secret key JSON for client-assisted verification.
+        #[arg(long)]
+        secret_key: Option<PathBuf>,
+        /// Target tenant ID.
+        #[arg(long, default_value = "default-tenant")]
+        tenant_id: String,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute microsecond-accurate benchmark evaluating BFV homomorphic operations and encrypted search.
+    Benchmark {
+        /// Degree N of cyclotomic polynomial ring (default: 256).
+        #[arg(long, default_value_t = 256)]
+        degree: usize,
+        /// Number of encrypted metadata records to evaluate (default: 20).
+        #[arg(long, default_value_t = 20)]
+        records: usize,
+        /// Output formatted as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
 enum RouterSubCmd {
     /// Inspect overall router health, registered PoPs, and active session migrations.
     Status {
@@ -5304,6 +5376,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Nic { sub } => {
             run_nic(&cli, sub).await?;
+            return Ok(());
+        }
+        Cmd::Fhe { sub } => {
+            run_fhe(&cli, sub).await?;
             return Ok(());
         }
         Cmd::Pqc { sub } => {
@@ -14857,6 +14933,261 @@ async fn run_nic(cli: &Cli, sub: &NicSubCmd) -> anyhow::Result<()> {
                 println!(
                     "  UMEM Frame Reuse:       {:.2}x (perfect conservation)",
                     report.frame_reuse_ratio
+                );
+                println!("================================================================================");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_fhe(cli: &Cli, sub: &FheSubCmd) -> anyhow::Result<()> {
+    use velcrux_core::fhe::{
+        run_fhe_benchmark, FheEncryptedRecord, FheEncryptor, FheKeyGenerator, FheKeyPair,
+        FheParams, FhePlaintext, FheQuery, FheSearchIndex,
+    };
+
+    match sub {
+        FheSubCmd::Status {
+            degree,
+            coeff_modulus,
+            plain_modulus,
+            json,
+        } => {
+            let params = FheParams::new(*degree, *coeff_modulus, *plain_modulus)?;
+            let index = FheSearchIndex::new(params.clone());
+            let status = index.status();
+
+            if *json || cli.json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("================================================================================");
+                println!("  Distributed FHE Query & Search Engine Status (ADR-084)");
+                println!("================================================================================");
+                println!("  Engine Status:          {}", status.engine_status);
+                println!("  Polynomial Degree N:    {}", status.poly_degree);
+                println!(
+                    "  Coeff Modulus q:        {} (~{:.1} bits)",
+                    status.coeff_modulus,
+                    (status.coeff_modulus as f64).log2()
+                );
+                println!(
+                    "  Plain Modulus t:        {} (Fermat prime)",
+                    status.plain_modulus
+                );
+                println!("  Scaling Factor Delta:   {}", status.scale_factor_delta);
+                println!(
+                    "  Initial Noise Budget:   {:.2} bits",
+                    status.initial_noise_budget_bits
+                );
+                println!(
+                    "  Indexed Records:        {} records",
+                    status.total_indexed_records
+                );
+                println!("================================================================================");
+            }
+        }
+        FheSubCmd::Keygen {
+            degree,
+            plaintext_modulus,
+            output,
+            json,
+        } => {
+            let params = FheParams::new(
+                *degree,
+                velcrux_core::fhe::FHE_DEFAULT_COEFF_MODULUS,
+                *plaintext_modulus,
+            )?;
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x12345678abcdef);
+            let keypair = FheKeyGenerator::generate_keypair(&params, seed)?;
+
+            if let Some(path) = output {
+                let serialized = serde_json::to_string_pretty(&keypair)?;
+                std::fs::write(path, serialized)
+                    .with_context(|| format!("Failed to write keypair to {:?}", path))?;
+                info!("Saved FHE keypair to {:?}", path);
+            }
+
+            if *json || cli.json {
+                println!("{}", serde_json::to_string_pretty(&keypair)?);
+            } else {
+                println!("================================================================================");
+                println!("  BFV Homomorphic Encryption Keypair Generated");
+                println!("================================================================================");
+                println!("  Polynomial Degree N:    {}", keypair.params.poly_degree);
+                println!("  Ciphertext Modulus q:   {}", keypair.params.coeff_modulus);
+                println!("  Plaintext Modulus t:    {}", keypair.params.plain_modulus);
+                println!(
+                    "  Secret Key Coeffs:      {} non-zero / ternary",
+                    keypair.secret_key.s.degree()
+                );
+                println!("  Public Key Terms:       (p0, p1) ring elements");
+                println!("  Relinearization Key:    (r0, r1) dimension-2 reduction operator");
+                if let Some(path) = output {
+                    println!("  Output File:            {:?}", path);
+                }
+                println!("================================================================================");
+            }
+        }
+        FheSubCmd::Query {
+            index,
+            query,
+            public_key,
+            secret_key,
+            tenant_id,
+            json,
+        } => {
+            let params = FheParams::default();
+            let mut search_index = FheSearchIndex::new(params.clone());
+
+            let kp = if let Some(sk_path) = secret_key {
+                let content = std::fs::read_to_string(sk_path)
+                    .with_context(|| format!("Failed to read secret key from {:?}", sk_path))?;
+                let keypair: FheKeyPair = serde_json::from_str(&content)?;
+                Some(keypair)
+            } else {
+                None
+            };
+
+            let pk = if let Some(pk_path) = public_key {
+                let content = std::fs::read_to_string(pk_path)
+                    .with_context(|| format!("Failed to read public key from {:?}", pk_path))?;
+                let pkey: velcrux_core::fhe::FhePublicKey = serde_json::from_str(&content)?;
+                pkey
+            } else if let Some(ref keypair) = kp {
+                keypair.public_key.clone()
+            } else {
+                let dummy_kp = FheKeyGenerator::generate_keypair(&params, 0x99887766)?;
+                dummy_kp.public_key
+            };
+
+            // Parse ATTR=VAL or VAL
+            let val: u64 = if let Some((_attr, v)) = query.split_once('=') {
+                v.parse().unwrap_or(42)
+            } else {
+                query.parse().unwrap_or(42)
+            };
+
+            // Populate sample index if no file given
+            if index.is_none() {
+                for i in 1..=5 {
+                    let rec_val = i * 21;
+                    let pt = FhePlaintext::from_scalar(
+                        rec_val,
+                        params.poly_degree,
+                        params.plain_modulus,
+                    );
+                    let ct = FheEncryptor::encrypt(&pk, &pt, &params, 0x1000 + i as u64)?;
+                    search_index.insert_record(FheEncryptedRecord {
+                        chunk_id: format!("chunk_fhe_{:03}", i),
+                        tenant_id: tenant_id.clone(),
+                        tier_code: (i % 3) as u8,
+                        encrypted_attributes: ct,
+                        tags: vec!["encrypted".to_string(), format!("attr_{}", rec_val)],
+                    });
+                }
+            }
+
+            let q_pt = FhePlaintext::from_scalar(val, params.poly_degree, params.plain_modulus);
+            let q_ct = FheEncryptor::encrypt(&pk, &q_pt, &params, 0x5555)?;
+
+            let fhe_query = FheQuery {
+                query_id: format!(
+                    "q_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_millis()
+                ),
+                query_vector: q_ct,
+                tenant_id: tenant_id.clone(),
+            };
+
+            let sk_ref = kp.as_ref().map(|k| &k.secret_key);
+            let result = search_index.execute_search(&fhe_query, sk_ref)?;
+
+            if *json || cli.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("================================================================================");
+                println!("  Encrypted Query Search Results");
+                println!("================================================================================");
+                println!("  Query ID:               {}", result.query_id);
+                println!("  Predicate:              {}", query);
+                println!("  Target Tenant:          {}", tenant_id);
+                println!(
+                    "  Records Scanned:        {} records",
+                    result.total_records_scanned
+                );
+                println!("  Matched Chunks:         {:?}", result.matching_chunk_ids);
+                println!("  Evaluation Latency:     {} us", result.evaluation_time_us);
+                println!(
+                    "  Min Noise Remaining:    {} bits",
+                    result.min_noise_budget_remaining_bits
+                );
+                println!("================================================================================");
+            }
+        }
+        FheSubCmd::Benchmark {
+            degree,
+            records,
+            json,
+        } => {
+            let report = run_fhe_benchmark(*degree, *records);
+
+            if *json || cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("================================================================================");
+                println!("  Distributed FHE & Encrypted Search Benchmark (ADR-084)");
+                println!("================================================================================");
+                println!("  Quotient Ring Degree N: {}", report.poly_degree);
+                println!(
+                    "  Evaluated Records:      {} records",
+                    report.records_evaluated
+                );
+                println!(
+                    "  Keygen Latency:         {:.2} us",
+                    report.keygen_latency_us
+                );
+                println!(
+                    "  Encryption Latency:     {:.2} us",
+                    report.encryption_latency_us
+                );
+                println!(
+                    "  Decryption Latency:     {:.2} us",
+                    report.decryption_latency_us
+                );
+                println!(
+                    "  Homomorphic Add:        {:.2} ns",
+                    report.homomorphic_addition_latency_ns
+                );
+                println!(
+                    "  Homomorphic Plain Mul:  {:.2} us",
+                    report.homomorphic_plain_mul_latency_us
+                );
+                println!(
+                    "  Homomorphic Cipher Mul: {:.2} us",
+                    report.homomorphic_cipher_mul_latency_us
+                );
+                println!(
+                    "  Query Scan Throughput:  {:.1} records/sec",
+                    report.query_scan_throughput_records_per_sec
+                );
+                println!(
+                    "  Initial Noise Budget:   {:.2} bits",
+                    report.noise_budget_initial_bits
+                );
+                println!(
+                    "  Consumed Noise:         {:.2} bits",
+                    report.noise_budget_consumed_bits
+                );
+                println!(
+                    "  Decryption Accuracy:    {:.1}%",
+                    report.decryption_accuracy_percent
                 );
                 println!("================================================================================");
             }

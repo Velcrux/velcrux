@@ -660,6 +660,24 @@ velcrux nic rings
 velcrux nic benchmark --frames 512 --frame-size 2048 --iterations 100
 ```
 
+### Distributed Homomorphic Encrypted Query & Search Engine (BFV)
+
+Pure safe Rust privacy-preserving encrypted query evaluation and search filtering over sharded storage nodes using Brakerski-Fan-Vercauteren (BFV) leveled homomorphic encryption over cyclotomic polynomial rings $R_q = \mathbb{Z}_q[X]/(X^N + 1)$:
+
+```bash
+# Inspect FHE ring parameters, noise budget, scale factor, and encrypted search status
+velcrux fhe status
+
+# Generate a fresh BFV public, secret, and relinearization keypair
+velcrux fhe keygen --degree 1024 --plaintext-modulus 65537 --output ~/.velcrux/fhe_keys.json
+
+# Evaluate an encrypted search query predicate over sharded storage records
+velcrux fhe query --query "size=42" --tenant-id tenant-alpha
+
+# Execute microsecond-accurate benchmark evaluating BFV homomorphic operations and encrypted search
+velcrux fhe benchmark --degree 256 --records 20
+```
+
 ### Transfer State and Resumption
 
 ```bash
